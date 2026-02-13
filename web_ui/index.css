@@ -1,0 +1,63 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+}
+
+body {
+  font-family: "Inter", sans-serif;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.bg-primary {
+  background-color: var(--color-primary);
+}
+
+.text-primary {
+  color: var(--color-primary);
+}
+
+.border-primary {
+  border-color: var(--color-primary);
+}
+
+.ring-primary {
+  --tw-ring-color: var(--color-primary);
+}
+
+.timeline-gradient {
+  background: linear-gradient(to bottom, #cbd5e1 0%, #cbd5e1 100%);
+  background-size: 2px 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.dark .timeline-gradient {
+  background: linear-gradient(to bottom, #1e293b 0%, #1e293b 100%);
+  background-size: 2px 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.glow-primary {
+  transition: box-shadow 0.3s ease;
+}
+
+.dark .glow-primary:hover {
+  box-shadow: 0 0 20px rgba(var(--color-primary-rgb, 59, 130, 246), 0.4);
+}
+
+.dark .glow-card:hover {
+  box-shadow: 0 0 25px rgba(30, 58, 138, 0.4);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
