@@ -9,9 +9,29 @@ from core.models import TimeStampedModel
 from core.utils import get_upload_path
 
 class FamilyVault(TimeStampedModel):
+    class StorageQuality(models.TextChoices):
+        BALANCED = 'BALANCED', _('Balanced')
+        HIGH = 'HIGH', _('High')
+        ORIGINAL = 'ORIGINAL', _('Original')
+
+    class DefaultVisibility(models.TextChoices):
+        PRIVATE = 'PRIVATE', _('Private')
+        FAMILY = 'FAMILY', _('Family')
+
     name = models.CharField(max_length=255)
+    family_name = models.CharField(max_length=120, blank=True, default='')
     description = models.TextField(blank=True)
     cover_photo = models.ImageField(upload_to=get_upload_path, null=True, blank=True)
+    storage_quality = models.CharField(
+        max_length=20,
+        choices=StorageQuality.choices,
+        default=StorageQuality.HIGH,
+    )
+    default_visibility = models.CharField(
+        max_length=20,
+        choices=DefaultVisibility.choices,
+        default=DefaultVisibility.FAMILY,
+    )
     
     # Archival Policy
     safety_window_minutes = models.IntegerField(
@@ -47,6 +67,7 @@ class Membership(TimeStampedModel):
 
 class Invite(TimeStampedModel):
     class Roles(models.TextChoices):
+        ADMIN = 'ADMIN', _('Administrator')
         CONTRIBUTOR = 'CONTRIBUTOR', _('Contributor')
         VIEWER = 'VIEWER', _('Viewer')
 

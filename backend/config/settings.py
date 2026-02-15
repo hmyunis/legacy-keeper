@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from decouple import config, Csv
+from decouple import config
 import dj_database_url
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -9,6 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost']).split(',')
+CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='').split(',')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -22,6 +23,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'drf_spectacular',
     'corsheaders',
+    'rest_framework_simplejwt.token_blacklist',
+    'django_filters',
     
     # Local Apps
     'core',
@@ -30,14 +33,15 @@ INSTALLED_APPS = [
     'media',
     'genealogy',
     'audit',
+    'notifications',
     'storages',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware', # Add if you install django-cors-headers later
-    'djangorestframework_camel_case.middleware.CamelCaseMiddleWare', # CamelCase Middleware
+    'corsheaders.middleware.CorsMiddleware',
+    'djangorestframework_camel_case.middleware.CamelCaseMiddleWare',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -68,13 +72,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# Database
-# https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 DATABASES = {
     'default': dj_database_url.config(
         default=config('DATABASE_URL')
     )
 }
+
+if DATABASES['default'].get('ENGINE') == 'django.db.backends.sqlite3':
+    DATABASES['default'].setdefault('OPTIONS', {})
+    DATABASES['default']['OPTIONS'].setdefault('timeout', 20)
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -118,6 +124,11 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
 }
 
 # --- Spectacular (Swagger) Configuration ---
@@ -135,6 +146,11 @@ SPECTACULAR_SETTINGS = {
 # --- Maileroo Config ---
 MAILEROO_API_KEY = config('MAILEROO_API_KEY', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@example.com')
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173').rstrip('/')
+GOOGLE_OAUTH_CLIENT_ID = config('GOOGLE_OAUTH_CLIENT_ID', default='')
+VAPID_PUBLIC_KEY = config('VAPID_PUBLIC_KEY', default='')
+VAPID_PRIVATE_KEY = config('VAPID_PRIVATE_KEY', default='')
+VAPID_SUBJECT = config('VAPID_SUBJECT', default='mailto:admin@legacykeeper.local')
 
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'

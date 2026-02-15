@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="256" viewBox="0 0 512 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="256" rx="24" fill="url(#bg)"/>
+  <circle cx="108" cy="128" r="68" fill="#FFFFFF" fill-opacity="0.15"/>
+  <path d="M76 170V86h20v66h48v18H76z" fill="#FFFFFF"/>
+  <text x="184" y="116" font-family="Arial, sans-serif" font-size="28" fill="#BFDBFE">LegacyKeeper</text>
+  <text x="184" y="154" font-family="Arial, sans-serif" font-size="18" fill="#E2E8F0">New family vault activity</text>
+</svg>
+

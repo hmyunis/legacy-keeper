@@ -37,7 +37,9 @@ class PersonProfile(TimeStampedModel):
 class Relationship(TimeStampedModel):
     class RelationshipType(models.TextChoices):
         PARENT_OF = 'PARENT_OF', _('Parent Of')
+        ADOPTIVE_PARENT_OF = 'ADOPTIVE_PARENT_OF', _('Adoptive Parent Of')
         SPOUSE_OF = 'SPOUSE_OF', _('Spouse Of')
+        SIBLING_OF = 'SIBLING_OF', _('Sibling Of')
 
     from_person = models.ForeignKey(PersonProfile, on_delete=models.CASCADE, related_name='relationships_from')
     to_person = models.ForeignKey(PersonProfile, on_delete=models.CASCADE, related_name='relationships_to')

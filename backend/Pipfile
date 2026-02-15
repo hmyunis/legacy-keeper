@@ -18,6 +18,9 @@ djangorestframework-simplejwt = "*"
 drf-nested-routers = "*"
 django-storages = "*"
 boto3 = "*"
+google-auth = "*"
+django-filter = "*"
+pywebpush = "*"
 
 [dev-packages]
 

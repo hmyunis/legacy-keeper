@@ -69,5 +69,10 @@ Key variables:
 - `DEBUG`: Development/production mode
 - `SECRET_KEY`: Django secret key
 - `DATABASE_URL`: Database connection string
+- `FRONTEND_URL`: Frontend base URL used for email verification/join links
 - `MAILEROO_API_KEY`: Email service API key
+- `GOOGLE_OAUTH_CLIENT_ID`: Google OAuth client ID for id-token verification
+- `VAPID_PUBLIC_KEY`: VAPID public key for browser push notifications
+- `VAPID_PRIVATE_KEY`: VAPID private key for browser push notifications
+- `VAPID_SUBJECT`: contact URI for VAPID claims (example: `mailto:admin@example.com`)
 - `AWS_*`: Cloud storage configuration
