@@ -33,6 +33,7 @@ import {
 } from '../hooks/useMedia';
 import { useTranslation } from '../i18n/LanguageContext';
 import { useAuthStore } from '../stores/authStore';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { hasPermission } from '@/config/permissions';
 import { InfiniteScroll } from '../components/ui/Pagination';
 import { useNavigate, useSearch } from '@tanstack/react-router';
@@ -110,6 +111,10 @@ const Vault: React.FC<{
   const [view, setView] = useState<'grid' | 'list'>(initialView);
   const [activeTab, setActiveTab] = useState<VaultTab>(initialTab);
   const [searchQuery, setSearchQuery] = useState(initialSearch);
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, {
+    delay: 400,
+    normalize: (value: string) => value.trim(),
+  });
   const [filters, setFilters] = useState({
     people: normalizedInitialPeople,
     locations: normalizedInitialLocations,
@@ -193,7 +198,7 @@ const Vault: React.FC<{
   const mediaQueryParams = useMemo(
     () => ({
       sortBy,
-      search: searchQuery.trim() || undefined,
+      search: debouncedSearchQuery || undefined,
       people: filters.people.length ? filters.people : undefined,
       locations: filters.locations.length ? filters.locations : undefined,
       types: filters.types.length ? filters.types : undefined,
@@ -201,7 +206,7 @@ const Vault: React.FC<{
       dateFrom: toDateParam(filters.startDate),
       dateTo: toDateParam(filters.endDate),
     }),
-    [filters.era, filters.endDate, filters.locations, filters.people, filters.startDate, filters.types, searchQuery, sortBy],
+    [debouncedSearchQuery, filters.era, filters.endDate, filters.locations, filters.people, filters.startDate, filters.types, sortBy],
   );
 
   const {
@@ -320,6 +325,12 @@ const Vault: React.FC<{
     if (searchParams.sort && searchParams.view && currentSearchTab === activeTab) return;
     syncVaultSearch(searchQuery, sortBy, view, filters, true, activeTab);
   }, [activeTab, filters, searchParams.sort, searchParams.tab, searchParams.view, searchQuery, sortBy, view]);
+
+  useEffect(() => {
+    const currentSearch = initialSearch.trim();
+    if (debouncedSearchQuery === currentSearch) return;
+    syncVaultSearch(debouncedSearchQuery, sortBy, view, filters, true, activeTab);
+  }, [activeTab, debouncedSearchQuery, filters, initialSearch, sortBy, view]);
 
   const toggleFav = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -657,7 +668,6 @@ const Vault: React.FC<{
             onChange={(e) => {
               const nextValue = e.target.value;
               setSearchQuery(nextValue);
-              syncVaultSearch(nextValue, sortBy, view, filters);
             }}
             placeholder={t.vault.searchPlaceholder}
             className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl py-2.5 pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary/20 dark:text-slate-200"

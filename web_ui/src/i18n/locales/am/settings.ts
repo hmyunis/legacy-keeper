@@ -54,6 +54,13 @@ export const settings = {
       private: { label: "የግል ሁነታ", desc: "በነባሪ አዲስ ሰቀላዎችን ማየት የሚችሉት እርስዎ ብቻ ነዎት።" },
       family: { label: "የቤተሰብ ድርሻ", desc: "በራስ-ሰር ከቤተሰብ አባላት ጋር ይጋራል።" }
     },
+    safetyWindow: {
+      title: "የመሰረዣ ደህንነት መስኮት",
+      description: "Contributor አባላት የራሳቸውን ሰቀላ ብቻ እና ከሰቀላ በኋላ በዚህ የጊዜ መስኮት ውስጥ ብቻ መሰረዝ ይችላሉ።",
+      minutesLabel: "ደቂቃ (0 እስከ 10080)",
+      save: "መስኮቱን አስቀምጥ",
+      saving: "በማስቀመጥ ላይ..."
+    },
     health: "የማህደር ጤና",
     healthDesc: "የስርዓት ቅኝት በ1950ዎቹ ስብስብ ውስጥ 12 ተደጋጋሚ መዝገቦች መገኘታቸውን ያሳያል። ማጽዳት ይመከራል።",
     leave: {
@@ -61,6 +68,7 @@ export const settings = {
       description: "ወዲያውኑ ወደዚህ የቤተሰብ ማከማቻ መዳረሻዎን ያጣሉ። ዳግም ለመቀላቀል አዲስ ግብዣ ያስፈልጋል።",
       button: "ማከማቻን ተው",
       loading: "በመውጣት ላይ...",
+      adminMustTransferFirst: "አስተዳዳሪዎች ከማከማቻው ከመውጣታቸው በፊት ባለቤትነትን ማስተላለፍ አለባቸው።",
       confirmPrompt: "ከዚህ ማከማቻ መውጣት እርግጠኛ ነዎት?",
       noVaultSelected: "ንቁ ማከማቻ አልተመረጠም።",
       success: "በተሳካ ሁኔታ ከማከማቻው ወጥተዋል።",
@@ -76,8 +84,13 @@ export const settings = {
       ownerOnly: "ባለቤትነትን ማስተላለፍ የሚችለው የአሁኑ ባለቤት ብቻ ነው።",
       noVaultSelected: "ንቁ ማከማቻ አልተመረጠም።",
       noTargetSelected: "እባክዎ መጀመሪያ አባል ይምረጡ።",
+      passwordLabel: "የአስተዳዳሪ የይለፍ ቃል",
+      passwordPlaceholder: "የአሁኑን የይለፍ ቃል ያስገቡ",
+      passwordRequired: "ባለቤትነት ለማስተላለፍ የይለፍ ቃል ያስፈልጋል።",
       confirmPrompt: "ባለቤትነትን ወደዚህ ያስተላልፉ:",
+      confirmConsequence: "ከማስተላለፉ በኋላ ሚናዎ ወደ Contributor ይቀንሳል እና የአስተዳዳሪ ቅንብሮችን መዳረሻ አይኖርዎትም።",
       success: "ባለቤትነት በተሳካ ሁኔታ ተላልፏል።",
+      roleUpdatedNotice: "ሚናዎ አሁን Contributor ነው። መዳረሻዎ ተዘምኗል።",
       error: "ባለቤትነት ማስተላለፍ አልተቻለም",
       errorDesc: "እባክዎ እንደገና ይሞክሩ።"
     },

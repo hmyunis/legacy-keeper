@@ -1,25 +1,35 @@
 from collections import defaultdict
+import uuid
 
 from rest_framework import viewsets, permissions, status, decorators, exceptions
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
-from django.db.models import Q, Sum, Value, BigIntegerField
+from django.db.models import Q, Sum, Value, BigIntegerField, F
 from django.db.models.functions import Coalesce
 from django.utils import timezone
+from django.contrib.auth import get_user_model
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import FamilyVault, Membership, Invite
 from .serializers import (
     FamilyVaultSerializer, 
     MembershipSerializer, 
     InviteCreateSerializer, 
-    InviteProcessSerializer
+    InviteProcessSerializer,
+    InvitePreviewSerializer,
+    InviteAcceptSerializer,
+    ShareableInviteCreateSerializer,
+    ShareableInviteSerializer,
 )
 from .permissions import IsVaultAdmin
 from core.services import EmailService
 from django.conf import settings
 from media.models import MediaItem
 from genealogy.models import MediaTag
+from users.serializers import serialize_user_payload
+
+User = get_user_model()
 
 class FamilyVaultViewSet(viewsets.ModelViewSet):
     """
@@ -302,6 +312,7 @@ class FamilyVaultViewSet(viewsets.ModelViewSet):
 
                 existing_invite = Invite.objects.filter(
                     vault=vault,
+                    invite_type=Invite.Types.EMAIL,
                     email__iexact=normalized_email,
                     is_used=False,
                     expires_at__gt=timezone.now(),
@@ -316,6 +327,7 @@ class FamilyVaultViewSet(viewsets.ModelViewSet):
                 vault=vault,
                 created_by=request.user,
                 email=normalized_email or invite_email,
+                invite_type=Invite.Types.EMAIL,
             )
             
             # Construct Link
@@ -326,7 +338,7 @@ class FamilyVaultViewSet(viewsets.ModelViewSet):
                 email_service = EmailService()
                 email_service.send_basic_email(
                     to_email=invite.email,
-                    subject=f"Join {vault.name} Family Vault",
+                    subject=f"Join {vault.name}",
                     html_content=f"<p>You have been invited to join the <strong>{vault.name}</strong> vault.</p><p><a href='{join_link}'>Click here to join</a></p>"
                 )
 
@@ -336,6 +348,85 @@ class FamilyVaultViewSet(viewsets.ModelViewSet):
                 "token": invite.token
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def _get_shareable_invite(self, vault, invite_id):
+        try:
+            invite_id_value = str(uuid.UUID(str(invite_id).strip()))
+        except (TypeError, ValueError, AttributeError):
+            raise exceptions.NotFound("Shareable link not found")
+        return get_object_or_404(
+            Invite,
+            id=invite_id_value,
+            vault=vault,
+            invite_type=Invite.Types.SHAREABLE,
+        )
+
+    @decorators.action(detail=True, methods=['get', 'post'], url_path='shareable-links', permission_classes=[IsVaultAdmin])
+    def shareable_links(self, request, pk=None):
+        vault = self.get_object()
+
+        if request.method.lower() == 'get':
+            links = Invite.objects.filter(
+                vault=vault,
+                invite_type=Invite.Types.SHAREABLE,
+            ).order_by('-created_at')
+            page = self.paginate_queryset(links)
+            if page is not None:
+                serializer = ShareableInviteSerializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+
+            serializer = ShareableInviteSerializer(links, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        serializer = ShareableInviteCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        invite = serializer.save(
+            vault=vault,
+            created_by=request.user,
+            email=None,
+            invite_type=Invite.Types.SHAREABLE,
+            is_used=False,
+        )
+        payload = ShareableInviteSerializer(invite).data
+        return Response(
+            {
+                "message": "Shareable link generated.",
+                "invite": payload,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @decorators.action(
+        detail=True,
+        methods=['post'],
+        url_path=r'shareable-links/(?P<invite_id>[^/.]+)/revoke',
+        permission_classes=[IsVaultAdmin],
+    )
+    def revoke_shareable_link(self, request, pk=None, invite_id=None):
+        vault = self.get_object()
+        invite = self._get_shareable_invite(vault, invite_id)
+
+        if invite.is_used:
+            return Response(
+                {"message": "Shareable link is already revoked."},
+                status=status.HTTP_200_OK,
+            )
+
+        invite.is_used = True
+        invite.save(update_fields=['is_used'])
+        return Response({"message": "Shareable link revoked successfully."}, status=status.HTTP_200_OK)
+
+    @decorators.action(
+        detail=True,
+        methods=['delete'],
+        url_path=r'shareable-links/(?P<invite_id>[^/.]+)',
+        permission_classes=[IsVaultAdmin],
+    )
+    def delete_shareable_link(self, request, pk=None, invite_id=None):
+        vault = self.get_object()
+        invite = self._get_shareable_invite(vault, invite_id)
+        invite.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @decorators.action(detail=True, methods=['post'])
     def leave(self, request, pk=None):
@@ -353,23 +444,11 @@ class FamilyVaultViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if vault.owner_id == request.user.id:
+        if membership.role == Membership.Roles.ADMIN:
             return Response(
-                {"error": "Vault owner cannot leave. Transfer ownership first."},
+                {"error": "Admins cannot leave the vault directly. Transfer ownership first."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        if membership.role == Membership.Roles.ADMIN:
-            admin_count = Membership.objects.filter(
-                vault=vault,
-                role=Membership.Roles.ADMIN,
-                is_active=True,
-            ).count()
-            if admin_count <= 1:
-                return Response(
-                    {"error": "Cannot leave as the last vault admin"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
 
         membership.delete()
         return Response({"message": "Left vault successfully"}, status=status.HTTP_200_OK)
@@ -382,10 +461,29 @@ class FamilyVaultViewSet(viewsets.ModelViewSet):
         if vault.owner_id != request.user.id:
             raise exceptions.PermissionDenied("Only vault owner can transfer ownership")
 
-        membership_id = request.data.get('membershipId')
+        membership_id = request.data.get('membershipId') or request.data.get('membership_id')
         if not membership_id:
             return Response(
                 {"membershipId": ["This field is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        password = request.data.get('password')
+        if password in (None, ''):
+            return Response(
+                {"password": ["This field is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not isinstance(password, str):
+            return Response(
+                {"password": ["Invalid password input."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not request.user.check_password(password):
+            return Response(
+                {"password": ["Incorrect password."]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -407,7 +505,28 @@ class FamilyVaultViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if membership.role != Membership.Roles.CONTRIBUTOR:
+            return Response(
+                {"error": "Ownership can only be transferred to a contributor."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         with transaction.atomic():
+            current_owner_membership = Membership.objects.select_for_update().filter(
+                vault=vault,
+                user=request.user,
+                is_active=True,
+            ).first()
+            if not current_owner_membership:
+                return Response(
+                    {"error": "Current owner membership not found."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if current_owner_membership.role != Membership.Roles.CONTRIBUTOR:
+                current_owner_membership.role = Membership.Roles.CONTRIBUTOR
+                current_owner_membership.save(update_fields=['role'])
+
             if membership.role != Membership.Roles.ADMIN:
                 membership.role = Membership.Roles.ADMIN
                 membership.save(update_fields=['role'])
@@ -471,6 +590,17 @@ class MembershipViewSet(viewsets.GenericViewSet):
         local_part = email.split('@')[0].replace('.', ' ').replace('_', ' ').strip()
         return local_part.title() if local_part else "Pending Invite"
 
+    def _extract_invite_pk(self, member_id):
+        if not member_id.startswith('invite_'):
+            return None
+
+        invite_pk = member_id.replace('invite_', '', 1).strip()
+        try:
+            uuid.UUID(invite_pk)
+        except (ValueError, TypeError, AttributeError):
+            raise exceptions.NotFound("Invite not found")
+        return invite_pk
+
     def list(self, request, *args, **kwargs):
         vault_pk = self.kwargs['vault_pk']
         queryset = self.get_queryset()
@@ -518,6 +648,8 @@ class MembershipViewSet(viewsets.GenericViewSet):
         if include_pending_invites:
             invites = Invite.objects.filter(
                 vault_id=vault_pk,
+                invite_type=Invite.Types.EMAIL,
+                email__isnull=False,
                 is_used=False,
                 expires_at__gt=timezone.now(),
             ).order_by('-created_at')
@@ -558,15 +690,13 @@ class MembershipViewSet(viewsets.GenericViewSet):
         self._ensure_request_user_is_admin(vault_pk)
 
         member_id = str(self.kwargs['pk'])
-        if member_id.startswith('invite_'):
-            invite_pk = member_id.replace('invite_', '', 1)
-            if not invite_pk.isdigit():
-                return Response(status=status.HTTP_404_NOT_FOUND)
-
+        invite_pk = self._extract_invite_pk(member_id)
+        if invite_pk:
             invite = get_object_or_404(
                 Invite,
                 id=invite_pk,
                 vault_id=vault_pk,
+                invite_type=Invite.Types.EMAIL,
                 is_used=False,
             )
             invite.is_used = True
@@ -606,22 +736,20 @@ class MembershipViewSet(viewsets.GenericViewSet):
         self._ensure_request_user_is_admin(vault_pk)
 
         role = (request.data.get('role') or '').strip().upper()
-        if role not in dict(Membership.Roles.choices):
+        if role not in (Membership.Roles.CONTRIBUTOR, Membership.Roles.VIEWER):
             return Response(
-                {"role": ["Role must be one of ADMIN, CONTRIBUTOR, VIEWER."]},
+                {"role": ["Role must be one of CONTRIBUTOR, VIEWER. Admin is only assigned via transfer ownership."]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         member_id = str(self.kwargs['pk'])
-        if member_id.startswith('invite_'):
-            invite_pk = member_id.replace('invite_', '', 1)
-            if not invite_pk.isdigit():
-                return Response(status=status.HTTP_404_NOT_FOUND)
-
+        invite_pk = self._extract_invite_pk(member_id)
+        if invite_pk:
             invite = get_object_or_404(
                 Invite,
                 id=invite_pk,
                 vault_id=vault_pk,
+                invite_type=Invite.Types.EMAIL,
                 is_used=False,
                 expires_at__gt=timezone.now(),
             )
@@ -694,8 +822,247 @@ class MembershipViewSet(viewsets.GenericViewSet):
         )
 
 class JoinVaultView(viewsets.GenericViewSet):
-    permission_classes = [permissions.IsAuthenticated]
     serializer_class = InviteProcessSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_permissions(self):
+        if self.action == 'process':
+            return [permissions.IsAuthenticated()]
+        return [permissions.AllowAny()]
+
+    def _get_invite(self, token):
+        return Invite.objects.select_related('vault').filter(token=token).first()
+
+    def _increment_successful_joins(self, invite):
+        Invite.objects.filter(id=invite.id).update(successful_joins=F('successful_joins') + 1)
+
+    def _build_invite_payload(self, invite):
+        invite_email = invite.email.strip().lower() if invite.email else None
+        existing_user = User.objects.filter(email__iexact=invite_email).first() if invite_email else None
+        account_exists = bool(
+            existing_user
+            and Membership.objects.filter(
+                user=existing_user,
+                is_active=True,
+            ).exists()
+        )
+        already_member = bool(
+            existing_user
+            and Membership.objects.filter(
+                vault=invite.vault,
+                user=existing_user,
+                is_active=True,
+            ).exists()
+        )
+        return {
+            "vault_id": invite.vault.id,
+            "vault_name": invite.vault.name,
+            "role": invite.role,
+            "invite_email": invite_email,
+            "requires_email": not bool(invite_email),
+            "account_exists": account_exists,
+            "already_member": already_member,
+            "can_self_register": not account_exists and not already_member,
+        }
+
+    @decorators.action(detail=False, methods=['get'])
+    def preview(self, request):
+        serializer = InvitePreviewSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        token = serializer.validated_data['token']
+
+        invite = self._get_invite(token)
+        if not invite or not invite.is_valid():
+            return Response(
+                {
+                    "error": "This invite link is invalid, expired, or already used.",
+                    "code": "INVALID_INVITE",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payload = self._build_invite_payload(invite)
+        return Response(
+            {
+                "message": "Invite is valid. Complete your details to join this vault.",
+                **payload,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @decorators.action(detail=False, methods=['post'])
+    def accept(self, request):
+        serializer = InviteAcceptSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        token = serializer.validated_data['token']
+        invite = self._get_invite(token)
+        if not invite or not invite.is_valid():
+            return Response(
+                {
+                    "error": "This invite link is invalid, expired, or already used.",
+                    "code": "INVALID_INVITE",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        invite_email = invite.email.strip().lower() if invite.email else None
+        submitted_email = serializer.validated_data.get('email')
+        target_email = invite_email or submitted_email
+
+        if invite.role == Membership.Roles.ADMIN:
+            return Response(
+                {
+                    "error": "Admin invites are not supported. Ask the current owner to transfer ownership.",
+                    "code": "ADMIN_ROLE_NOT_ALLOWED",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not target_email:
+            return Response(
+                {"email": ["Email is required for this invite link."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if invite_email and submitted_email and submitted_email.lower() != invite_email.lower():
+            return Response(
+                {"error": "This invite is tied to a different email address.", "code": "INVITE_EMAIL_MISMATCH"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        existing_user = User.objects.filter(email__iexact=target_email).first()
+        if existing_user:
+            existing_membership = Membership.objects.filter(
+                user=existing_user,
+                vault=invite.vault,
+                is_active=True,
+            ).exists()
+            if existing_membership:
+                return Response(
+                    {
+                        "error": "This email is already a member of this vault.",
+                        "code": "ALREADY_MEMBER",
+                        "email": target_email,
+                        "vault_name": invite.vault.name,
+                        "role": invite.role,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            has_any_active_membership = Membership.objects.filter(
+                user=existing_user,
+                is_active=True,
+            ).exists()
+            if has_any_active_membership:
+                return Response(
+                    {
+                        "error": "An account with this email already exists. Log in to accept this invite.",
+                        "code": "ACCOUNT_EXISTS",
+                        "email": target_email,
+                        "vault_name": invite.vault.name,
+                        "role": invite.role,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            # Allow users with no active memberships to rejoin through the same invite form flow.
+            # This is intentionally restricted to email-targeted invites.
+            if not invite_email:
+                return Response(
+                    {
+                        "error": "An account with this email already exists. Log in to accept this invite.",
+                        "code": "ACCOUNT_EXISTS",
+                        "email": target_email,
+                        "vault_name": invite.vault.name,
+                        "role": invite.role,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            with transaction.atomic():
+                existing_user.full_name = serializer.validated_data['full_name']
+                existing_user.set_password(serializer.validated_data['password'])
+                existing_user.is_active = True
+                existing_user.is_verified = True
+                existing_user.save(update_fields=['full_name', 'password', 'is_active', 'is_verified'])
+
+                membership, created = Membership.objects.get_or_create(
+                    user=existing_user,
+                    vault=invite.vault,
+                    defaults={
+                        'role': invite.role,
+                        'is_active': True,
+                    },
+                )
+                if not created:
+                    changed_fields = []
+                    if membership.role != invite.role:
+                        membership.role = invite.role
+                        changed_fields.append('role')
+                    if not membership.is_active:
+                        membership.is_active = True
+                        changed_fields.append('is_active')
+                    if changed_fields:
+                        membership.save(update_fields=changed_fields)
+
+                self._increment_successful_joins(invite)
+
+                if invite.invite_type == Invite.Types.EMAIL:
+                    invite.is_used = True
+                    invite.save(update_fields=['is_used'])
+
+            refresh = RefreshToken.for_user(existing_user)
+            return Response(
+                {
+                    "message": "Joined vault successfully",
+                    "vault_id": invite.vault.id,
+                    "vault_name": invite.vault.name,
+                    "role": invite.role,
+                    "already_member": False,
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                    "user": serialize_user_payload(existing_user),
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=target_email,
+                password=serializer.validated_data['password'],
+                full_name=serializer.validated_data['full_name'],
+                is_active=True,
+                is_verified=True,
+            )
+
+            Membership.objects.create(
+                user=user,
+                vault=invite.vault,
+                role=invite.role,
+                is_active=True,
+            )
+
+            self._increment_successful_joins(invite)
+
+            if invite.invite_type == Invite.Types.EMAIL:
+                invite.is_used = True
+                invite.save(update_fields=['is_used'])
+
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {
+                "message": "Joined vault successfully",
+                "vault_id": invite.vault.id,
+                "vault_name": invite.vault.name,
+                "role": invite.role,
+                "already_member": False,
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "user": serialize_user_payload(user),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @decorators.action(detail=False, methods=['post'])
     def process(self, request):
@@ -703,21 +1070,32 @@ class JoinVaultView(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
         token = serializer.validated_data['token']
 
-        invite = get_object_or_404(Invite, token=token)
-
-        if not invite.is_valid():
-            return Response({"error": "Invite expired or used"}, status=status.HTTP_400_BAD_REQUEST)
+        invite = self._get_invite(token)
+        if not invite or not invite.is_valid():
+            return Response(
+                {"error": "Invite expired or used", "code": "INVALID_INVITE"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if invite.email and invite.email.lower() != request.user.email.lower():
             return Response(
-                {"error": "This invite is restricted to a different email address"},
+                {"error": "This invite is restricted to a different email address", "code": "INVITE_EMAIL_MISMATCH"},
                 status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if invite.role == Membership.Roles.ADMIN:
+            return Response(
+                {
+                    "error": "Admin invites are not supported. Ask the current owner to transfer ownership.",
+                    "code": "ADMIN_ROLE_NOT_ALLOWED",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         membership = Membership.objects.filter(user=request.user, vault=invite.vault).first()
         vault_payload = {
-            "vaultId": invite.vault.id,
-            "vaultName": invite.vault.name,
+            "vault_id": invite.vault.id,
+            "vault_name": invite.vault.name,
             "role": invite.role,
         }
         if membership and membership.is_active:
@@ -742,10 +1120,12 @@ class JoinVaultView(viewsets.GenericViewSet):
                 role=invite.role
             )
 
+        self._increment_successful_joins(invite)
+
         # Mark used if it was a single-use email invite
-        if invite.email:
+        if invite.invite_type == Invite.Types.EMAIL:
             invite.is_used = True
-            invite.save()
+            invite.save(update_fields=['is_used'])
 
         return Response(
             {

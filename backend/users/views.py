@@ -1,5 +1,6 @@
 from uuid import uuid4
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
+from datetime import timedelta
 
 from rest_framework import generics, status, views, permissions
 from rest_framework.response import Response
@@ -8,6 +9,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from .serializers import (
     UserRegistrationSerializer, 
@@ -16,6 +18,8 @@ from .serializers import (
     EmailVerificationSerializer,
     GoogleOAuthLoginSerializer,
     ResendVerificationSerializer,
+    ForgotPasswordSerializer,
+    ResetPasswordSerializer,
     serialize_user_payload,
 )
 from core.services import EmailService
@@ -51,10 +55,18 @@ def ensure_personal_vault(user):
     )
 
 
-def send_verification_email(user):
+def send_verification_email(user, join_token=None):
     email_service = EmailService()
-    encoded_email = quote(user.email)
-    verification_link = f"{settings.FRONTEND_URL}/verify?token={user.verification_token}&email={encoded_email}"
+    query_params = {
+        "token": str(user.verification_token),
+        "email": user.email,
+    }
+    if join_token:
+        join_token_str = str(join_token)
+        query_params["joinToken"] = join_token_str
+        query_params["redirect"] = f"/join/{join_token_str}"
+
+    verification_link = f"{settings.FRONTEND_URL}/verify?{urlencode(query_params)}"
 
     subject = "Welcome to LegacyKeeper - Verify your Email"
     html_content = f"""
@@ -72,16 +84,44 @@ def send_verification_email(user):
     )
 
 
+def send_password_reset_email(user):
+    email_service = EmailService()
+    user.reset_password_token = uuid4()
+    user.reset_password_token_expires_at = timezone.now() + timedelta(hours=1)
+    user.save(update_fields=['reset_password_token', 'reset_password_token_expires_at'])
+
+    encoded_email = quote(user.email)
+    reset_link = (
+        f"{settings.FRONTEND_URL}/reset-password"
+        f"?token={user.reset_password_token}&email={encoded_email}"
+    )
+
+    subject = "LegacyKeeper Password Reset"
+    html_content = f"""
+        <h1>Password reset requested</h1>
+        <p>Click the link below to reset your password. This link expires in 1 hour.</p>
+        <a href="{reset_link}">Reset Password</a>
+        <p>If you did not request this, you can ignore this email.</p>
+    """
+
+    email_service.send_basic_email(
+        to_email=user.email,
+        subject=subject,
+        html_content=html_content,
+    )
+
+
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = (permissions.AllowAny,)
     serializer_class = UserRegistrationSerializer
 
     def perform_create(self, serializer):
+        join_token = serializer.validated_data.get('join_token')
         user = serializer.save()
 
         # Send verification email
-        send_verification_email(user)
+        send_verification_email(user, join_token=join_token)
 
 class VerifyEmailView(views.APIView):
     permission_classes = (permissions.AllowAny,)
@@ -119,6 +159,7 @@ class ResendVerificationEmailView(views.APIView):
         serializer.is_valid(raise_exception=True)
 
         email = serializer.validated_data['email']
+        join_token = serializer.validated_data.get('join_token')
         user = User.objects.filter(email__iexact=email).first()
 
         # Return generic success for unknown users to avoid account enumeration.
@@ -133,10 +174,50 @@ class ResendVerificationEmailView(views.APIView):
 
         user.verification_token = uuid4()
         user.save(update_fields=['verification_token'])
-        send_verification_email(user)
+        send_verification_email(user, join_token=join_token)
 
         return Response(
             {"message": "Verification email sent. Please check your inbox."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ForgotPasswordView(views.APIView):
+    permission_classes = (permissions.AllowAny,)
+    serializer_class = ForgotPasswordSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data['email']
+        user = User.objects.filter(email__iexact=email).first()
+        if user:
+            send_password_reset_email(user)
+
+        return Response(
+            {"message": "If an account exists for this email, a reset link has been sent."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ResetPasswordView(views.APIView):
+    permission_classes = (permissions.AllowAny,)
+    serializer_class = ResetPasswordSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = serializer.validated_data['user']
+        new_password = serializer.validated_data['new_password']
+        user.set_password(new_password)
+        user.reset_password_token = None
+        user.reset_password_token_expires_at = None
+        user.save(update_fields=['password', 'reset_password_token', 'reset_password_token_expires_at'])
+
+        return Response(
+            {"message": "Password reset successful. You can now log in."},
             status=status.HTTP_200_OK,
         )
 
@@ -211,6 +292,7 @@ class GoogleOAuthLoginView(views.APIView):
         if created:
             user.set_unusable_password()
             user.save(update_fields=['password'])
+            ensure_personal_vault(user)
         else:
             should_save = False
             if not user.is_active:
@@ -225,7 +307,15 @@ class GoogleOAuthLoginView(views.APIView):
             if should_save:
                 user.save()
 
-        ensure_personal_vault(user)
+            has_active_membership = Membership.objects.filter(user=user, is_active=True).exists()
+            if not has_active_membership:
+                return Response(
+                    {
+                        "error": "You no longer have access to any vault. Ask an admin for a new invite link.",
+                        "code": "INVITE_REQUIRED",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         refresh = RefreshToken.for_user(user)
 

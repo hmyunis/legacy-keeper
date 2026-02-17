@@ -17,7 +17,6 @@ const InviteModal: React.FC<InviteModalProps> = ({ email, role, isPending, onEma
   const { t } = useTranslation();
 
   const roleOptions = [
-    { id: UserRole.ADMIN, label: t.modals.invite.roles.admin.label, desc: t.modals.invite.roles.admin.desc },
     { id: UserRole.CONTRIBUTOR, label: t.modals.invite.roles.contributor.label, desc: t.modals.invite.roles.contributor.desc },
     { id: UserRole.VIEWER, label: t.modals.invite.roles.viewer.label, desc: t.modals.invite.roles.viewer.desc },
   ];

@@ -5,7 +5,8 @@ import {
   Calendar, 
   Plus, 
   ChevronRight, 
-  GitBranch
+  GitBranch,
+  Image
 } from 'lucide-react';
 import { useMedia } from '../hooks/useMedia';
 import { hasPermission } from '@/config/permissions';
@@ -124,7 +125,26 @@ const Dashboard: React.FC = () => {
           <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
             {isLoadingMedia 
               ? Array.from({ length: 4 }).map((_, i) => <MediaCardSkeleton key={i} />)
-              : allMedia.slice(0, 4).map((item) => (
+              : allMedia.length === 0 ? (
+                <div className="col-span-full">
+                  <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl p-8 sm:p-12 flex flex-col items-center justify-center text-center">
+                    <div className="w-16 h-16 bg-slate-100 dark:bg-slate-700 rounded-full flex items-center justify-center mb-4">
+                      <Image size={32} className="text-slate-400 dark:text-slate-500" />
+                    </div>
+                    <h3 className="text-base font-bold text-slate-700 dark:text-slate-300 mb-2">Your vault is empty</h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm mb-4">Start preserving your family's precious memories by uploading your first photo or video.</p>
+                    {currentUser && hasPermission(currentUser.role, 'UPLOAD_MEDIA') && (
+                      <button 
+                        onClick={handleAddMemory}
+                        className="bg-primary text-white px-6 py-3 rounded-xl font-bold text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-lg"
+                      >
+                        <Plus size={18} />
+                        Upload First Memory
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : allMedia.slice(0, 4).map((item) => (
                 <div 
                   key={item.id} 
                   onClick={() => navigate({ to: '/vault' })}

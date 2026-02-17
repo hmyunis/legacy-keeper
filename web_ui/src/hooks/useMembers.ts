@@ -10,6 +10,7 @@ const DEFAULT_PAGE_SIZE = 20;
 
 interface UseMembersOptions {
   enabled?: boolean;
+  retry?: boolean | number;
 }
 
 export const useMembers = (
@@ -60,6 +61,7 @@ export const useMembers = (
     },
     initialPageParam: 1,
     enabled: Boolean(activeVaultId) && (options?.enabled ?? true),
+    retry: options?.retry ?? false,
     staleTime: 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -82,6 +84,85 @@ export const useInviteMember = () => {
     },
     onError: (error) => {
       toast.error('Failed to dispatch invitation', {
+        description: getApiErrorMessage(error, 'Please try again.'),
+      });
+    },
+  });
+};
+
+export const useShareableInvites = (params?: { page?: number; pageSize?: number }) => {
+  const { activeVaultId } = useAuthStore();
+  const page = params?.page || 1;
+  const pageSize = params?.pageSize || 10;
+
+  return useQuery({
+    queryKey: ['shareableInvites', activeVaultId || null, page, pageSize],
+    queryFn: () => {
+      if (!activeVaultId) throw new Error('No active vault selected');
+      return membersApi.listShareableInvites(activeVaultId, { page, pageSize });
+    },
+    enabled: Boolean(activeVaultId),
+    staleTime: 60 * 1000,
+  });
+};
+
+export const useCreateShareableInvite = () => {
+  const queryClient = useQueryClient();
+  const { activeVaultId } = useAuthStore();
+
+  return useMutation({
+    mutationFn: ({ role, expiresAt }: { role: UserRole; expiresAt: string }) => {
+      if (!activeVaultId) throw new Error('No active vault selected');
+      return membersApi.createShareableInvite(activeVaultId, { role, expiresAt });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shareableInvites'] });
+      toast.success('Shareable link created');
+    },
+    onError: (error) => {
+      toast.error('Failed to create shareable link', {
+        description: getApiErrorMessage(error, 'Please review details and try again.'),
+      });
+    },
+  });
+};
+
+export const useRevokeShareableInvite = () => {
+  const queryClient = useQueryClient();
+  const { activeVaultId } = useAuthStore();
+
+  return useMutation({
+    mutationFn: (inviteId: string) => {
+      if (!activeVaultId) throw new Error('No active vault selected');
+      return membersApi.revokeShareableInvite(activeVaultId, inviteId);
+    },
+    onSuccess: (payload) => {
+      queryClient.invalidateQueries({ queryKey: ['shareableInvites'] });
+      toast.success(payload.message || 'Shareable link revoked');
+    },
+    onError: (error) => {
+      toast.error('Failed to revoke shareable link', {
+        description: getApiErrorMessage(error, 'Please try again.'),
+      });
+    },
+  });
+};
+
+export const useDeleteShareableInvite = () => {
+  const queryClient = useQueryClient();
+  const { activeVaultId } = useAuthStore();
+
+  return useMutation({
+    mutationFn: (inviteId: string) => {
+      if (!activeVaultId) throw new Error('No active vault selected');
+      return membersApi.deleteShareableInvite(activeVaultId, inviteId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shareableInvites'] });
+      toast.success('Shareable link deleted');
+    },
+    onError: (error) => {
+      toast.error('Failed to delete shareable link', {
         description: getApiErrorMessage(error, 'Please try again.'),
       });
     },
@@ -144,6 +225,9 @@ export const useLeaveVault = () => {
       if (activeVaultId === vaultId) {
         setActiveVault(null);
         logout();
+        if (typeof window !== 'undefined') {
+          window.localStorage.clear();
+        }
       }
 
       queryClient.invalidateQueries({ queryKey: ['members'] });
@@ -168,19 +252,14 @@ export const useTransferVaultOwnership = () => {
   const { activeVaultId } = useAuthStore();
 
   return useMutation({
-    mutationFn: (membershipId: string) => {
+    mutationFn: ({ membershipId, password }: { membershipId: string; password: string }) => {
       if (!activeVaultId) throw new Error('No active vault selected');
-      return membersApi.transferOwnership(activeVaultId, { membershipId });
+      return membersApi.transferOwnership(activeVaultId, { membershipId, password });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vaults'] });
+      queryClient.invalidateQueries({ queryKey: ['vault'] });
       queryClient.invalidateQueries({ queryKey: ['members'] });
-      toast.success('Vault ownership transferred successfully');
-    },
-    onError: (error) => {
-      toast.error('Failed to transfer ownership', {
-        description: getApiErrorMessage(error, 'Please try again.'),
-      });
     },
   });
 };
@@ -198,6 +277,35 @@ export const useJoinVault = () => {
     onError: (error) => {
       toast.error('Failed to join vault', {
         description: getApiErrorMessage(error, 'Please check your invitation link and try again.'),
+      });
+    },
+  });
+};
+
+export const useJoinInvitePreview = (token?: string) =>
+  useQuery({
+    queryKey: ['joinInvitePreview', token || null],
+    queryFn: () => {
+      if (!token) throw new Error('Invite token is required');
+      return membersApi.previewJoinInvite(token);
+    },
+    enabled: Boolean(token),
+    retry: false,
+  });
+
+export const useAcceptJoinInvite = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: membersApi.acceptJoinInvite,
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ['vaults'] });
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+      toast.success(response.message || 'Successfully joined vault');
+    },
+    onError: (error) => {
+      toast.error('Unable to complete invitation', {
+        description: getApiErrorMessage(error, 'Please review your details and try again.'),
       });
     },
   });

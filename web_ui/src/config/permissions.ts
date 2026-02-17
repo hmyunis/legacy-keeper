@@ -17,7 +17,7 @@ const PERMISSIONS: Record<UserRole, readonly PermissionAction[]> = {
     'EDIT_TREE',
     'VIEW_LOGS',
   ],
-  [UserRole.CONTRIBUTOR]: ['UPLOAD_MEDIA', 'EDIT_MEDIA'],
+  [UserRole.CONTRIBUTOR]: ['UPLOAD_MEDIA', 'EDIT_MEDIA', 'DELETE_MEDIA'],
   [UserRole.VIEWER]: [],
 };
 

@@ -66,6 +66,10 @@ class Membership(TimeStampedModel):
         return f"{self.user.email} - {self.vault.name} ({self.role})"
 
 class Invite(TimeStampedModel):
+    class Types(models.TextChoices):
+        EMAIL = 'EMAIL', _('Email Invite')
+        SHAREABLE = 'SHAREABLE', _('Shareable Link')
+
     class Roles(models.TextChoices):
         ADMIN = 'ADMIN', _('Administrator')
         CONTRIBUTOR = 'CONTRIBUTOR', _('Contributor')
@@ -77,10 +81,12 @@ class Invite(TimeStampedModel):
     
     # If email is specified, only that email can join. If null, it's a public link.
     email = models.EmailField(null=True, blank=True)
+    invite_type = models.CharField(max_length=20, choices=Types.choices, default=Types.EMAIL)
     role = models.CharField(max_length=20, choices=Roles.choices, default=Roles.CONTRIBUTOR)
     
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)
+    successful_joins = models.PositiveIntegerField(default=0)
 
     def is_valid(self):
         return not self.is_used and self.expires_at > timezone.now()

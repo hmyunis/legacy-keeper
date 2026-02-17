@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from vaults.models import Membership
 
 User = get_user_model()
 
@@ -25,12 +26,14 @@ def serialize_user_payload(user):
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
+    join_token = serializers.UUIDField(write_only=True, required=False)
 
     class Meta:
         model = User
-        fields = ('id', 'email', 'password', 'full_name')
+        fields = ('id', 'email', 'password', 'full_name', 'join_token')
 
     def create(self, validated_data):
+        validated_data.pop('join_token', None)
         # We enforce is_active=False until email verification
         user = User.objects.create_user(
             email=validated_data['email'],
@@ -76,6 +79,18 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 )
 
         data = super().validate(attrs)
+
+        has_active_membership = Membership.objects.filter(
+            user=self.user,
+            is_active=True,
+        ).exists()
+        if not has_active_membership:
+            raise serializers.ValidationError(
+                {
+                    "error": "You no longer have access to any vault. Ask an admin for a new invite link.",
+                    "code": "INVITE_REQUIRED",
+                }
+            )
         
         # Add extra data to the response
         data.update({
@@ -93,3 +108,31 @@ class GoogleOAuthLoginSerializer(serializers.Serializer):
 
 class ResendVerificationSerializer(serializers.Serializer):
     email = serializers.EmailField()
+    join_token = serializers.UUIDField(required=False)
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    token = serializers.UUIDField()
+    new_password = serializers.CharField(write_only=True, min_length=8, max_length=128)
+
+    def validate(self, attrs):
+        email = attrs.get('email')
+        token = attrs.get('token')
+        user = User.objects.filter(email__iexact=email).first()
+
+        if not user or not user.is_reset_password_token_valid(token):
+            raise serializers.ValidationError(
+                {"error": "Invalid or expired reset link."}
+            )
+
+        new_password = attrs.get('new_password')
+        if not new_password or len(new_password) < 6:
+            raise serializers.ValidationError({"new_password": ["Password must be at least 6 characters long."]})
+
+        attrs['user'] = user
+        return attrs

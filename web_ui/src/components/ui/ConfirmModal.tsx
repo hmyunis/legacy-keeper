@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
 
 type ConfirmVariant = 'danger' | 'primary';
@@ -11,6 +11,13 @@ interface ConfirmModalProps {
   cancelLabel?: string;
   variant?: ConfirmVariant;
   isPending?: boolean;
+  requirePassword?: boolean;
+  passwordValue?: string;
+  passwordLabel?: string;
+  passwordPlaceholder?: string;
+  passwordError?: string;
+  confirmDisabled?: boolean;
+  onPasswordChange?: (value: string) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -23,9 +30,18 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
   cancelLabel = 'Cancel',
   variant = 'danger',
   isPending = false,
+  requirePassword = false,
+  passwordValue = '',
+  passwordLabel = 'Password',
+  passwordPlaceholder = 'Enter your password',
+  passwordError,
+  confirmDisabled = false,
+  onPasswordChange,
   onConfirm,
   onCancel,
 }) => {
+  const passwordInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -38,6 +54,14 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [isOpen, isPending, onCancel]);
+
+  useEffect(() => {
+    if (!isOpen || !requirePassword) return;
+    const timer = window.setTimeout(() => {
+      passwordInputRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [isOpen, requirePassword]);
 
   if (!isOpen) return null;
 
@@ -68,6 +92,34 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
           <div className="space-y-2">
             <h3 className="text-base font-black text-slate-900 dark:text-slate-100">{title}</h3>
             <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">{message}</p>
+            {requirePassword ? (
+              <div className="space-y-1 pt-1">
+                <label className="text-[11px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                  {passwordLabel}
+                </label>
+                <input
+                  ref={passwordInputRef}
+                  type="password"
+                  value={passwordValue}
+                  onChange={(event) => onPasswordChange?.(event.target.value)}
+                  placeholder={passwordPlaceholder}
+                  autoComplete="current-password"
+                  className={`w-full px-3 py-2 text-sm rounded-xl border bg-white dark:bg-slate-900 ${
+                    passwordError
+                      ? 'border-rose-300 dark:border-rose-700 focus:ring-rose-200'
+                      : 'border-slate-200 dark:border-slate-700 focus:ring-primary/20'
+                  } focus:outline-none focus:ring-2`}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !isPending && !confirmDisabled) {
+                      onConfirm();
+                    }
+                  }}
+                />
+                {passwordError ? (
+                  <p className="text-xs text-rose-600 dark:text-rose-400">{passwordError}</p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -83,7 +135,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={isPending}
+            disabled={isPending || confirmDisabled}
             className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-50 ${confirmClass}`}
           >
             {confirmLabel}

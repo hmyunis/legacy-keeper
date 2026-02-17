@@ -60,6 +60,7 @@ const mapApiVaultToVaultSummary = (vault: ApiVault): VaultSummary => ({
   name: vault.name,
   familyName: vault.familyName || '',
   description: vault.description || '',
+  safetyWindowMinutes: Number(vault.safetyWindowMinutes ?? 60),
   storageQuality: vault.storageQuality
     ? vault.storageQuality.toLowerCase() as VaultSummary['storageQuality']
     : 'high',

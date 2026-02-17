@@ -30,7 +30,7 @@ export const settings = {
     subtitle: "Configure how the archival engine processes your family legacy.",
     rules: "Processing Rules",
     memberNoticeTitle: "Limited Access",
-    memberNoticeDesc: "Only vault admins can edit processing defaults. You can still leave this vault below.",
+    memberNoticeDesc: "Only vault Admin can edit processing defaults. You can still leave this vault below.",
     familyName: {
       title: "Family Name",
       description: "This name identifies the family for this vault and is used on lineage and timeline pages.",
@@ -54,13 +54,22 @@ export const settings = {
       private: { label: "Private Mode", desc: "Only you can see new uploads by default." },
       family: { label: "Family Share", desc: "Shared with the circle automatically." }
     },
+    safetyWindow: {
+      title: "Delete Safety Window",
+      description: "Contributors can delete only their own uploads, and only within this window after upload.",
+      minutesLabel: "minutes (0 to 10080)",
+      save: "Save Window",
+      saving: "Saving..."
+    },
     health: "Archival Health",
-    healthDesc: "System scan suggests 12 duplicate records found in 1950s collection. Clean-up recommended.",
+    healthDesc: "Scan your vault for duplicate records and optimize storage.",
+    healthClickHint: "Tap to analyze",
     leave: {
       title: "Leave This Vault",
       description: "You will lose access to this family vault immediately. You can rejoin only if someone invites you again.",
       button: "Leave Vault",
       loading: "Leaving...",
+      adminMustTransferFirst: "Admin must transfer ownership before leaving this vault.",
       confirmPrompt: "Are you sure you want to leave this vault?",
       noVaultSelected: "No active vault selected.",
       success: "You left the vault successfully.",
@@ -76,8 +85,13 @@ export const settings = {
       ownerOnly: "Only the current vault owner can transfer ownership.",
       noVaultSelected: "No active vault selected.",
       noTargetSelected: "Select a member first.",
+      passwordLabel: "Admin Password",
+      passwordPlaceholder: "Enter your current password",
+      passwordRequired: "Password is required to transfer ownership.",
       confirmPrompt: "Transfer ownership to:",
+      confirmConsequence: "After transfer, your role will be downgraded to Contributor and admin-only settings will no longer be available.",
       success: "Ownership transferred successfully.",
+      roleUpdatedNotice: "Your role is now Contributor. Access has been updated.",
       error: "Unable to transfer ownership",
       errorDesc: "Please try again."
     },

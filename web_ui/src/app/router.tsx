@@ -21,6 +21,8 @@ import Timeline from '@/pages/Timeline';
 import Unauthorized from '@/pages/Unauthorized';
 import Vault from '@/pages/Vault';
 import VerifyEmail from '@/pages/VerifyEmail';
+import ForgotPassword from '@/pages/ForgotPassword';
+import ResetPassword from '@/pages/ResetPassword';
 import { MediaType, UserRole } from '@/types';
 
 const browserHistory = createBrowserHistory();
@@ -32,7 +34,7 @@ const LOG_TIMEFRAMES = ['ALL', 'DAY', 'WEEK', 'MONTH'] as const;
 const VAULT_SORT = ['newest', 'oldest', 'title'] as const;
 const VAULT_VIEW = ['grid', 'list'] as const;
 const VAULT_TAB = ['all', 'favorites'] as const;
-const MEMBER_ROLE_FILTER = ['ALL', UserRole.ADMIN, UserRole.CONTRIBUTOR, UserRole.VIEWER] as const;
+const MEMBER_ROLE_FILTER = ['ALL', UserRole.CONTRIBUTOR, UserRole.VIEWER] as const;
 
 const asString = (value: unknown) => (typeof value === 'string' ? value : undefined);
 const asDateString = (value: unknown) =>
@@ -72,6 +74,25 @@ const verifyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/verify',
   component: VerifyEmail,
+});
+
+const forgotPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/forgot-password',
+  validateSearch: (search: Record<string, unknown>) => ({
+    email: asString(search.email),
+  }),
+  component: ForgotPassword,
+});
+
+const resetPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/reset-password',
+  validateSearch: (search: Record<string, unknown>) => ({
+    token: asString(search.token),
+    email: asString(search.email),
+  }),
+  component: ResetPassword,
 });
 
 const joinVaultRoute = createRoute({
@@ -216,6 +237,8 @@ const routeTree = rootRoute.addChildren([
   authRoute,
   signupRoute,
   verifyRoute,
+  forgotPasswordRoute,
+  resetPasswordRoute,
   joinVaultRoute,
   protectedRoot.addChildren([
     dashboardRoute,

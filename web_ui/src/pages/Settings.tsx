@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { AxiosError } from 'axios';
 import { User as UserIcon, Bell, Database, ChevronRight, ShieldCheck, Palette } from 'lucide-react';
 import { STORAGE_LIMITS, useAuthStore } from '../stores/authStore';
 import { toast } from 'sonner';
@@ -42,6 +43,11 @@ const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
 
 type VaultQuality = 'balanced' | 'high' | 'original';
 type VaultVisibility = 'private' | 'family';
+type VaultSettings = {
+  quality: VaultQuality;
+  defaultVisibility: VaultVisibility;
+  safetyWindowMinutes: number;
+};
 
 type SettingsConfirmState =
   | { kind: 'leave'; title: string; message: string; confirmLabel: string }
@@ -49,7 +55,7 @@ type SettingsConfirmState =
 
 const Settings: React.FC = () => {
   const { t } = useTranslation();
-  const { currentUser, activeVaultId } = useAuthStore();
+  const { currentUser, activeVaultId, updateUser } = useAuthStore();
   const navigate = useNavigate();
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const requestedTab = typeof searchParams.tab === 'string' ? searchParams.tab : undefined;
@@ -80,6 +86,8 @@ const Settings: React.FC = () => {
   const triggerNotificationTestMutation = useTriggerNotificationTest();
   const { enablePushNotifications, disablePushNotifications } = usePushNotifications();
   const [selectedTransferMembershipId, setSelectedTransferMembershipId] = useState('');
+  const [transferPassword, setTransferPassword] = useState('');
+  const [transferPasswordError, setTransferPasswordError] = useState('');
   const [familyNameDraft, setFamilyNameDraft] = useState('');
   const [confirmState, setConfirmState] = useState<SettingsConfirmState | null>(null);
 
@@ -89,6 +97,7 @@ const Settings: React.FC = () => {
   }, [membersData]);
 
   const isVaultOwner = Boolean(activeVault?.isOwner);
+  const isAdminInVault = (activeVault?.myRole || currentUser?.role) === UserRole.ADMIN;
   const [formData, setFormData] = useState({ 
     fullName: currentUser?.fullName || '', 
     email: currentUser?.email || '', 
@@ -122,12 +131,14 @@ const Settings: React.FC = () => {
     setVaultSettings({
       quality: (activeVault?.storageQuality || 'high') as VaultQuality,
       defaultVisibility: (activeVault?.defaultVisibility || 'family') as VaultVisibility,
+      safetyWindowMinutes: Number(activeVault?.safetyWindowMinutes ?? 60),
     });
-  }, [activeVault?.defaultVisibility, activeVault?.storageQuality]);
+  }, [activeVault?.defaultVisibility, activeVault?.safetyWindowMinutes, activeVault?.storageQuality]);
 
-  const [vaultSettings, setVaultSettings] = useState({
+  const [vaultSettings, setVaultSettings] = useState<VaultSettings>({
     quality: 'high' as VaultQuality,
     defaultVisibility: 'family' as VaultVisibility,
+    safetyWindowMinutes: 60,
   });
 
   const notificationPrefs = notificationPreferencesQuery.data || DEFAULT_NOTIFICATION_PREFERENCES;
@@ -149,6 +160,9 @@ const Settings: React.FC = () => {
     }
     if (key === 'defaultVisibility') {
       payload.defaultVisibility = String(value).toUpperCase();
+    }
+    if (key === 'safetyWindowMinutes') {
+      payload.safetyWindowMinutes = String(value);
     }
 
     updateVaultMutation.mutate(
@@ -318,6 +332,12 @@ const Settings: React.FC = () => {
     });
   };
 
+  const closeConfirmModal = () => {
+    setConfirmState(null);
+    setTransferPassword('');
+    setTransferPasswordError('');
+  };
+
   const executeLeaveVault = () => {
     if (!activeVaultId) return;
 
@@ -336,7 +356,10 @@ const Settings: React.FC = () => {
   const transferCandidates = useMemo(() => {
     const currentEmail = currentUser?.email?.toLowerCase();
     return members
-      .filter((member) => member.email.toLowerCase() !== currentEmail)
+      .filter(
+        (member) =>
+          member.email.toLowerCase() !== currentEmail && member.role === UserRole.CONTRIBUTOR
+      )
       .map((member) => ({
         id: member.id,
         label: `${member.fullName} (${member.email})`,
@@ -364,21 +387,45 @@ const Settings: React.FC = () => {
     }
 
     const target = transferCandidates.find((candidate) => candidate.id === selectedTransferMembershipId);
+    const targetLabel = target?.label || t.settings.vault.transfer.selectPlaceholder;
+    setTransferPassword('');
+    setTransferPasswordError('');
     setConfirmState({
       kind: 'transfer',
       membershipId: selectedTransferMembershipId,
       title: 'Transfer Vault Ownership?',
-      message: `${t.settings.vault.transfer.confirmPrompt} ${target?.label || ''}`.trim(),
+      message: `${t.settings.vault.transfer.confirmPrompt} ${targetLabel}. ${t.settings.vault.transfer.confirmConsequence}`.trim(),
       confirmLabel: 'Transfer Ownership',
     });
   };
 
-  const executeTransferOwnership = (membershipId: string) => {
-    transferOwnershipMutation.mutate(membershipId, {
+  const executeTransferOwnership = (membershipId: string, password: string) => {
+    transferOwnershipMutation.mutate({ membershipId, password }, {
       onSuccess: () => {
+        updateUser({ role: UserRole.CONTRIBUTOR });
+        closeConfirmModal();
         toast.success(t.settings.vault.transfer.success);
+        toast.info(t.settings.vault.transfer.roleUpdatedNotice);
+        navigate({
+          to: '/settings',
+          replace: true,
+          search: (prev: Record<string, unknown>) => ({ ...prev, tab: 'profile' }),
+        } as any);
       },
       onError: (error) => {
+        if (error instanceof AxiosError) {
+          const passwordError = error.response?.data && typeof error.response.data === 'object'
+            ? (error.response.data as Record<string, unknown>).password
+            : undefined;
+          if (typeof passwordError === 'string') {
+            setTransferPasswordError(passwordError);
+            return;
+          }
+          if (Array.isArray(passwordError) && typeof passwordError[0] === 'string') {
+            setTransferPasswordError(passwordError[0]);
+            return;
+          }
+        }
         toast.error(t.settings.vault.transfer.error, {
           description: getApiErrorMessage(error, t.settings.vault.transfer.errorDesc),
         });
@@ -391,12 +438,17 @@ const Settings: React.FC = () => {
 
     if (confirmState.kind === 'leave') {
       executeLeaveVault();
-      setConfirmState(null);
+      closeConfirmModal();
       return;
     }
 
-    executeTransferOwnership(confirmState.membershipId);
-    setConfirmState(null);
+    if (!transferPassword) {
+      setTransferPasswordError(t.settings.vault.transfer.passwordRequired);
+      return;
+    }
+
+    setTransferPasswordError('');
+    executeTransferOwnership(confirmState.membershipId, transferPassword);
   };
 
   const handleSaveFamilyName = () => {
@@ -489,6 +541,8 @@ const Settings: React.FC = () => {
               canManage={currentUser?.role === UserRole.ADMIN}
               onLeaveVault={handleLeaveVault}
               isLeaving={leaveVaultMutation.isPending}
+              isLeaveDisabled={isAdminInVault}
+              leaveDisabledReason={isAdminInVault ? t.settings.vault.leave.adminMustTransferFirst : undefined}
               canTransferOwnership={isVaultOwner}
               transferCandidates={transferCandidates}
               selectedTransferMembershipId={selectedTransferMembershipId}
@@ -525,8 +579,20 @@ const Settings: React.FC = () => {
         title={confirmState?.title || ''}
         message={confirmState?.message || ''}
         confirmLabel={confirmState?.confirmLabel || 'Confirm'}
+        requirePassword={confirmState?.kind === 'transfer'}
+        passwordValue={transferPassword}
+        passwordLabel={t.settings.vault.transfer.passwordLabel}
+        passwordPlaceholder={t.settings.vault.transfer.passwordPlaceholder}
+        passwordError={confirmState?.kind === 'transfer' ? transferPasswordError : ''}
+        confirmDisabled={confirmState?.kind === 'transfer' ? !transferPassword : false}
+        onPasswordChange={(value) => {
+          setTransferPassword(value);
+          if (transferPasswordError) {
+            setTransferPasswordError('');
+          }
+        }}
         onConfirm={handleConfirmAction}
-        onCancel={() => setConfirmState(null)}
+        onCancel={closeConfirmModal}
         isPending={leaveVaultMutation.isPending || transferOwnershipMutation.isPending}
       />
       <VaultHealthDialog

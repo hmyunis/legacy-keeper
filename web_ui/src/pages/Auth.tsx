@@ -107,6 +107,7 @@ const Auth: React.FC = () => {
         fullName: formData.fullName,
         email: formData.email,
         password: formData.password,
+        ...(joinToken ? { joinToken } : {}),
       },
       {
         onSuccess: () => {
@@ -264,6 +265,17 @@ const Auth: React.FC = () => {
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
+              {mode === 'login' && (
+                <div className="flex justify-end">
+                  <Link
+                    to="/forgot-password"
+                    search={formData.email.trim() ? ({ email: formData.email.trim() } as any) : undefined}
+                    className="text-[11px] font-bold tracking-wide text-primary hover:opacity-80 transition-opacity"
+                  >
+                    Forgot password?
+                  </Link>
+                </div>
+              )}
             </div>
 
             <button
@@ -300,7 +312,7 @@ const Auth: React.FC = () => {
 
           <div className="text-center">
             <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800 rounded-full text-emerald-600 dark:text-emerald-400 text-[10px] font-bold uppercase tracking-widest">
-              <ShieldCheck size={14} /> End-to-End Encryption
+              <ShieldCheck size={14} /> Secure & Protected
             </div>
           </div>
         </div>

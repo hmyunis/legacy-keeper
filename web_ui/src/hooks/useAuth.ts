@@ -9,6 +9,8 @@ import {
   RegisterRequest,
   VerifyEmailRequest,
   ResendVerificationRequest,
+  ForgotPasswordRequest,
+  ResetPasswordRequest,
 } from '../services/authApi';
 import { getApiErrorMessage } from '../services/httpError';
 import { useAuthStore } from '../stores/authStore';
@@ -81,6 +83,36 @@ export const useResendVerification = () =>
     onError: (error) => {
       toast.error('Unable to resend verification email.', {
         description: getApiErrorMessage(error, 'Please check the email and try again.'),
+      });
+    },
+  });
+
+export const useForgotPassword = () =>
+  useMutation({
+    mutationFn: (payload: ForgotPasswordRequest) => authApi.forgotPassword(payload),
+    onSuccess: (response) => {
+      toast.success('Password reset email sent.', {
+        description: response.message || 'Please check your inbox for the reset link.',
+      });
+    },
+    onError: (error) => {
+      toast.error('Unable to send reset email.', {
+        description: getApiErrorMessage(error, 'Please check the email and try again.'),
+      });
+    },
+  });
+
+export const useResetPassword = () =>
+  useMutation({
+    mutationFn: (payload: ResetPasswordRequest) => authApi.resetPassword(payload),
+    onSuccess: (response) => {
+      toast.success('Password reset successful.', {
+        description: response.message || 'You can now log in with your new password.',
+      });
+    },
+    onError: (error) => {
+      toast.error('Unable to reset password.', {
+        description: getApiErrorMessage(error, 'The reset link may be invalid or expired.'),
       });
     },
   });

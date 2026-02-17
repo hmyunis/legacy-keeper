@@ -6,7 +6,7 @@ export const members = {
     total: "ጠቅላላ",
     active: "ንቁ",
     pending: "በመጠባበቅ ላይ",
-    admins: "አስተዳዳሪዎች"
+    contributors: "አስተዋጽኦ አድራጊዎች"
   },
   table: {
     identity: "ማንነት",

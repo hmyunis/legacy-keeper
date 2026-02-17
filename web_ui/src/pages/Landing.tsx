@@ -207,7 +207,7 @@ const Landing: React.FC = () => {
                   </div>
                   <div>
                     <p className="text-[10px] sm:text-xs font-black uppercase text-slate-400 tracking-tighter">Security</p>
-                    <p className="text-xs sm:text-sm font-bold text-slate-800 dark:text-white">End-to-End Encrypted</p>
+                    <p className="text-xs sm:text-sm font-bold text-slate-800 dark:text-white">Your memories are protected</p>
                   </div>
                 </div>
               </div>
@@ -294,7 +294,7 @@ const Landing: React.FC = () => {
 
           <div className="pt-8 flex items-center justify-center gap-2 text-slate-400">
             <Shield size={16} />
-            <span className="text-xs font-bold uppercase tracking-widest">End-to-end encryption included</span>
+            <span className="text-xs font-bold uppercase tracking-widest">Your data is secure and protected</span>
           </div>
         </div>
       </section>

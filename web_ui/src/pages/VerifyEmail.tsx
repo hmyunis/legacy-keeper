@@ -17,17 +17,17 @@ const VerifyEmail: React.FC = () => {
   };
   const verifyMutation = useVerifyEmail();
   const resendMutation = useResendVerification();
-  const { mutate: verifyEmail } = verifyMutation;
   const [status, setStatus] = useState<VerifyStatus>('idle');
   const [message, setMessage] = useState('Provide your verification token to activate your account.');
   const [tokenInput, setTokenInput] = useState((search.token || '').trim());
   const [emailInput, setEmailInput] = useState((search.email || '').trim());
   const autoVerifiedTokenRef = useRef<string | null>(null);
+  const verifyAttemptIdRef = useRef(0);
 
   const joinToken = typeof search.joinToken === 'string' && search.joinToken.trim() ? search.joinToken : undefined;
   const redirectPath = typeof search.redirect === 'string' && search.redirect.startsWith('/') ? search.redirect : undefined;
 
-  const verifyWithToken = (token: string) => {
+  const verifyWithToken = async (token: string) => {
     const normalized = token.trim();
     if (!normalized) {
       setStatus('error');
@@ -35,20 +35,22 @@ const VerifyEmail: React.FC = () => {
       return;
     }
 
+    const attemptId = ++verifyAttemptIdRef.current;
     setStatus('loading');
-    verifyEmail(
-      { token: normalized },
-      {
-        onSuccess: (data) => {
-          setStatus('success');
-          setMessage(data.message || 'Your email has been verified. You can now log in.');
-        },
-        onError: (error) => {
-          setStatus('error');
-          setMessage(getApiErrorMessage(error, 'Verification failed. The link may be invalid or expired.'));
-        },
-      },
-    );
+    try {
+      const data = await verifyMutation.mutateAsync({ token: normalized });
+      if (verifyAttemptIdRef.current !== attemptId) {
+        return;
+      }
+      setStatus('success');
+      setMessage(data.message || 'Your email has been verified. You can now log in.');
+    } catch (error) {
+      if (verifyAttemptIdRef.current !== attemptId) {
+        return;
+      }
+      setStatus('error');
+      setMessage(getApiErrorMessage(error, 'Verification failed. The link may be invalid or expired.'));
+    }
   };
 
   useEffect(() => {
@@ -60,8 +62,8 @@ const VerifyEmail: React.FC = () => {
     }
 
     autoVerifiedTokenRef.current = token;
-    verifyWithToken(token);
-  }, [search.token, verifyEmail]);
+    void verifyWithToken(token);
+  }, [search.token]);
 
   useEffect(() => {
     const email = (search.email || '').trim();
@@ -71,7 +73,7 @@ const VerifyEmail: React.FC = () => {
 
   const handleManualVerify = (event: React.FormEvent) => {
     event.preventDefault();
-    verifyWithToken(tokenInput);
+    void verifyWithToken(tokenInput);
   };
 
   const handleResend = () => {
@@ -82,7 +84,10 @@ const VerifyEmail: React.FC = () => {
     }
 
     resendMutation.mutate(
-      { email },
+      {
+        email,
+        ...(joinToken ? { joinToken } : {}),
+      },
       {
         onSuccess: (data) => {
           setMessage(data.message || 'Verification email sent. Please check your inbox.');
@@ -162,7 +167,7 @@ const VerifyEmail: React.FC = () => {
           </Link>
           <button
             type="button"
-            onClick={() => navigate({ to: '/landing' })}
+            onClick={() => navigate({ to: '/' })}
             className="inline-flex items-center justify-center rounded-2xl border border-slate-300 dark:border-slate-700 px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             Back To Landing

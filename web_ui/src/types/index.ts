@@ -39,6 +39,7 @@ export interface VaultSummary {
   name: string;
   familyName?: string;
   description?: string;
+  safetyWindowMinutes?: number;
   storageQuality?: 'balanced' | 'high' | 'original';
   defaultVisibility?: 'private' | 'family';
   storageUsedBytes?: number;

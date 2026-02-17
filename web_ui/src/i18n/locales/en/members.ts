@@ -6,7 +6,7 @@ export const members = {
     total: "Total",
     active: "Active",
     pending: "Pending",
-    admins: "Admins"
+    contributors: "Contributors"
   },
   table: {
     identity: "Identity",

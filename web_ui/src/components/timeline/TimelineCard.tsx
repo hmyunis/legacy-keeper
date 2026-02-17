@@ -17,8 +17,8 @@ const TimelineCard: React.FC<TimelineCardProps> = ({ item, isEven, onSelect }) =
       <div className={`w-full md:w-[calc(50%-2rem)] pl-16 md:pl-0 flex ${isEven ? 'justify-start' : 'justify-end'}`}>
         <div className="bg-white dark:bg-slate-900/60 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-2xl transition-all duration-500 w-full group overflow-hidden glow-card">
           <div className="relative aspect-video overflow-hidden">
-            <img src={item.thumbnailUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-[2000ms]" alt={item.title} />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 flex items-end p-8">
+            <img src={item.thumbnailUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-2000" alt={item.title} />
+            <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 flex items-end p-8">
                <button 
                 onClick={onSelect}
                 className="bg-white text-slate-900 px-5 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-primary hover:text-white transition-all shadow-lg"

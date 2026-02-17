@@ -11,6 +11,7 @@ export interface LoginRequest {
 
 export interface RegisterRequest extends LoginRequest {
   fullName: string;
+  joinToken?: string;
 }
 
 export interface VerifyEmailRequest {
@@ -19,6 +20,17 @@ export interface VerifyEmailRequest {
 
 export interface ResendVerificationRequest {
   email: string;
+  joinToken?: string;
+}
+
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ResetPasswordRequest {
+  email: string;
+  token: string;
+  newPassword: string;
 }
 
 export interface GoogleLoginRequest {
@@ -123,4 +135,10 @@ export const authApi = {
 
   resendVerification: (payload: ResendVerificationRequest) =>
     axiosClient.post<{ message: string }>(AUTH_API.resendVerification, payload).then((r) => r.data),
+
+  forgotPassword: (payload: ForgotPasswordRequest) =>
+    axiosClient.post<{ message: string }>(AUTH_API.forgotPassword, payload).then((r) => r.data),
+
+  resetPassword: (payload: ResetPasswordRequest) =>
+    axiosClient.post<{ message: string }>(AUTH_API.resetPassword, payload).then((r) => r.data),
 };

@@ -11,6 +11,7 @@ import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useAuthStore } from '../stores/authStore';
 import { auditApi } from '../services/auditApi';
 import { getApiErrorMessage } from '../services/httpError';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 const LOG_CATEGORIES = ['All', 'Uploads', 'Access', 'System', 'Management'] as const;
 const LOG_TIMEFRAMES = ['ALL', 'DAY', 'WEEK', 'MONTH'] as const;
@@ -22,7 +23,10 @@ const AuditLogs: React.FC = () => {
   const searchParams = useSearch({ strict: false }) as { category?: string; timeframe?: string };
   const [sorting, setSorting] = useState<SortingState>([{ id: 'timestamp', desc: true }]);
   const [searchInput, setSearchInput] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(searchInput, {
+    delay: 400,
+    normalize: (value: string) => value.trim(),
+  });
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -77,13 +81,6 @@ const AuditLogs: React.FC = () => {
     const click = (e: MouseEvent) => { if (filterRef.current && !filterRef.current.contains(e.target as Node)) setIsFilterOpen(false); };
     document.addEventListener('mousedown', click); return () => document.removeEventListener('mousedown', click);
   }, []);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setDebouncedSearch(searchInput.trim());
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [searchInput]);
 
   const allLogs = useMemo(() => {
     if (!logsData) return [];

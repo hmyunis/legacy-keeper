@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { format, setMonth, setYear, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, getYear } from 'date-fns';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
 
@@ -16,16 +17,73 @@ const DatePicker: React.FC<DatePickerProps> = ({ date, onChange, placeholder = "
   const [isYearPickerOpen, setIsYearPickerOpen] = useState(false);
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [popoverPlacement, setPopoverPlacement] = useState<'top' | 'bottom'>('bottom');
+  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const clickedInsideTrigger = containerRef.current?.contains(target);
+      const clickedInsidePopover = popoverRef.current?.contains(target);
+      if (!clickedInsideTrigger && !clickedInsidePopover) {
         setIsOpen(false);
       }
     };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const updatePopoverPosition = () => {
+      if (!triggerRef.current) return;
+
+      const rect = triggerRef.current.getBoundingClientRect();
+      const margin = 8;
+      const desiredWidth = 280;
+      const width = Math.min(desiredWidth, Math.max(220, window.innerWidth - margin * 2));
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const openUpward = spaceBelow < 360 && spaceAbove > spaceBelow;
+      let left = rect.left;
+
+      if (left + width + margin > window.innerWidth) {
+        left = window.innerWidth - width - margin;
+      }
+      if (left < margin) {
+        left = margin;
+      }
+
+      setPopoverPlacement(openUpward ? 'top' : 'bottom');
+      setPopoverStyle({
+        width,
+        left,
+        top: openUpward ? rect.top - margin : rect.bottom + margin,
+      });
+    };
+
+    updatePopoverPosition();
+    window.addEventListener('resize', updatePopoverPosition);
+    window.addEventListener('scroll', updatePopoverPosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePopoverPosition);
+      window.removeEventListener('scroll', updatePopoverPosition, true);
+    };
+  }, [isOpen]);
 
   const months = [
     "January", "February", "March", "April", "May", "June",
@@ -61,6 +119,7 @@ const DatePicker: React.FC<DatePickerProps> = ({ date, onChange, placeholder = "
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
+        ref={triggerRef}
         className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-slate-200 flex items-center justify-between group transition-all"
       >
         <span className={date ? "text-slate-900 dark:text-slate-200" : "text-slate-400"}>
@@ -69,8 +128,12 @@ const DatePicker: React.FC<DatePickerProps> = ({ date, onChange, placeholder = "
         <CalendarIcon size={16} className="text-slate-400 group-hover:text-primary transition-colors" />
       </button>
 
-      {isOpen && (
-        <div className="absolute top-full left-0 mt-2 z-[110] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-4 w-[280px] animate-in fade-in zoom-in-95 duration-200">
+      {isOpen && createPortal(
+        <div
+          ref={popoverRef}
+          style={popoverStyle}
+          className={`fixed z-1200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-4 animate-in fade-in zoom-in-95 duration-200 ${popoverPlacement === 'top' ? '-translate-y-full' : ''}`}
+        >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-1">
               <button
@@ -107,7 +170,7 @@ const DatePicker: React.FC<DatePickerProps> = ({ date, onChange, placeholder = "
           </div>
 
           {isYearPickerOpen && (
-            <div className="absolute inset-x-4 top-[50px] bottom-4 bg-white dark:bg-slate-900 z-10 overflow-y-auto no-scrollbar rounded-xl border border-slate-100 dark:border-slate-800 p-2 grid grid-cols-3 gap-1">
+            <div className="absolute inset-x-4 top-12.5 bottom-4 bg-white dark:bg-slate-900 z-10 overflow-y-auto no-scrollbar rounded-xl border border-slate-100 dark:border-slate-800 p-2 grid grid-cols-3 gap-1">
               {years.map(year => (
                 <button
                   key={year}
@@ -121,7 +184,7 @@ const DatePicker: React.FC<DatePickerProps> = ({ date, onChange, placeholder = "
           )}
 
           {isMonthPickerOpen && (
-            <div className="absolute inset-x-4 top-[50px] bottom-4 bg-white dark:bg-slate-900 z-10 overflow-y-auto no-scrollbar rounded-xl border border-slate-100 dark:border-slate-800 p-2 grid grid-cols-2 gap-1">
+            <div className="absolute inset-x-4 top-12.5 bottom-4 bg-white dark:bg-slate-900 z-10 overflow-y-auto no-scrollbar rounded-xl border border-slate-100 dark:border-slate-800 p-2 grid grid-cols-2 gap-1">
               {months.map((month, idx) => (
                 <button
                   key={month}
@@ -171,7 +234,8 @@ const DatePicker: React.FC<DatePickerProps> = ({ date, onChange, placeholder = "
               Today
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

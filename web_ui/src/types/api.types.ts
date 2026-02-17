@@ -34,6 +34,7 @@ export interface ApiVault {
   name: string;
   familyName?: string;
   description?: string;
+  safetyWindowMinutes?: number;
   storageQuality?: 'BALANCED' | 'HIGH' | 'ORIGINAL';
   defaultVisibility?: 'PRIVATE' | 'FAMILY';
   storageUsedBytes?: number;
@@ -307,6 +308,7 @@ export interface JoinVaultRequest {
 
 export interface TransferOwnershipRequest {
   membershipId: string;
+  password: string;
 }
 
 export interface UpdateProfileRequest {

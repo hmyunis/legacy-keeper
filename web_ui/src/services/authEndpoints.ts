@@ -6,6 +6,8 @@ export const AUTH_API = {
   me: 'users/me/',
   verifyEmail: 'users/verify/',
   resendVerification: 'users/resend-verification/',
+  forgotPassword: 'users/forgot-password/',
+  resetPassword: 'users/reset-password/',
 };
 
 export const AUTH_RELATED_PATHS = Object.values(AUTH_API);
