@@ -23,7 +23,7 @@ const TreeSkeleton = () => (
     {[1, 2, 3].map(level => (
       <div key={level} className="flex gap-10 md:gap-24">
         {[1, 2].map(node => (
-          <div key={node} className="p-2 rounded-[1.5rem] bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-sm">
+          <div key={node} className="p-2 rounded-3xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-sm">
             <Skeleton className="w-16 h-16 rounded-2xl" />
             <div className="mt-3 flex flex-col items-center gap-2">
               <Skeleton className="h-3 w-16" />
@@ -43,7 +43,7 @@ const EmptyTreeState: React.FC<{
   canEdit: boolean;
   onAddRelative: () => void;
 }> = ({ title, description, cta, canEdit, onAddRelative }) => (
-  <div className="mx-auto my-auto max-w-xl text-center bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-[2rem] p-8 sm:p-10 shadow-lg backdrop-blur-sm">
+  <div className="mx-auto my-auto max-w-xl text-center bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-4xl p-8 sm:p-10 shadow-lg backdrop-blur-sm">
     <div className="w-14 h-14 mx-auto rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
       <Sparkles size={22} />
     </div>
@@ -310,7 +310,7 @@ const FamilyTree: React.FC = () => {
         )}
       </div>
 
-      <div className="flex-1 bg-white dark:bg-slate-900/40 rounded-[2rem] sm:rounded-[2.5rem] border dark:border-slate-800 shadow-sm relative overflow-hidden flex min-h-[400px]">
+      <div className="flex-1 bg-white dark:bg-slate-900/40 rounded-4xl sm:rounded-[2.5rem] border dark:border-slate-800 shadow-sm relative overflow-hidden flex min-h-100">
         <div className="absolute inset-0 bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] dark:bg-[radial-gradient(#1e293b_1px,transparent_1px)] opacity-40"></div>
         <div className="flex-1 overflow-auto p-6 sm:p-12 flex flex-col items-center no-scrollbar transition-transform" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}>
            {isLoading ? (
@@ -338,7 +338,7 @@ const FamilyTree: React.FC = () => {
                         />
                       ))}
                     </div>
-                    {i < treeLevels.length - 1 && <div className="w-[1px] h-16 sm:h-24 bg-slate-200 dark:bg-slate-800 -my-8 sm:-my-12"></div>}
+                    {i < treeLevels.length - 1 && <div className="w-px h-16 sm:h-24 bg-slate-200 dark:bg-slate-800 -my-8 sm:-my-12"></div>}
                   </React.Fragment>
                 ))}
              </div>
@@ -364,7 +364,7 @@ const FamilyTree: React.FC = () => {
         )}
       </div>
 
-      <div className="bg-white dark:bg-slate-900/40 rounded-[2rem] sm:rounded-[2.5rem] border dark:border-slate-800 shadow-sm p-6 sm:p-8 space-y-4">
+      <div className="bg-white dark:bg-slate-900/40 rounded-4xl sm:rounded-[2.5rem] border dark:border-slate-800 shadow-sm p-6 sm:p-8 space-y-4">
         <div className="flex items-center justify-between gap-4">
           <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Mapped Relationships</h2>
           <span className="text-[10px] font-bold uppercase tracking-widest text-primary">{relationRows.length} Total</span>

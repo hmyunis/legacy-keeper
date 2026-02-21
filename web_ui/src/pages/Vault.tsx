@@ -73,6 +73,7 @@ const Vault: React.FC<{
   initialView?: 'grid' | 'list';
   initialTab?: VaultTab;
   initialPeople?: string[];
+  initialTags?: string[];
   initialLocations?: string[];
   initialTypes?: MediaType[];
   initialEra?: string | null;
@@ -86,6 +87,7 @@ const Vault: React.FC<{
   initialView = 'grid',
   initialTab = 'all',
   initialPeople = [],
+  initialTags = [],
   initialLocations = [],
   initialTypes = [],
   initialEra = null,
@@ -102,6 +104,7 @@ const Vault: React.FC<{
     () => uniqueStrings([...(initialPeople || []), ...(initialPerson ? [initialPerson] : [])]),
     [initialPeople, initialPerson],
   );
+  const normalizedInitialTags = useMemo(() => uniqueStrings(initialTags || []), [initialTags]);
   const normalizedInitialLocations = useMemo(() => uniqueStrings(initialLocations || []), [initialLocations]);
   const normalizedInitialTypes = useMemo(
     () => (initialTypes || []).filter((type) => Object.values(MediaType).includes(type)),
@@ -117,6 +120,7 @@ const Vault: React.FC<{
   });
   const [filters, setFilters] = useState({
     people: normalizedInitialPeople,
+    tags: normalizedInitialTags,
     locations: normalizedInitialLocations,
     era: initialEra as string | null,
     types: normalizedInitialTypes,
@@ -134,7 +138,7 @@ const Vault: React.FC<{
     open: false,
     progress: 0,
     date: new Date(),
-    file: null as File | null,
+    files: [] as File[],
     title: '',
     location: '',
     tags: '',
@@ -164,6 +168,9 @@ const Vault: React.FC<{
 
         if (nextFilters.people.length) next.people = nextFilters.people.join(',');
         else delete next.people;
+
+        if (nextFilters.tags.length) next.tags = nextFilters.tags.join(',');
+        else delete next.tags;
 
         if (nextFilters.locations.length) next.locations = nextFilters.locations.join(',');
         else delete next.locations;
@@ -200,14 +207,16 @@ const Vault: React.FC<{
       sortBy,
       search: debouncedSearchQuery || undefined,
       people: filters.people.length ? filters.people : undefined,
+      tags: filters.tags.length ? filters.tags : undefined,
       locations: filters.locations.length ? filters.locations : undefined,
       types: filters.types.length ? filters.types : undefined,
       era: filters.era || undefined,
       dateFrom: toDateParam(filters.startDate),
       dateTo: toDateParam(filters.endDate),
     }),
-    [debouncedSearchQuery, filters.era, filters.endDate, filters.locations, filters.people, filters.startDate, filters.types, sortBy],
+    [debouncedSearchQuery, filters.era, filters.endDate, filters.locations, filters.people, filters.startDate, filters.tags, filters.types, sortBy],
   );
+  const isFavoritesTab = activeTab === 'favorites';
 
   const {
     data: mediaData,
@@ -215,7 +224,7 @@ const Vault: React.FC<{
     fetchNextPage: fetchNextMediaPage,
     hasNextPage: hasNextMediaPage,
     isFetchingNextPage: isFetchingNextMediaPage,
-  } = useMedia(mediaQueryParams);
+  } = useMedia(mediaQueryParams, { enabled: !isFavoritesTab });
 
   const {
     data: favoriteMediaData,
@@ -223,7 +232,7 @@ const Vault: React.FC<{
     fetchNextPage: fetchNextFavoriteMediaPage,
     hasNextPage: hasNextFavoriteMediaPage,
     isFetchingNextPage: isFetchingNextFavoriteMediaPage,
-  } = useFavoriteMedia(mediaQueryParams);
+  } = useFavoriteMedia(mediaQueryParams, { enabled: isFavoritesTab });
 
   const filterSummaryParams = useMemo(
     () => ({
@@ -238,7 +247,11 @@ const Vault: React.FC<{
     ],
   );
 
-  const { data: filterSummary, isLoading: isLoadingFilters } = useMediaFilters(filterSummaryParams);
+  const {
+    data: filterSummary,
+    isFetching: isFetchingFilters,
+  } = useMediaFilters(filterSummaryParams, { enabled: isFilterExpanded });
+  const isLoadingFilters = isFetchingFilters && !filterSummary;
 
   const deleteMutation = useDeleteMedia();
   const bulkDeleteMutation = useBulkDeleteMedia();
@@ -249,12 +262,12 @@ const Vault: React.FC<{
   const canUpload = currentUser ? hasPermission(currentUser.role, 'UPLOAD_MEDIA') : false;
   const canDelete = currentUser ? hasPermission(currentUser.role, 'DELETE_MEDIA') : false;
 
-  const activeMediaData = activeTab === 'favorites' ? favoriteMediaData : mediaData;
-  const isLoading = activeTab === 'favorites' ? isLoadingFavoriteMedia : isLoadingMedia;
-  const hasNextPage = activeTab === 'favorites' ? hasNextFavoriteMediaPage : hasNextMediaPage;
+  const activeMediaData = isFavoritesTab ? favoriteMediaData : mediaData;
+  const isLoading = isFavoritesTab ? isLoadingFavoriteMedia : isLoadingMedia;
+  const hasNextPage = isFavoritesTab ? hasNextFavoriteMediaPage : hasNextMediaPage;
   const isFetchingNextPage =
-    activeTab === 'favorites' ? isFetchingNextFavoriteMediaPage : isFetchingNextMediaPage;
-  const fetchNextPage = activeTab === 'favorites' ? fetchNextFavoriteMediaPage : fetchNextMediaPage;
+    isFavoritesTab ? isFetchingNextFavoriteMediaPage : isFetchingNextMediaPage;
+  const fetchNextPage = isFavoritesTab ? fetchNextFavoriteMediaPage : fetchNextMediaPage;
 
   const allMedia = useMemo(() => {
     if (!activeMediaData) return [];
@@ -265,10 +278,6 @@ const Vault: React.FC<{
     if (!activeMediaData) return 0;
     return activeMediaData.pages[0]?.totalCount || 0;
   }, [activeMediaData]);
-
-  useEffect(() => {
-    if (window.innerWidth >= 1024) setIsFilterExpanded(true);
-  }, []);
 
   useEffect(() => {
     setSearchQuery(initialSearch);
@@ -291,6 +300,7 @@ const Vault: React.FC<{
   useEffect(() => {
     setFilters({
       people: normalizedInitialPeople,
+      tags: normalizedInitialTags,
       locations: normalizedInitialLocations,
       era: initialEra,
       types: normalizedInitialTypes,
@@ -303,6 +313,7 @@ const Vault: React.FC<{
     initialStartDate,
     normalizedInitialLocations,
     normalizedInitialPeople,
+    normalizedInitialTags,
     normalizedInitialTypes,
   ]);
 
@@ -370,7 +381,7 @@ const Vault: React.FC<{
       open: false,
       progress: 0,
       date: new Date(),
-      file: null,
+      files: [],
       title: '',
       location: '',
       tags: '',
@@ -380,8 +391,13 @@ const Vault: React.FC<{
   const handleStartUpload = () => {
     if (!canUpload || uploadMutation.isPending) return;
 
-    if (!uploadState.file) {
-      toast.error('Please select a file to upload.');
+    if (!uploadState.files.length) {
+      toast.error('Please select at least one file to upload.');
+      return;
+    }
+
+    if (uploadState.files.length > 10) {
+      toast.error('You can upload up to 10 files at a time.');
       return;
     }
 
@@ -393,8 +409,8 @@ const Vault: React.FC<{
     uploadMutation.mutate(
       {
         payload: {
-          file: uploadState.file,
-          title: uploadState.title || uploadState.file.name,
+          files: uploadState.files,
+          title: uploadState.title,
           description: uploadState.story,
           dateTaken: uploadState.date?.toISOString(),
           location: uploadState.location,
@@ -598,6 +614,7 @@ const Vault: React.FC<{
       {isFilterExpanded && (
         <VaultFilters
           peopleOptions={filterSummary?.people || []}
+          tagOptions={filterSummary?.tags || []}
           locationOptions={filterSummary?.locations || []}
           eraOptions={filterSummary?.eras || []}
           typeOptions={filterSummary?.types || []}
@@ -607,6 +624,13 @@ const Vault: React.FC<{
             applyFilterChange((current) => ({
               ...current,
               people: toggleStringItem(current.people, person),
+            }))
+          }
+          selectedTags={filters.tags}
+          onTagChange={(tag) =>
+            applyFilterChange((current) => ({
+              ...current,
+              tags: toggleStringItem(current.tags, tag),
             }))
           }
           selectedLocations={filters.locations}
@@ -647,6 +671,7 @@ const Vault: React.FC<{
           onClear={() => {
             const next = {
               people: [] as string[],
+              tags: [] as string[],
               locations: [] as string[],
               era: null as string | null,
               types: [] as MediaType[],
@@ -791,10 +816,12 @@ const Vault: React.FC<{
       {selectedMedia && (
         <MediaDetailModal
           media={selectedMedia}
+          relatedMedia={allMedia}
           isFavorite={Boolean(selectedMedia.isFavorite)}
           isTagInputVisible={tagState.visible}
           manualTagValue={tagState.value}
           onClose={() => setSelectedMedia(null)}
+          onSelectRelatedMedia={setSelectedMedia}
           onToggleFavorite={toggleFav}
           onDelete={(id) => requestDeleteMedia(id)}
           onAddTag={(tag) => {
@@ -819,13 +846,18 @@ const Vault: React.FC<{
           isUploading={uploadMutation.isPending}
           uploadProgress={uploadState.progress}
           uploadDate={uploadState.date}
-          selectedFile={uploadState.file}
+          selectedFiles={uploadState.files}
           title={uploadState.title}
           location={uploadState.location}
           tags={uploadState.tags}
           story={uploadState.story}
           onDateChange={(date) => setUploadState((state) => ({ ...state, date }))}
-          onFileChange={(file) => setUploadState((state) => ({ ...state, file }))}
+          onFilesChange={(files) =>
+            setUploadState((state) => ({
+              ...state,
+              files: files.slice(0, 10),
+            }))
+          }
           onTitleChange={(value) => setUploadState((state) => ({ ...state, title: value }))}
           onLocationChange={(value) => setUploadState((state) => ({ ...state, location: value }))}
           onTagsChange={(value) => setUploadState((state) => ({ ...state, tags: value }))}

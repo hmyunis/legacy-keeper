@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { X, Upload, Loader2, Image as ImageIcon, Calendar, MapPin, Tag as TagIcon, AlignLeft } from 'lucide-react';
+import React, { useRef } from 'react';
+import { X, Upload, Loader2, Image as ImageIcon, Calendar, MapPin, Tag as TagIcon, AlignLeft, File as FileIcon } from 'lucide-react';
 import DatePicker from '../DatePicker';
 import { useTranslation } from '../../i18n/LanguageContext';
 
@@ -7,13 +7,13 @@ interface UploadModalProps {
   isUploading: boolean;
   uploadProgress: number;
   uploadDate: Date | undefined;
-  selectedFile: File | null;
+  selectedFiles: File[];
   title: string;
   location: string;
   tags: string;
   story: string;
   onDateChange: (date: Date) => void;
-  onFileChange: (file: File | null) => void;
+  onFilesChange: (files: File[]) => void;
   onTitleChange: (value: string) => void;
   onLocationChange: (value: string) => void;
   onTagsChange: (value: string) => void;
@@ -26,13 +26,13 @@ const UploadModal: React.FC<UploadModalProps> = ({
   isUploading,
   uploadProgress,
   uploadDate,
-  selectedFile,
+  selectedFiles,
   title,
   location,
   tags,
   story,
   onDateChange,
-  onFileChange,
+  onFilesChange,
   onTitleChange,
   onLocationChange,
   onTagsChange,
@@ -42,26 +42,36 @@ const UploadModal: React.FC<UploadModalProps> = ({
 }) => {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const maxFiles = 10;
 
-  const isImage = selectedFile?.type.startsWith('image/');
+  const mergeFiles = (incoming: File[]) => {
+    if (!incoming.length) return;
 
-  const handleFileChange = (file: File | null) => {
-    onFileChange(file);
-    if (file && file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = (e) => setImagePreview(e.target?.result as string);
-      reader.readAsDataURL(file);
-    } else {
-      setImagePreview(null);
+    const merged = [...selectedFiles];
+    for (const file of incoming) {
+      const exists = merged.some(
+        (candidate) =>
+          candidate.name === file.name &&
+          candidate.size === file.size &&
+          candidate.lastModified === file.lastModified,
+      );
+      if (exists) continue;
+      if (merged.length >= maxFiles) break;
+      merged.push(file);
     }
+
+    onFilesChange(merged);
   };
 
-  const handleRemoveImage = (e: React.MouseEvent) => {
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const incomingFiles = Array.from(event.target.files || []);
+    mergeFiles(incomingFiles as File[]);
+    event.target.value = '';
+  };
+
+  const handleRemoveFile = (e: React.MouseEvent, index: number) => {
     e.stopPropagation();
-    onFileChange(null);
-    setImagePreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    onFilesChange(selectedFiles.filter((_, fileIndex) => fileIndex !== index));
   };
 
   return (
@@ -81,32 +91,38 @@ const UploadModal: React.FC<UploadModalProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
+                multiple
                 className="hidden"
-                onChange={(event) => handleFileChange(event.target.files?.[0] || null)}
+                onChange={handleFileChange}
               />
-              {imagePreview ? (
-                <div className="relative w-full max-h-80 flex items-center justify-center">
-                  <img src={imagePreview} alt="Preview" className="max-h-80 max-w-full object-contain rounded-xl" />
-                  <button
-                    type="button"
-                    onClick={handleRemoveImage}
-                    className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors shadow-lg"
-                  >
-                    <X size={16} />
-                  </button>
-                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/60 text-white text-xs rounded-full backdrop-blur-sm">
-                    Click to replace
+              <div className="p-4 bg-primary/10 rounded-2xl text-primary group-hover:scale-110 transition-transform"><Upload size={32} /></div>
+              <div className="w-full space-y-3">
+                <p className="text-xs font-medium text-slate-800 dark:text-slate-200">{t.modals.upload.dropzone}</p>
+                <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                  {selectedFiles.length}/{maxFiles} files selected
+                </p>
+                {selectedFiles.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
+                    {selectedFiles.map((file, index) => (
+                      <div
+                        key={`${file.name}-${file.size}-${file.lastModified}`}
+                        className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-2"
+                      >
+                        <FileIcon size={14} className="text-slate-400 shrink-0" />
+                        <span className="text-[11px] font-medium text-slate-700 dark:text-slate-200 truncate">{file.name}</span>
+                        <button
+                          type="button"
+                          onClick={(event) => handleRemoveFile(event, index)}
+                          className="ml-auto text-slate-400 hover:text-rose-500 transition-colors"
+                          aria-label={`Remove ${file.name}`}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              ) : (
-                <>
-                  <div className="p-4 bg-primary/10 rounded-2xl text-primary group-hover:scale-110 transition-transform"><Upload size={32} /></div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-800 dark:text-slate-200">{t.modals.upload.dropzone}</p>
-                    {selectedFile && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{selectedFile.name}</p>}
-                  </div>
-                </>
-              )}
+                )}
+              </div>
             </button>
           ) : (
             <div className="space-y-4 py-10">

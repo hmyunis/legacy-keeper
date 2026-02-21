@@ -123,6 +123,7 @@ const vaultRoute = createRoute({
     action: asString(search.action),
     person: asString(search.person),
     people: asString(search.people),
+    tags: asString(search.tags),
     locations: asString(search.locations),
     types:
       typeof search.types === 'string'
@@ -141,7 +142,7 @@ const vaultRoute = createRoute({
   }),
   beforeLoad: requireRoles(ALL_ROLES),
   component: () => {
-    const { q, action, person, people, locations, types, era, startDate, endDate, sort, view, tab } = useSearch({
+    const { q, action, person, people, tags, locations, types, era, startDate, endDate, sort, view, tab } = useSearch({
       from: vaultRoute.id,
     });
 
@@ -151,6 +152,7 @@ const vaultRoute = createRoute({
         initialAction={action}
         initialPerson={person}
         initialPeople={people ? people.split(',').filter(Boolean) : []}
+        initialTags={tags ? tags.split(',').filter(Boolean) : []}
         initialLocations={locations ? locations.split(',').filter(Boolean) : []}
         initialTypes={
           types

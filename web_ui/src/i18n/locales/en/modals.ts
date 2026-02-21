@@ -1,7 +1,7 @@
 export const modals = {
   upload: {
     title: "Preserve New Memory",
-    dropzone: "Click or drag to upload",
+    dropzone: "Click or drag to upload up to 10 files (e.g., JPG, PNG, PDF, MP4, DOCX, ZIP - any file type is allowed)",
     processing: "Preserving Artifact...",
     fields: {
       title: "Title",

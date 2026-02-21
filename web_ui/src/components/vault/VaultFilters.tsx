@@ -41,6 +41,14 @@ const Checkbox: React.FC<CheckboxProps> = ({ label, count, checked, onChange, ic
   </button>
 );
 
+const FilterSkeletonRows: React.FC<{ rows?: number }> = ({ rows = 4 }) => (
+  <div className="space-y-2.5">
+    {Array.from({ length: rows }).map((_, index) => (
+      <div key={index} className="h-4 rounded-md bg-slate-200 dark:bg-slate-800 animate-pulse" />
+    ))}
+  </div>
+);
+
 interface FilterOption {
   value: string;
   count: number;
@@ -53,12 +61,15 @@ interface TypeFilterOption {
 
 interface VaultFiltersProps {
   peopleOptions: FilterOption[];
+  tagOptions: FilterOption[];
   locationOptions: FilterOption[];
   eraOptions: FilterOption[];
   typeOptions: TypeFilterOption[];
   isLoadingOptions?: boolean;
   selectedPeople: string[];
   onPeopleChange: (person: string) => void;
+  selectedTags: string[];
+  onTagChange: (tag: string) => void;
   selectedLocations: string[];
   onLocationChange: (loc: string) => void;
   selectedEra: string | null;
@@ -80,12 +91,15 @@ const mediaTypeConfig: Record<MediaType, { label: string; icon: React.ReactNode 
 
 const VaultFilters: React.FC<VaultFiltersProps> = ({
   peopleOptions,
+  tagOptions,
   locationOptions,
   eraOptions,
   typeOptions,
   isLoadingOptions = false,
   selectedPeople,
   onPeopleChange,
+  selectedTags,
+  onTagChange,
   selectedLocations,
   onLocationChange,
   selectedEra,
@@ -104,22 +118,50 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
 
   return (
     <div className="bg-white/80 dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-[2rem] p-6 sm:p-8 animate-in fade-in slide-in-from-top-4 duration-300 shadow-sm overflow-hidden">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-8 sm:gap-12">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-8 sm:gap-12">
         <div className="space-y-4">
           <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">People</h3>
           <div className="grid grid-cols-2 sm:grid-cols-1 gap-3">
-            {peopleOptions.map((person) => (
-              <Checkbox
-                key={person.value}
-                label={person.value}
-                count={person.count}
-                checked={selectedPeople.includes(person.value)}
-                onChange={() => onPeopleChange(person.value)}
-              />
-            ))}
-            {!peopleOptions.length && (
+            {isLoadingOptions && !peopleOptions.length ? (
+              <FilterSkeletonRows rows={5} />
+            ) : (
+              peopleOptions.map((person) => (
+                <Checkbox
+                  key={person.value}
+                  label={person.value}
+                  count={person.count}
+                  checked={selectedPeople.includes(person.value)}
+                  onChange={() => onPeopleChange(person.value)}
+                />
+              ))
+            )}
+            {!isLoadingOptions && !peopleOptions.length && (
               <p className="text-[10px] text-slate-400">
-                {isLoadingOptions ? 'Loading...' : 'No people tags found'}
+                No people tags found
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4 md:border-l lg:border-none xl:border-l dark:border-slate-800 sm:pl-10 lg:pl-0 xl:pl-10">
+          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tags</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-1 gap-3">
+            {isLoadingOptions && !tagOptions.length ? (
+              <FilterSkeletonRows rows={5} />
+            ) : (
+              tagOptions.map((tag) => (
+                <Checkbox
+                  key={tag.value}
+                  label={tag.value}
+                  count={tag.count}
+                  checked={selectedTags.includes(tag.value)}
+                  onChange={() => onTagChange(tag.value)}
+                />
+              ))
+            )}
+            {!isLoadingOptions && !tagOptions.length && (
+              <p className="text-[10px] text-slate-400">
+                No tags found
               </p>
             )}
           </div>
@@ -144,18 +186,22 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
         <div className="space-y-4 lg:border-l dark:border-slate-800 lg:pl-10">
           <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Locations</h3>
           <div className="grid grid-cols-2 sm:grid-cols-1 gap-3">
-            {locationOptions.map((location) => (
-              <Checkbox
-                key={location.value}
-                label={location.value}
-                count={location.count}
-                checked={selectedLocations.includes(location.value)}
-                onChange={() => onLocationChange(location.value)}
-              />
-            ))}
-            {!locationOptions.length && (
+            {isLoadingOptions && !locationOptions.length ? (
+              <FilterSkeletonRows rows={5} />
+            ) : (
+              locationOptions.map((location) => (
+                <Checkbox
+                  key={location.value}
+                  label={location.value}
+                  count={location.count}
+                  checked={selectedLocations.includes(location.value)}
+                  onChange={() => onLocationChange(location.value)}
+                />
+              ))
+            )}
+            {!isLoadingOptions && !locationOptions.length && (
               <p className="text-[10px] text-slate-400">
-                {isLoadingOptions ? 'Loading...' : 'No locations found'}
+                No locations found
               </p>
             )}
           </div>
@@ -189,22 +235,28 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
           <div className="space-y-4">
             <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Era</h3>
             <div className="flex flex-wrap gap-2">
-              {eraOptions.map((era) => (
-                <button
-                  key={era.value}
-                  onClick={() => onEraChange(selectedEra === era.value ? null : era.value)}
-                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
-                    selectedEra === era.value
-                      ? 'bg-primary border-primary text-white shadow-lg shadow-primary/20'
-                      : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800 text-slate-500 hover:text-primary'
-                  }`}
-                >
-                  {era.value} ({era.count})
-                </button>
-              ))}
-              {!eraOptions.length && (
+              {isLoadingOptions && !eraOptions.length ? (
+                <div className="w-full">
+                  <FilterSkeletonRows rows={3} />
+                </div>
+              ) : (
+                eraOptions.map((era) => (
+                  <button
+                    key={era.value}
+                    onClick={() => onEraChange(selectedEra === era.value ? null : era.value)}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                      selectedEra === era.value
+                        ? 'bg-primary border-primary text-white shadow-lg shadow-primary/20'
+                        : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800 text-slate-500 hover:text-primary'
+                    }`}
+                  >
+                    {era.value} ({era.count})
+                  </button>
+                ))
+              )}
+              {!isLoadingOptions && !eraOptions.length && (
                 <p className="text-[10px] text-slate-400">
-                  {isLoadingOptions ? 'Loading...' : 'No eras found'}
+                  No eras found
                 </p>
               )}
             </div>

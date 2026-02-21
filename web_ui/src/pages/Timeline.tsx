@@ -228,10 +228,12 @@ const Timeline: React.FC = () => {
       {selectedMedia && (
         <MediaDetailModal 
           media={selectedMedia} 
+          relatedMedia={allMedia}
           isFavorite={false} 
           isTagInputVisible={tagState.visible} 
           manualTagValue={tagState.value} 
           onClose={() => setSelectedMedia(null)} 
+          onSelectRelatedMedia={setSelectedMedia}
           onToggleFavorite={() => {}} 
           onDelete={(id) => deleteMutation.mutate(id)} 
           onAddTag={(tag) => {

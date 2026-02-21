@@ -1,6 +1,7 @@
 import axiosClient from './axiosClient';
 import type {
     ApiMediaItem,
+    ApiMediaFile,
     ApiMediaFilterSummary,
     PaginatedApiResponse,
 } from '../types/api.types';
@@ -50,22 +51,89 @@ const parseMetadataLocation = (metadata?: Record<string, unknown> | null): strin
     return value || undefined;
 };
 
-const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => ({
-    id: String(item.id),
-    vaultId: String(item.vault),
-    uploaderId: item.uploader ? String(item.uploader) : '',
-    isFavorite: Boolean(item.isFavorite),
-    type: item.mediaType,
-    title: item.title || 'Untitled memory',
-    description: item.description || '',
-    dateTaken: item.dateTaken || item.createdAt,
-    uploadTimestamp: item.createdAt,
-    thumbnailUrl: toAbsoluteUrl(item.fileUrl) || 'https://placehold.co/600x800?text=Memory',
-    fileUrl: toAbsoluteUrl(item.fileUrl) || undefined,
-    tags: parseMetadataTags(item.metadata),
-    status: (item.aiStatus as MediaStatus) || MediaStatus.PENDING,
-    location: parseMetadataLocation(item.metadata),
-});
+const resolveFileTypeFromMime = (
+    mimeType?: string,
+    fallbackMediaType?: MediaType,
+): 'PHOTO' | 'VIDEO' | 'AUDIO' | 'DOCUMENT' => {
+    const mime = String(mimeType || '').toLowerCase();
+    if (mime.startsWith('image/')) return 'PHOTO';
+    if (mime.startsWith('video/')) return 'VIDEO';
+    if (mime.startsWith('audio/')) return 'AUDIO';
+
+    if (fallbackMediaType === MediaType.PHOTO) return 'PHOTO';
+    if (fallbackMediaType === MediaType.VIDEO) return 'VIDEO';
+    return 'DOCUMENT';
+};
+
+const mapApiFiles = (item: ApiMediaItem): MediaItem['files'] => {
+    const rawFiles = Array.isArray(item.files) ? item.files : [];
+    if (rawFiles.length) {
+        return rawFiles
+            .map((entry: ApiMediaFile) => {
+                const fileUrl = toAbsoluteUrl(entry.fileUrl);
+                if (!fileUrl) return null;
+                const normalizedFileType = String(entry.fileType || '').toUpperCase();
+                return {
+                    id: String(entry.id || fileUrl),
+                    fileUrl,
+                    fileSize: Number(entry.fileSize || 0),
+                    mimeType: entry.mimeType || undefined,
+                    fileType:
+                        normalizedFileType === 'PHOTO' ||
+                        normalizedFileType === 'VIDEO' ||
+                        normalizedFileType === 'AUDIO' ||
+                        normalizedFileType === 'DOCUMENT'
+                            ? (normalizedFileType as 'PHOTO' | 'VIDEO' | 'AUDIO' | 'DOCUMENT')
+                            : resolveFileTypeFromMime(entry.mimeType, item.mediaType),
+                    originalName: String(entry.originalName || 'Attachment'),
+                    isPrimary: Boolean(entry.isPrimary),
+                    createdAt: entry.createdAt || undefined,
+                };
+            })
+            .filter(Boolean) as MediaItem['files'];
+    }
+
+    const fallbackUrl = toAbsoluteUrl(item.fileUrl);
+    if (!fallbackUrl) return [];
+
+    return [
+        {
+            id: `primary-${item.id}`,
+            fileUrl: fallbackUrl,
+            fileSize: 0,
+            mimeType: undefined,
+            fileType: resolveFileTypeFromMime(undefined, item.mediaType),
+            originalName: item.title || 'Memory file',
+            isPrimary: true,
+            createdAt: item.createdAt,
+        },
+    ];
+};
+
+const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => {
+    const files = mapApiFiles(item);
+    const primaryFile = files.find((file) => file.isPrimary) || files[0];
+    const thumbnailFile = files.find((file) => file.fileType === 'PHOTO') || primaryFile;
+
+    return {
+        id: String(item.id),
+        vaultId: String(item.vault),
+        uploaderId: item.uploader ? String(item.uploader) : '',
+        isFavorite: Boolean(item.isFavorite),
+        type: item.mediaType,
+        title: item.title || 'Untitled memory',
+        description: item.description || '',
+        dateTaken: item.dateTaken || item.createdAt,
+        uploadTimestamp: item.createdAt,
+        thumbnailUrl: thumbnailFile?.fileUrl || 'https://placehold.co/600x800?text=Memory',
+        fileUrl: primaryFile?.fileUrl || undefined,
+        tags: parseMetadataTags(item.metadata),
+        status: (item.aiStatus as MediaStatus) || MediaStatus.PENDING,
+        location: parseMetadataLocation(item.metadata),
+        metadata: (item.metadata && typeof item.metadata === 'object' ? item.metadata : {}) as Record<string, unknown>,
+        files,
+    };
+};
 
 const unwrapList = <T>(payload: T[] | PaginatedApiResponse<T> | null | undefined): T[] => {
     if (Array.isArray(payload)) return payload;
@@ -74,9 +142,9 @@ const unwrapList = <T>(payload: T[] | PaginatedApiResponse<T> | null | undefined
 };
 
 export interface UploadMediaPayload {
-    file: File;
-    title: string;
-    description: string;
+    files: File[];
+    title?: string;
+    description?: string;
     dateTaken?: string;
     location?: string;
     tags?: string[];
@@ -107,6 +175,7 @@ export interface MediaQueryParams {
     type?: MediaType;
     types?: MediaType[];
     people?: string[];
+    tags?: string[];
     locations?: string[];
     era?: string;
     dateFrom?: string;
@@ -122,6 +191,7 @@ export interface FacetOption {
 export interface MediaFilterSummary {
     totalCount: number;
     people: FacetOption[];
+    tags: FacetOption[];
     locations: FacetOption[];
     eras: FacetOption[];
     types: Array<{ value: MediaType; count: number }>;
@@ -168,6 +238,7 @@ const buildMediaQueryParams = (
     if (params?.type) queryParams.mediaType = params.type;
     appendCsvParam(queryParams, 'mediaType', params?.types);
     appendCsvParam(queryParams, 'people', params?.people);
+    appendCsvParam(queryParams, 'tags', params?.tags);
     appendCsvParam(queryParams, 'locations', params?.locations);
     if (params?.era) queryParams.era = params.era;
     if (params?.dateFrom) queryParams.dateFrom = params.dateFrom;
@@ -226,6 +297,7 @@ export const mediaApi = {
         return {
             totalCount: Number(payload.totalCount ?? payload.total_count ?? 0),
             people: normalizeFacetOptions(payload.people),
+            tags: normalizeFacetOptions(payload.tags),
             locations: normalizeFacetOptions(payload.locations),
             eras: normalizeFacetOptions(payload.eras),
             types: typeOptions,
@@ -264,12 +336,23 @@ export const mediaApi = {
         payload: UploadMediaPayload,
         onUploadProgress?: (progress: number) => void,
     ): Promise<MediaItem> => {
+        if (!payload.files.length) {
+            throw new Error('No files provided for upload.');
+        }
+        if (payload.files.length > 10) {
+            throw new Error('You can upload up to 10 files at a time.');
+        }
+
+        const primaryFile = payload.files[0];
         const formData = new FormData();
         formData.append('vault', vaultId);
-        formData.append('file', payload.file);
-        formData.append('title', payload.title);
-        formData.append('description', payload.description);
-        formData.append('mediaType', resolveMediaType(payload.file));
+        formData.append('file', primaryFile);
+        payload.files.forEach((file) => {
+            formData.append('files', file);
+        });
+        formData.append('title', payload.title || primaryFile.name);
+        formData.append('description', payload.description || '');
+        formData.append('mediaType', resolveMediaType(primaryFile));
 
         if (payload.dateTaken) {
             formData.append('dateTaken', payload.dateTaken);

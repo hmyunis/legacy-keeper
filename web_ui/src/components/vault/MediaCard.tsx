@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Heart, Maximize2, Calendar, MapPin, Check } from 'lucide-react';
+import { Heart, Maximize2, Calendar, MapPin, Check, FileText, Music2, Film } from 'lucide-react';
 import { MediaItem } from '../../types';
 
 interface MediaCardProps {
@@ -22,6 +22,9 @@ const MediaCard: React.FC<MediaCardProps> = ({
   onSelect, 
   onToggleFavorite 
 }) => {
+  const primaryFile = item.files.find((file) => file.isPrimary) || item.files[0];
+  const fileType = primaryFile?.fileType || 'PHOTO';
+
   return (
     <div 
       onClick={() => isSelectionMode ? onToggleSelection(item.id) : onSelect(item)} 
@@ -39,7 +42,24 @@ const MediaCard: React.FC<MediaCardProps> = ({
         </div>
       )}
       <div className="relative aspect-[4/3] overflow-hidden">
-        <img src={item.thumbnailUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt={item.title} />
+        {fileType === 'PHOTO' && (
+          <img src={item.thumbnailUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt={item.title} />
+        )}
+        {fileType === 'VIDEO' && primaryFile?.fileUrl && (
+          <video src={primaryFile.fileUrl} className="w-full h-full object-cover" muted />
+        )}
+        {fileType === 'AUDIO' && (
+          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 text-slate-600 dark:text-slate-300 gap-2">
+            <Music2 size={24} className="text-primary" />
+            <p className="text-[10px] font-bold px-3 text-center truncate max-w-full">{primaryFile?.originalName || item.title}</p>
+          </div>
+        )}
+        {fileType === 'DOCUMENT' && (
+          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 text-slate-600 dark:text-slate-300 gap-2">
+            <FileText size={24} className="text-primary" />
+            <p className="text-[10px] font-bold px-3 text-center truncate max-w-full">{primaryFile?.originalName || item.title}</p>
+          </div>
+        )}
         
         <button 
           onClick={(e) => onToggleFavorite(e, item.id)}
@@ -54,7 +74,8 @@ const MediaCard: React.FC<MediaCardProps> = ({
 
         {!isSelectionMode && (
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-             <button className="p-2.5 bg-white/20 backdrop-blur-md rounded-full text-white hover:bg-white hover:text-primary transition-all"><Maximize2 size={18} /></button>
+             <button className="p-2.5 rounded-full border border-white/50 bg-black/35 backdrop-blur-md text-white shadow-sm transition-all hover:bg-white hover:text-slate-900 hover:border-white/90"><Maximize2 size={18} /></button>
+             {fileType === 'VIDEO' && <Film size={18} className="text-white" />}
           </div>
         )}
       </div>

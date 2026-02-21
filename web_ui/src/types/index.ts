@@ -88,6 +88,19 @@ export interface DetectedFace {
   thumbnailUrl: string;
 }
 
+export type MediaFileType = 'PHOTO' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
+
+export interface MediaFile {
+  id: string;
+  fileUrl: string;
+  fileSize: number;
+  mimeType?: string;
+  fileType: MediaFileType;
+  originalName: string;
+  isPrimary: boolean;
+  createdAt?: string;
+}
+
 export interface MediaItem {
   id: string;
   vaultId: string;
@@ -102,6 +115,8 @@ export interface MediaItem {
   tags: string[];
   status: MediaStatus;
   location?: string;
+  metadata?: Record<string, unknown>;
+  files: MediaFile[];
   detectedFaces?: DetectedFace[];
   fileUrl?: string;
 }

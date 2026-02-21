@@ -96,6 +96,18 @@ export interface ApiMediaItem {
   fileUrl?: string | null;
   aiStatus?: string;
   metadata?: Record<string, unknown> | null;
+  files?: ApiMediaFile[];
+}
+
+export interface ApiMediaFile {
+  id: string;
+  fileUrl?: string | null;
+  fileSize?: number;
+  mimeType?: string;
+  fileType?: 'PHOTO' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
+  originalName?: string;
+  isPrimary?: boolean;
+  createdAt?: string;
 }
 
 export interface ApiFacetOption {
@@ -106,6 +118,7 @@ export interface ApiFacetOption {
 export interface ApiMediaFilterSummary {
   totalCount?: number;
   people?: ApiFacetOption[];
+  tags?: ApiFacetOption[];
   locations?: ApiFacetOption[];
   eras?: ApiFacetOption[];
   types?: ApiFacetOption[];

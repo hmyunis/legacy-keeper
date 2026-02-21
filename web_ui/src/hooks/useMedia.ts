@@ -7,6 +7,10 @@ import type { MediaItem } from '../types';
 
 const DEFAULT_PAGE_SIZE = 20;
 
+interface QueryOptions {
+  enabled?: boolean;
+}
+
 const updateFavoriteStateInPages = (old: any, mediaId: string, isFavorite: boolean) => {
   if (!old?.pages) return old;
   return {
@@ -18,8 +22,9 @@ const updateFavoriteStateInPages = (old: any, mediaId: string, isFavorite: boole
   };
 };
 
-export const useMedia = (params?: Omit<MediaQueryParams, 'page'>) => {
+export const useMedia = (params?: Omit<MediaQueryParams, 'page'>, options?: QueryOptions) => {
   const { activeVaultId } = useAuthStore();
+  const enabled = options?.enabled ?? true;
 
   return useInfiniteQuery({
     queryKey: ['media', activeVaultId, params],
@@ -34,12 +39,13 @@ export const useMedia = (params?: Omit<MediaQueryParams, 'page'>) => {
       return undefined;
     },
     initialPageParam: 1,
-    enabled: Boolean(activeVaultId),
+    enabled: Boolean(activeVaultId) && enabled,
   });
 };
 
-export const useFavoriteMedia = (params?: Omit<MediaQueryParams, 'page'>) => {
+export const useFavoriteMedia = (params?: Omit<MediaQueryParams, 'page'>, options?: QueryOptions) => {
   const { activeVaultId } = useAuthStore();
+  const enabled = options?.enabled ?? true;
 
   return useInfiniteQuery({
     queryKey: ['mediaFavorites', activeVaultId, params],
@@ -54,14 +60,16 @@ export const useFavoriteMedia = (params?: Omit<MediaQueryParams, 'page'>) => {
       return undefined;
     },
     initialPageParam: 1,
-    enabled: Boolean(activeVaultId),
+    enabled: Boolean(activeVaultId) && enabled,
   });
 };
 
 export const useMediaFilters = (
-  params?: Omit<MediaQueryParams, 'page' | 'pageSize' | 'sortBy'>
+  params?: Omit<MediaQueryParams, 'page' | 'pageSize' | 'sortBy'>,
+  options?: QueryOptions,
 ) => {
   const { activeVaultId } = useAuthStore();
+  const enabled = options?.enabled ?? true;
 
   return useQuery({
     queryKey: ['mediaFilters', activeVaultId, params],
@@ -69,7 +77,7 @@ export const useMediaFilters = (
       if (!activeVaultId) throw new Error('No active vault selected');
       return mediaApi.getMediaFilters(activeVaultId, params);
     },
-    enabled: Boolean(activeVaultId),
+    enabled: Boolean(activeVaultId) && enabled,
   });
 };
 
