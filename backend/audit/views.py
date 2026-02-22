@@ -1,11 +1,13 @@
-import csv
 import json
+from io import BytesIO
 from datetime import datetime, time, timedelta
 
 from django.db.models import Q
 from django.http import HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from rest_framework import decorators, exceptions, permissions, status, viewsets
 from rest_framework.response import Response
 
@@ -134,25 +136,79 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
 
         queryset = self.get_queryset()
 
-        filename = f'audit-log-{vault_pk}-{timezone.now().date().isoformat()}.csv'
-        response = HttpResponse(content_type='text/csv')
+        filename = f'audit-log-{vault_pk}-{timezone.now().date().isoformat()}.xlsx'
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
 
-        writer = csv.writer(response)
-        writer.writerow(['id', 'timestamp', 'actor', 'action', 'target_type', 'target_id', 'details'])
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = 'Audit Logs'
 
-        for log in queryset.iterator():
+        headers = ['Audit ID', 'Timestamp', 'Actor', 'Action', 'Resource Type', 'Target ID', 'Details']
+        worksheet.append(headers)
+        worksheet.freeze_panes = 'A2'
+        worksheet.auto_filter.ref = f'A1:G1'
+
+        column_widths = {
+            'A': 40,
+            'B': 24,
+            'C': 24,
+            'D': 14,
+            'E': 22,
+            'F': 40,
+            'G': 88,
+        }
+        for column, width in column_widths.items():
+            worksheet.column_dimensions[column].width = width
+
+        header_fill = PatternFill(fill_type='solid', fgColor='1E3A8A')
+        header_font = Font(color='FFFFFF', bold=True)
+        header_alignment = Alignment(horizontal='left', vertical='center')
+        thin_border = Border(
+            left=Side(style='thin', color='CBD5E1'),
+            right=Side(style='thin', color='CBD5E1'),
+            top=Side(style='thin', color='CBD5E1'),
+            bottom=Side(style='thin', color='CBD5E1'),
+        )
+
+        for cell in worksheet[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+            cell.border = thin_border
+
+        odd_row_fill = PatternFill(fill_type='solid', fgColor='F8FAFC')
+        even_row_fill = PatternFill(fill_type='solid', fgColor='FFFFFF')
+        body_alignment = Alignment(horizontal='left', vertical='top', wrap_text=False)
+        details_alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
+
+        for row_index, log in enumerate(queryset.iterator(chunk_size=500), start=2):
             actor_name = log.actor.full_name if log.actor else 'System'
-            writer.writerow(
+            timestamp_value = timezone.localtime(log.timestamp).strftime('%Y-%m-%d %H:%M:%S %Z')
+            details_value = json.dumps(log.changes or {}, ensure_ascii=False)
+
+            worksheet.append(
                 [
                     str(log.id),
-                    timezone.localtime(log.timestamp).isoformat(),
+                    timestamp_value,
                     actor_name,
                     log.action,
                     log.content_type.model,
                     str(log.object_id),
-                    json.dumps(log.changes or {}, ensure_ascii=True),
+                    details_value,
                 ]
             )
 
+            row_fill = odd_row_fill if row_index % 2 == 1 else even_row_fill
+            for cell in worksheet[row_index]:
+                cell.fill = row_fill
+                cell.border = thin_border
+                cell.alignment = details_alignment if cell.column_letter == 'G' else body_alignment
+
+        buffer = BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+        response.write(buffer.getvalue())
         return response

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { RotateCcw, Check, FileText, Video, Camera } from 'lucide-react';
 import { MediaType } from '../../types';
 import DatePicker from '../DatePicker';
@@ -115,10 +115,21 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
   const resolvedTypeOptions: TypeFilterOption[] = typeOptions.length
     ? typeOptions
     : (Object.values(MediaType) as MediaType[]).map((value) => ({ value, count: 0 }));
+  const orderedTagOptions = useMemo(() => {
+    if (!tagOptions.length) return tagOptions;
+    const selected = new Set(selectedTags);
+    return [...tagOptions].sort((a, b) => {
+      const aSelected = selected.has(a.value);
+      const bSelected = selected.has(b.value);
+      if (aSelected !== bSelected) return aSelected ? -1 : 1;
+      if (a.count !== b.count) return b.count - a.count;
+      return a.value.localeCompare(b.value);
+    });
+  }, [selectedTags, tagOptions]);
 
   return (
     <div className="bg-white/80 dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-[2rem] p-6 sm:p-8 animate-in fade-in slide-in-from-top-4 duration-300 shadow-sm overflow-hidden">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-8 sm:gap-12">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-8 sm:gap-12">
         <div className="space-y-4">
           <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">People</h3>
           <div className="grid grid-cols-2 sm:grid-cols-1 gap-3">
@@ -143,13 +154,13 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
           </div>
         </div>
 
-        <div className="space-y-4 md:border-l lg:border-none xl:border-l dark:border-slate-800 sm:pl-10 lg:pl-0 xl:pl-10">
+        <div className="space-y-4 md:border-l lg:border-none xl:border-l dark:border-slate-800 sm:pl-10 lg:pl-0 xl:pl-10 xl:col-span-2">
           <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tags</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-1 gap-3">
+          <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(10rem,1fr))]">
             {isLoadingOptions && !tagOptions.length ? (
               <FilterSkeletonRows rows={5} />
             ) : (
-              tagOptions.map((tag) => (
+              orderedTagOptions.map((tag) => (
                 <Checkbox
                   key={tag.value}
                   label={tag.value}

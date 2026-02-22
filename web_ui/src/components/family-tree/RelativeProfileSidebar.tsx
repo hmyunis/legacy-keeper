@@ -9,6 +9,7 @@ import DatePicker from '../DatePicker';
 import { personProfileSchema } from '../../lib/validation';
 import { z } from 'zod';
 import { format } from 'date-fns';
+import { toast } from 'sonner';
 
 type FormData = z.infer<typeof personProfileSchema>;
 type FormErrors = Partial<Record<keyof FormData | 'profilePhoto', string>>;
@@ -16,6 +17,7 @@ type FormErrors = Partial<Record<keyof FormData | 'profilePhoto', string>>;
 export interface ProfileEditPayload {
   fullName: string;
   birthDate?: string | null;
+  birthPlace?: string;
   deathDate?: string | null;
   biography?: string;
   profilePhoto?: File;
@@ -49,12 +51,14 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState(person.photoUrl || 'https://placehold.co/200x200?text=Profile');
   const [errors, setErrors] = useState<FormErrors>({});
   const [formData, setFormData] = useState({
     fullName: person.fullName,
     birthDate: parseDate(person.birthDate),
+    birthPlace: person.birthPlace || '',
     deathDate: parseDate(person.deathDate),
     biography: person.biography || '',
   });
@@ -67,6 +71,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
     setFormData({
       fullName: person.fullName,
       birthDate: parseDate(person.birthDate),
+      birthPlace: person.birthPlace || '',
       deathDate: parseDate(person.deathDate),
       biography: person.biography || '',
     });
@@ -85,6 +90,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
       personProfileSchema.parse({
         fullName: formData.fullName,
         birthDate: formData.birthDate ? format(formData.birthDate, 'yyyy-MM-dd') : undefined,
+        birthPlace: formData.birthPlace,
         deathDate: formData.deathDate ? format(formData.deathDate, 'yyyy-MM-dd') : undefined,
         biography: formData.biography,
       });
@@ -130,6 +136,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
     setFormData({
       fullName: person.fullName,
       birthDate: parseDate(person.birthDate),
+      birthPlace: person.birthPlace || '',
       deathDate: parseDate(person.deathDate),
       biography: person.biography || '',
     });
@@ -143,6 +150,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
       await onSave(person.id, {
         fullName: formData.fullName.trim(),
         birthDate: formData.birthDate ? format(formData.birthDate, 'yyyy-MM-dd') : undefined,
+        birthPlace: formData.birthPlace.trim(),
         deathDate: formData.deathDate ? format(formData.deathDate, 'yyyy-MM-dd') : undefined,
         biography: formData.biography,
         profilePhoto: selectedFile || undefined,
@@ -151,6 +159,62 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
       setSelectedFile(null);
     } catch {
       // Error toast is handled by the mutation hook.
+    }
+  };
+
+  const buildShareUrl = () => {
+    const url = new URL('/vault', window.location.origin);
+    url.searchParams.set('people', person.fullName);
+    return url.toString();
+  };
+
+  const copyShareLink = async (url: string) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      return true;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = url;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return copied;
+  };
+
+  const handleCirculate = async () => {
+    const shareUrl = buildShareUrl();
+    const shareData: ShareData = {
+      title: person.fullName,
+      text: `View memories linked to ${person.fullName}`,
+      url: shareUrl,
+    };
+
+    setIsSharing(true);
+    try {
+      if (typeof navigator.share === 'function') {
+        if (typeof navigator.canShare === 'function' && !navigator.canShare(shareData)) {
+          const copied = await copyShareLink(shareUrl);
+          if (!copied) throw new Error('Copy failed');
+          toast.success('Profile link copied to clipboard');
+          return;
+        }
+        await navigator.share(shareData);
+        return;
+      }
+
+      const copied = await copyShareLink(shareUrl);
+      if (!copied) throw new Error('Copy failed');
+      toast.success('Profile link copied to clipboard');
+    } catch (error: any) {
+      if (error?.name === 'AbortError') return;
+      toast.error('Unable to share right now. Try copying manually.');
+    } finally {
+      setIsSharing(false);
     }
   };
 
@@ -222,6 +286,17 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
                 <DatePicker
                   date={formData.birthDate}
                   onChange={(date) => setFormData((previous) => ({ ...previous, birthDate: date }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <MapPin size={12} /> {t.modals.addPerson.fields.birthPlace}
+                </label>
+                <FormInput
+                  value={formData.birthPlace}
+                  onChange={(event) => setFormData((previous) => ({ ...previous, birthPlace: event.target.value }))}
+                  placeholder={t.modals.addPerson.fields.birthPlacePlaceholder}
+                  error={errors.birthPlace}
                 />
               </div>
               <div className="space-y-2">
@@ -302,10 +377,17 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
           </div>
 
           <div className="p-8 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/20 flex gap-3">
-            <button className="flex-1 py-3 px-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-slate-700 dark:text-slate-200 transition-all flex items-center justify-center gap-2 hover:border-primary shadow-sm"><Share2 size={14} /> Circulate</button>
+            <button
+              type="button"
+              onClick={handleCirculate}
+              disabled={isSharing}
+              className="flex-1 py-3 px-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-slate-700 dark:text-slate-200 transition-all flex items-center justify-center gap-2 hover:border-primary shadow-sm disabled:opacity-60"
+            >
+              <Share2 size={14} /> {isSharing ? 'Sharing...' : 'Circulate'}
+            </button>
             <Link
               to="/vault"
-              search={{ person: person.fullName.split(' ')[0] } as any}
+              search={{ people: person.fullName } as any}
               className="flex-1 py-3 px-4 bg-primary text-white rounded-2xl text-[10px] font-bold uppercase tracking-widest glow-primary text-center hover:opacity-90 shadow-lg shadow-primary/20 flex items-center justify-center"
             >
               View Vault

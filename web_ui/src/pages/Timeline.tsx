@@ -1,18 +1,45 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Download, History, Clock } from 'lucide-react';
-import { toast } from 'sonner';
+import { ArrowDownWideNarrow, Check, ChevronDown, History, Clock } from 'lucide-react';
 import TimelineCard from '../components/timeline/TimelineCard';
 import { useTranslation } from '../i18n/LanguageContext';
 import { MediaItem } from '../types';
 import MediaDetailModal from '../components/vault/MediaDetailModal';
 import { useMedia, useDeleteMedia, useUpdateMediaMetadata, useMediaFilters } from '../hooks/useMedia';
 import { InfiniteScroll } from '../components/ui/Pagination';
+import { Skeleton } from '../components/Skeleton';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useAuthStore } from '../stores/authStore';
 import { useVault } from '../hooks/useVaults';
-import { mediaApi } from '../services/mediaApi';
-import { getApiErrorMessage } from '../services/httpError';
+
+const TimelineEntrySkeleton: React.FC<{ isEven: boolean }> = ({ isEven }) => (
+  <div className={`relative flex flex-col items-stretch gap-6 sm:gap-8 md:flex-row md:items-center md:gap-16 ${isEven ? 'md:flex-row-reverse' : ''}`}>
+    <div className="absolute left-5 z-10 h-4 w-4 -translate-x-1/2 rounded-full border-4 border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 sm:left-8 md:left-1/2"></div>
+    <div className={`flex w-full pl-10 sm:pl-16 md:w-[calc(50%-2rem)] md:pl-0 ${isEven ? 'justify-start' : 'justify-end'}`}>
+      <div className="w-full overflow-hidden rounded-3xl border border-slate-100 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/60 sm:p-6 lg:p-8">
+        <Skeleton className="aspect-video w-full rounded-2xl" />
+        <div className="mt-4 space-y-3 sm:mt-5">
+          <div className="flex items-center justify-between gap-3">
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-5 w-14 rounded-full" />
+          </div>
+          <Skeleton className="h-6 w-2/3" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+          <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
+            <Skeleton className="h-3 w-40" />
+            <div className="mt-3 flex items-center gap-2">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Skeleton key={index} className="h-8 w-8 rounded-full" />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div className="hidden md:block w-[calc(50%-2rem)]"></div>
+  </div>
+);
 
 const Timeline: React.FC = () => {
   const { t } = useTranslation();
@@ -20,16 +47,26 @@ const Timeline: React.FC = () => {
   const { data: activeVault } = useVault(activeVaultId || '');
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const searchParams = useSearch({ strict: false }) as { decade?: string };
+  const searchParams = useSearch({ strict: false }) as { decade?: string; sort?: 'newest' | 'oldest' };
+  const timelineSort = searchParams.sort === 'newest' ? 'newest' : 'oldest';
+  const activeDecade = typeof searchParams.decade === 'string' && searchParams.decade.trim()
+    ? searchParams.decade.trim()
+    : null;
   const { 
     data: mediaData, 
     fetchNextPage, 
     hasNextPage, 
-    isFetchingNextPage 
-  } = useMedia({ sortBy: 'oldest' });
+    isFetchingNextPage,
+    isLoading: isLoadingTimeline,
+  } = useMedia({
+    sortBy: timelineSort,
+    sortField: 'date_taken',
+    era: activeDecade || undefined,
+  });
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
   const [tagState, setTagState] = useState({ visible: false, value: '' });
-  const [isExporting, setIsExporting] = useState(false);
+  const [isSortOpen, setIsSortOpen] = useState(false);
+  const sortRef = useRef<HTMLDivElement>(null);
   const deleteMutation = useDeleteMedia();
   const updateMediaMetadataMutation = useUpdateMediaMetadata();
   const { data: filterSummary } = useMediaFilters();
@@ -39,21 +76,10 @@ const Timeline: React.FC = () => {
     return mediaData.pages.flatMap(page => page.items);
   }, [mediaData]);
 
-  const sortedMedia = useMemo(() => 
-    [...allMedia].sort((a, b) => new Date(a.dateTaken).getTime() - new Date(b.dateTaken).getTime()), 
-    [allMedia]
+  const decades = useMemo(
+    () => (filterSummary?.eras || []).map((era) => era.value),
+    [filterSummary?.eras],
   );
-  
-  const decades = useMemo(() => 
-    Array.from(new Set(sortedMedia.map(m => Math.floor(new Date(m.dateTaken).getFullYear() / 10) * 10))).sort().map(d => `${d}s`), 
-    [sortedMedia]
-  );
-
-  const activeDecade = useMemo(() => {
-    const requested = searchParams.decade;
-    if (!requested) return null;
-    return decades.includes(requested) ? requested : null;
-  }, [decades, searchParams.decade]);
 
   const setActiveDecade = (decade: string | null) => {
     navigate({
@@ -66,22 +92,34 @@ const Timeline: React.FC = () => {
       },
     } as any);
   };
-  
-  const filtered = useMemo(() => { 
-    if (!activeDecade) return sortedMedia; 
-    const start = parseInt(activeDecade, 10); 
-    return sortedMedia.filter(m => { 
-      const y = new Date(m.dateTaken).getFullYear(); 
-      return y >= start && y < (start + 10); 
-    }); 
-  }, [sortedMedia, activeDecade]);
 
-  const totalTimelineCount = filterSummary?.totalCount ?? sortedMedia.length;
+  const setTimelineSort = (sort: 'newest' | 'oldest') => {
+    navigate({
+      to: '/timeline',
+      search: (prev: Record<string, unknown>) => {
+        const next = { ...prev, sort };
+        return next;
+      },
+    } as any);
+  };
+
+  useEffect(() => {
+    const onClickOutside = (event: MouseEvent) => {
+      if (sortRef.current && !sortRef.current.contains(event.target as Node)) {
+        setIsSortOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, []);
+
+  const currentTimelineCount = mediaData?.pages[0]?.totalCount ?? allMedia.length;
+  const totalTimelineCount = filterSummary?.totalCount ?? currentTimelineCount;
   const activeDecadeCount = useMemo(() => {
     if (!activeDecade) return totalTimelineCount;
     const matched = filterSummary?.eras.find((era) => era.value === activeDecade)?.count;
-    return typeof matched === 'number' ? matched : filtered.length;
-  }, [activeDecade, filterSummary?.eras, filtered.length, totalTimelineCount]);
+    return typeof matched === 'number' ? matched : currentTimelineCount;
+  }, [activeDecade, currentTimelineCount, filterSummary?.eras, totalTimelineCount]);
 
   const progressPercent = useMemo(() => {
     if (totalTimelineCount <= 0) return 0;
@@ -105,50 +143,13 @@ const Timeline: React.FC = () => {
       }
     }
 
-    if (!sortedMedia.length) return 'No timeline data';
-    const years = sortedMedia
+    if (!allMedia.length) return 'No timeline data';
+    const years = allMedia
       .map((item) => new Date(item.dateTaken).getFullYear())
       .filter((year) => !Number.isNaN(year));
     if (!years.length) return 'Unknown range';
     return `${Math.min(...years)} - ${Math.max(...years)}`;
-  }, [activeDecade, filterSummary?.dateRange?.end, filterSummary?.dateRange?.start, sortedMedia]);
-
-  const handleExportTimeline = async () => {
-    if (!activeVaultId) {
-      toast.error('No active vault selected');
-      return;
-    }
-
-    setIsExporting(true);
-    try {
-      const exportPromise = mediaApi.exportTimeline(activeVaultId, {
-        sortBy: 'oldest',
-        era: activeDecade || undefined,
-      });
-
-      toast.promise(exportPromise, {
-        loading: 'Preparing timeline export...',
-        success: 'Timeline export ready',
-        error: 'Failed to export timeline',
-      });
-
-      const { blob, fileName } = await exportPromise;
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      toast.error('Failed to export timeline', {
-        description: getApiErrorMessage(error, 'Please try again.'),
-      });
-    } finally {
-      setIsExporting(false);
-    }
-  };
+  }, [activeDecade, allMedia, filterSummary?.dateRange?.end, filterSummary?.dateRange?.start]);
 
   const familyName = (activeVault?.familyName || t.timeline.defaultFamilyName || 'Family').trim();
   const timelineTitle = `${familyName} ${t.timeline.title}`;
@@ -188,41 +189,105 @@ const Timeline: React.FC = () => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-12 animate-in slide-in-from-bottom-4 pb-32 relative">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b pb-10">
-        <div className="space-y-2"><div className="flex items-center gap-2 text-primary font-bold text-[10px] uppercase tracking-[0.2em]"><History size={14} /> {t.timeline.label}</div><h1 className="text-4xl font-black">{timelineTitle}</h1></div>
-        <button onClick={handleExportTimeline} disabled={isExporting || filtered.length === 0} className="px-6 py-3 bg-white dark:bg-slate-900 dark:text-slate-100 border dark:border-slate-800 rounded-2xl text-[10px] font-bold flex items-center gap-2 transition-all hover:border-primary shadow-sm disabled:opacity-60"><Download size={16} />{t.timeline.export}</button>
+    <div className="relative mx-auto max-w-6xl animate-in slide-in-from-bottom-4 space-y-8 pb-28 sm:space-y-10 sm:pb-32 lg:space-y-12">
+      <div className="flex flex-col gap-4 border-b pb-6 sm:gap-6 sm:pb-8 md:flex-row md:items-end md:justify-between lg:pb-10">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-primary">
+            <History size={14} /> {t.timeline.label}
+          </div>
+          <h1 className="text-2xl font-black leading-tight sm:text-3xl lg:text-4xl">{timelineTitle}</h1>
+        </div>
+        <div className="relative w-full md:w-auto" ref={sortRef}>
+          <button
+            onClick={() => setIsSortOpen((open) => !open)}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-transparent bg-slate-50 px-4 py-2.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 md:w-auto"
+          >
+            <ArrowDownWideNarrow size={16} />
+            <span>
+              {t.timeline.directionLabel}:{' '}
+              {timelineSort === 'newest' ? t.timeline.newestFirst : t.timeline.oldestFirst}
+            </span>
+            <ChevronDown size={14} className={`transition-transform duration-300 ${isSortOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {isSortOpen && (
+            <div className="absolute top-full right-0 z-20 mt-2 w-52 animate-in slide-in-from-top-2 rounded-2xl border border-slate-200 bg-white py-2 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+              {[
+                { id: 'newest', label: t.timeline.newestFirst },
+                { id: 'oldest', label: t.timeline.oldestFirst },
+              ].map((option) => (
+                <button
+                  key={option.id}
+                  onClick={() => {
+                    setTimelineSort(option.id as 'newest' | 'oldest');
+                    setIsSortOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-xs font-bold transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 ${
+                    timelineSort === option.id ? 'text-primary' : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  {option.label}
+                  {timelineSort === option.id && <Check size={14} />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex gap-3 overflow-x-auto no-scrollbar pb-4 sticky top-20 z-20 bg-[#F8FAFC]/80 dark:bg-slate-950/80 backdrop-blur-md">
-        <button onClick={() => setActiveDecade(null)} className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase border transition-all ${!activeDecade ? 'bg-primary border-primary text-white shadow-lg' : 'bg-white dark:bg-slate-900 text-slate-500 hover:border-primary border-slate-200 dark:border-slate-800'}`}>{t.timeline.allEras}</button>
-        {decades.map(d => (<button key={d} onClick={() => setActiveDecade(d)} className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase border transition-all ${activeDecade === d ? 'bg-primary border-primary text-white shadow-lg' : 'bg-white dark:bg-slate-900 text-slate-500 hover:border-primary border-slate-200 dark:border-slate-800'}`}>{d}</button>))}
-      </div>
-
-      <div className="relative pt-10">
-        <div className="absolute left-8 md:left-1/2 top-0 bottom-0 w-[1px] bg-gradient-to-b from-primary via-slate-200 dark:via-slate-800 to-slate-200 dark:to-slate-800 -translate-x-1/2"></div>
-        <InfiniteScroll
-          hasNextPage={hasNextPage || false}
-          isFetchingNextPage={isFetchingNextPage}
-          onLoadMore={fetchNextPage}
+      <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar sm:gap-3 sm:pb-4">
+        <button
+          onClick={() => setActiveDecade(null)}
+          className={`rounded-full border px-4 py-2 text-[10px] font-black uppercase transition-all sm:px-5 sm:py-2.5 ${!activeDecade ? 'border-primary bg-primary text-white shadow-lg' : 'border-slate-200 bg-white text-slate-500 hover:border-primary dark:border-slate-800 dark:bg-slate-900'}`}
         >
-          <div className="space-y-20">
-            {filtered.map((item, i) => (
-              <TimelineCard 
-                key={item.id} 
-                item={item} 
-                isEven={i % 2 === 0} 
-                onSelect={() => setSelectedMedia(item)} 
-              />
+          {t.timeline.allEras}
+        </button>
+        {decades.map((d) => (
+          <button
+            key={d}
+            onClick={() => setActiveDecade(d)}
+            className={`rounded-full border px-4 py-2 text-[10px] font-black uppercase transition-all sm:px-5 sm:py-2.5 ${activeDecade === d ? 'border-primary bg-primary text-white shadow-lg' : 'border-slate-200 bg-white text-slate-500 hover:border-primary dark:border-slate-800 dark:bg-slate-900'}`}
+          >
+            {d}
+          </button>
+        ))}
+      </div>
+
+      <div className="relative pt-6 sm:pt-8 lg:pt-10">
+        <div className="absolute bottom-0 top-0 left-5 w-[1px] -translate-x-1/2 bg-gradient-to-b from-primary via-slate-200 to-slate-200 dark:via-slate-800 dark:to-slate-800 sm:left-8 md:left-1/2"></div>
+        {isLoadingTimeline ? (
+          <div className="space-y-10 sm:space-y-14 lg:space-y-20">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <TimelineEntrySkeleton key={`timeline-skeleton-${index}`} isEven={index % 2 === 0} />
             ))}
           </div>
-        </InfiniteScroll>
+        ) : (
+          <InfiniteScroll
+            hasNextPage={hasNextPage || false}
+            isFetchingNextPage={isFetchingNextPage}
+            onLoadMore={fetchNextPage}
+          >
+            <div className="space-y-10 sm:space-y-14 lg:space-y-20">
+              {allMedia.map((item, i) => (
+                <TimelineCard 
+                  key={item.id} 
+                  item={item} 
+                  isEven={i % 2 === 0} 
+                  onSelect={() => setSelectedMedia(item)} 
+                />
+              ))}
+            </div>
+          </InfiniteScroll>
+        )}
       </div>
 
-      <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-100 dark:border-slate-800 rounded-full shadow-2xl flex items-center gap-6 animate-in slide-in-from-bottom-10">
-        <div className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500"><Clock size={14} /> {t.timeline.progress}</div>
-        <div className="w-40 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-primary transition-all" style={{ width: `${progressPercent}%` }}></div></div>
-        <span className="text-[10px] font-black text-primary">{rangeLabel}</span>
+      <div className="fixed bottom-4 left-1/2 z-[100] flex w-[calc(100%-1rem)] max-w-md -translate-x-1/2 items-center gap-3 rounded-2xl border border-slate-100 bg-white/80 px-4 py-2.5 shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-10 dark:border-slate-800 dark:bg-slate-900/80 sm:bottom-10 sm:w-auto sm:max-w-none sm:gap-6 sm:rounded-full sm:px-6 sm:py-3">
+        <div className="flex shrink-0 items-center gap-2 text-[10px] font-black uppercase text-slate-500">
+          <Clock size={14} /> {t.timeline.progress}
+        </div>
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800 sm:w-40 sm:flex-none">
+          <div className="h-full bg-primary transition-all" style={{ width: `${progressPercent}%` }}></div>
+        </div>
+        <span className="shrink-0 text-[10px] font-black text-primary">{rangeLabel}</span>
       </div>
 
       {selectedMedia && (
@@ -249,6 +314,15 @@ const Timeline: React.FC = () => {
             persistTags([...selectedMedia.tags, tagState.value.trim()]);
             setTagState({ visible: false, value: '' });
           }}
+          onUpdateMedia={(payload, onSuccess) =>
+            updateMediaMetadataMutation.mutate(payload, {
+              onSuccess: (updatedMedia) => {
+                syncMediaRecord(updatedMedia);
+                onSuccess?.(updatedMedia);
+              },
+            })
+          }
+          isUpdatingMedia={updateMediaMetadataMutation.isPending}
         />
       )}
     </div>

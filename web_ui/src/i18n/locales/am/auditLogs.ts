@@ -1,7 +1,7 @@
 export const auditLogs = {
   title: "የስርዓት መዝገብ",
   subtitle: "የሁሉም ግንኙነቶች ሊረጋገጥ የሚችል መዝገብ።",
-  searchPlaceholder: "ቁልፍ ቃላትን ያጣሩ...",
+  searchPlaceholder: "በተሳታፊ፣ ተግባር ወይም ሀብት ፈልግ...",
   categories: {
     all: "ሁሉም",
     uploads: "ሰቀላዎች",

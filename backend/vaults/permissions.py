@@ -1,6 +1,35 @@
 from rest_framework import permissions
 from .models import Membership
 
+def _resolve_object_vault(obj):
+    if obj is None:
+        return None
+
+    # Direct vault model instance
+    if hasattr(obj, 'owner'):
+        return obj
+
+    # Common direct relation
+    vault = getattr(obj, 'vault', None)
+    if vault is not None:
+        return vault
+
+    # Genealogy Relationship/edge objects
+    from_person = getattr(obj, 'from_person', None)
+    if from_person is not None:
+        from_person_vault = getattr(from_person, 'vault', None)
+        if from_person_vault is not None:
+            return from_person_vault
+
+    # MediaTag and similar through media_item
+    media_item = getattr(obj, 'media_item', None)
+    if media_item is not None:
+        media_vault = getattr(media_item, 'vault', None)
+        if media_vault is not None:
+            return media_vault
+
+    return None
+
 class IsVaultMember(permissions.BasePermission):
     """
     Allows access only to active members of vault.
@@ -11,9 +40,7 @@ class IsVaultMember(permissions.BasePermission):
         return True
 
     def has_object_permission(self, request, view, obj):
-        # Handle cases where obj is Vault, or obj has .vault attribute
-        vault = obj if hasattr(obj, 'owner') else getattr(obj, 'vault', None)
-        
+        vault = _resolve_object_vault(obj)
         if not vault:
             return False
 
@@ -28,7 +55,7 @@ class IsVaultAdmin(permissions.BasePermission):
     Allows write access only to Vault Admins.
     """
     def has_object_permission(self, request, view, obj):
-        vault = obj if hasattr(obj, 'owner') else getattr(obj, 'vault', None)
+        vault = _resolve_object_vault(obj)
         if not vault: 
             return False
 

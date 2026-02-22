@@ -177,7 +177,7 @@ export const useUpdateMediaMetadata = () => {
       queryClient.invalidateQueries({ queryKey: ['media'] });
     },
     onError: (error) => {
-      toast.error('Failed to update media tags', {
+      toast.error('Failed to update media', {
         description: getApiErrorMessage(error, 'Please try again.'),
       });
     },

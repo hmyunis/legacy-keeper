@@ -2,6 +2,7 @@ import axiosClient from './axiosClient';
 import type {
     ApiMediaItem,
     ApiMediaFile,
+    ApiLinkedRelative,
     ApiMediaFilterSummary,
     PaginatedApiResponse,
 } from '../types/api.types';
@@ -49,6 +50,36 @@ const parseMetadataLocation = (metadata?: Record<string, unknown> | null): strin
     if (typeof raw !== 'string') return undefined;
     const value = raw.trim();
     return value || undefined;
+};
+
+const normalizeVisibility = (value?: string | null): 'private' | 'family' => {
+    const normalized = String(value || '').trim().toUpperCase();
+    return normalized === 'PRIVATE' ? 'private' : 'family';
+};
+
+const parseLinkedRelatives = (item: ApiMediaItem): MediaItem['linkedRelatives'] => {
+    const rawRelatives = (Array.isArray(item.linkedRelatives) ? item.linkedRelatives : (item as any).linked_relatives) || [];
+    if (!Array.isArray(rawRelatives)) return [];
+
+    const seen = new Set<string>();
+    return rawRelatives
+        .map((entry: ApiLinkedRelative | Record<string, unknown>) => {
+            if (!entry || typeof entry !== 'object') return null;
+
+            const id = String((entry as any).id || '').trim();
+            const fullName = String((entry as any).fullName ?? (entry as any).full_name ?? '').trim();
+            if (!id || !fullName) return null;
+            if (seen.has(id)) return null;
+            seen.add(id);
+
+            const photoUrl = toAbsoluteUrl(String((entry as any).photoUrl ?? (entry as any).photo_url ?? '').trim());
+            return {
+                id,
+                fullName,
+                photoUrl: photoUrl || undefined,
+            };
+        })
+        .filter(Boolean) as NonNullable<MediaItem['linkedRelatives']>;
 };
 
 const resolveFileTypeFromMime = (
@@ -119,8 +150,12 @@ const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => {
         id: String(item.id),
         vaultId: String(item.vault),
         uploaderId: item.uploader ? String(item.uploader) : '',
+        uploaderName: String(item.uploaderName ?? (item as any).uploader_name ?? '').trim() || undefined,
+        uploaderAvatar: toAbsoluteUrl(String(item.uploaderAvatar ?? (item as any).uploader_avatar ?? '').trim()) || undefined,
+        linkedRelatives: parseLinkedRelatives(item),
         isFavorite: Boolean(item.isFavorite),
         type: item.mediaType,
+        visibility: normalizeVisibility((item as any).visibility),
         title: item.title || 'Untitled memory',
         description: item.description || '',
         dateTaken: item.dateTaken || item.createdAt,
@@ -148,12 +183,19 @@ export interface UploadMediaPayload {
     dateTaken?: string;
     location?: string;
     tags?: string[];
+    visibility?: 'private' | 'family';
 }
 
 export interface UpdateMediaMetadataPayload {
     id: string;
-    tags: string[];
+    title?: string;
+    description?: string;
+    dateTaken?: string | null;
     location?: string;
+    tags?: string[];
+    visibility?: 'private' | 'family';
+    newFiles?: File[];
+    removeFileIds?: string[];
 }
 
 export interface PaginatedMediaResult {
@@ -181,6 +223,7 @@ export interface MediaQueryParams {
     dateFrom?: string;
     dateTo?: string;
     sortBy?: 'newest' | 'oldest' | 'title';
+    sortField?: 'created_at' | 'date_taken';
 }
 
 export interface FacetOption {
@@ -245,12 +288,14 @@ const buildMediaQueryParams = (
     if (params?.dateTo) queryParams.dateTo = params.dateTo;
 
     if (params?.sortBy) {
+        const sortField = params.sortField === 'date_taken' ? 'date_taken' : 'created_at';
+        queryParams.sort = params.sortBy;
         switch (params.sortBy) {
             case 'newest':
-                queryParams.ordering = '-created_at';
+                queryParams.ordering = `-${sortField}`;
                 break;
             case 'oldest':
-                queryParams.ordering = 'created_at';
+                queryParams.ordering = sortField;
                 break;
             case 'title':
                 queryParams.ordering = 'title';
@@ -357,6 +402,9 @@ export const mediaApi = {
         if (payload.dateTaken) {
             formData.append('dateTaken', payload.dateTaken);
         }
+        if (payload.visibility) {
+            formData.append('visibility', payload.visibility.toUpperCase());
+        }
 
         formData.append(
             'metadata',
@@ -381,18 +429,92 @@ export const mediaApi = {
         mediaId: string,
         payload: UpdateMediaMetadataPayload,
     ): Promise<MediaItem> => {
-        const formData = new FormData();
-        formData.append(
-            'metadata',
-            JSON.stringify({
-                location: payload.location || '',
-                tags: payload.tags,
-            }),
-        );
+        const hasFileMutations =
+            Boolean(payload.newFiles?.length) || Boolean(payload.removeFileIds?.length);
+
+        if (hasFileMutations) {
+            const formData = new FormData();
+
+            if (payload.title !== undefined) {
+                formData.append('title', payload.title);
+            }
+            if (payload.description !== undefined) {
+                formData.append('description', payload.description);
+            }
+            if (payload.dateTaken !== undefined) {
+                formData.append('dateTaken', payload.dateTaken === null ? 'null' : payload.dateTaken);
+            }
+            if (payload.visibility !== undefined) {
+                formData.append('visibility', payload.visibility.toUpperCase());
+            }
+
+            const metadataPatch: Record<string, unknown> = {};
+            let hasMetadataUpdate = false;
+
+            if (payload.location !== undefined) {
+                metadataPatch.location = payload.location;
+                hasMetadataUpdate = true;
+            }
+
+            if (payload.tags !== undefined) {
+                metadataPatch.tags = payload.tags;
+                hasMetadataUpdate = true;
+            }
+
+            if (hasMetadataUpdate) {
+                formData.append('metadata', JSON.stringify(metadataPatch));
+            }
+
+            if (payload.removeFileIds?.length) {
+                formData.append('removeFileIds', JSON.stringify(payload.removeFileIds));
+            }
+
+            for (const file of payload.newFiles || []) {
+                formData.append('newFiles', file);
+            }
+
+            const multipartResponse = await axiosClient.patch<ApiMediaItem>(
+                `${MEDIA_ENDPOINT}${mediaId}/`,
+                formData,
+            );
+            return mapApiMediaToMediaItem(multipartResponse.data);
+        }
+
+        const requestBody: Record<string, unknown> = {};
+
+        if (payload.title !== undefined) {
+            requestBody.title = payload.title;
+        }
+        if (payload.description !== undefined) {
+            requestBody.description = payload.description;
+        }
+        if (payload.dateTaken !== undefined) {
+            requestBody.dateTaken = payload.dateTaken;
+        }
+        if (payload.visibility !== undefined) {
+            requestBody.visibility = payload.visibility.toUpperCase();
+        }
+
+        const nextMetadata: Record<string, unknown> = {};
+        let hasMetadataUpdate = false;
+
+        if (payload.location !== undefined) {
+            nextMetadata.location = payload.location;
+            hasMetadataUpdate = true;
+        }
+
+        if (payload.tags !== undefined) {
+            nextMetadata.tags = payload.tags;
+            hasMetadataUpdate = true;
+        }
+
+        if (hasMetadataUpdate) {
+            requestBody.metadata = nextMetadata;
+        }
 
         const response = await axiosClient.patch<ApiMediaItem>(
             `${MEDIA_ENDPOINT}${mediaId}/`,
-            formData,
+            requestBody,
         );
         return mapApiMediaToMediaItem(response.data);
     },
@@ -411,23 +533,6 @@ export const mediaApi = {
             mediaId: String(response.data.mediaId ?? response.data.media_id ?? mediaId),
             isFavorite: Boolean(response.data.isFavorite ?? response.data.is_favorite),
         };
-    },
-
-    exportTimeline: async (
-        vaultId: string,
-        params?: Omit<MediaQueryParams, 'page' | 'pageSize'>,
-    ): Promise<{ blob: Blob; fileName: string }> => {
-        const queryParams = buildMediaQueryParams(vaultId, params, { includePagination: false });
-        const response = await axiosClient.get<Blob>(`${MEDIA_ENDPOINT}export/`, {
-            params: queryParams,
-            responseType: 'blob',
-        });
-
-        const disposition = response.headers['content-disposition'];
-        const fileNameMatch = disposition?.match(/filename="?([^"]+)"?/i);
-        const fileName = fileNameMatch?.[1] || `media-timeline-${vaultId}.csv`;
-
-        return { blob: response.data, fileName };
     },
 
     downloadMedia: async (mediaItem: MediaItem, fileName?: string): Promise<void> => {

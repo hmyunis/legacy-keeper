@@ -33,7 +33,7 @@ const mapApiProfileToPersonProfile = (profile: ApiPersonProfile): PersonProfile 
   biography: profile.bio || '',
   photoUrl: toAbsoluteUrl(profile.photoUrl) || 'https://placehold.co/200x200?text=Profile',
   isLinkedToUser: Boolean(profile.linkedUser),
-  birthPlace: '', // Not provided by API yet
+  birthPlace: String((profile as any).birthPlace ?? (profile as any).birth_place ?? '').trim(),
 });
 
 const mapApiRelationshipToRelationship = (rel: ApiRelationship): Relationship => ({
@@ -107,6 +107,7 @@ export const genealogyApi = {
     formData.append('vault', data.vault);
     formData.append('fullName', data.fullName);
     if (data.birthDate) formData.append('birthDate', data.birthDate);
+    if (data.birthPlace !== undefined) formData.append('birthPlace', data.birthPlace);
     if (data.deathDate) formData.append('deathDate', data.deathDate);
     if (data.bio) formData.append('bio', data.bio);
     if (data.profilePhoto) formData.append('profilePhoto', data.profilePhoto);
@@ -119,6 +120,7 @@ export const genealogyApi = {
     const formData = new FormData();
     if (data.fullName) formData.append('fullName', data.fullName);
     if (data.birthDate !== undefined) formData.append('birthDate', data.birthDate || '');
+    if (data.birthPlace !== undefined) formData.append('birthPlace', data.birthPlace);
     if (data.deathDate !== undefined) formData.append('deathDate', data.deathDate || '');
     if (data.bio !== undefined) formData.append('bio', data.bio);
     if (data.profilePhoto) formData.append('profilePhoto', data.profilePhoto);

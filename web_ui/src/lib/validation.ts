@@ -30,6 +30,7 @@ export const createVaultSchema = z.object({
 export const personProfileSchema = z.object({
   fullName: z.string().min(2, 'Full name must be at least 2 characters').max(100, 'Full name must be less than 100 characters'),
   birthDate: z.string().optional().nullable(),
+  birthPlace: z.string().max(255, 'Birth place must be less than 255 characters').optional(),
   deathDate: z.string().optional().nullable(),
   biography: z.string().max(2000, 'Biography must be less than 2000 characters').optional(),
 });

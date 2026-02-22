@@ -91,7 +91,7 @@ export const auditApi = {
 
     const disposition = response.headers['content-disposition'];
     const fileNameMatch = disposition?.match(/filename="?([^"]+)"?/i);
-    const fileName = fileNameMatch?.[1] || `audit-log-${vaultId}.csv`;
+    const fileName = fileNameMatch?.[1] || `audit-log-${vaultId}.xlsx`;
 
     return { blob: response.data, fileName };
   },

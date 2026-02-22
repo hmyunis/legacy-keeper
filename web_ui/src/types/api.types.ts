@@ -87,8 +87,11 @@ export interface ApiMediaItem {
   vault: string;
   uploader?: string | null;
   uploaderName?: string | null;
+  uploaderAvatar?: string | null;
+  linkedRelatives?: ApiLinkedRelative[] | null;
   isFavorite?: boolean;
   mediaType: MediaType;
+  visibility?: 'PRIVATE' | 'FAMILY';
   title?: string;
   description?: string;
   dateTaken?: string | null;
@@ -97,6 +100,12 @@ export interface ApiMediaItem {
   aiStatus?: string;
   metadata?: Record<string, unknown> | null;
   files?: ApiMediaFile[];
+}
+
+export interface ApiLinkedRelative {
+  id: string;
+  fullName?: string | null;
+  photoUrl?: string | null;
 }
 
 export interface ApiMediaFile {
@@ -134,6 +143,7 @@ export interface ApiPersonProfile {
   fullName: string;
   maidenName?: string | null;
   birthDate?: string | null;
+  birthPlace?: string | null;
   deathDate?: string | null;
   isDeceased?: boolean;
   bio?: string;
@@ -261,6 +271,7 @@ export interface CreateMediaRequest {
   description?: string;
   dateTaken?: string;
   mediaType: MediaType;
+  visibility?: 'PRIVATE' | 'FAMILY';
   metadata?: {
     location?: string;
     tags?: string[];
@@ -271,6 +282,7 @@ export interface UpdateMediaRequest {
   title?: string;
   description?: string;
   dateTaken?: string;
+  visibility?: 'PRIVATE' | 'FAMILY';
   metadata?: {
     location?: string;
     tags?: string[];
@@ -281,6 +293,7 @@ export interface CreatePersonProfileRequest {
   vault: string;
   fullName: string;
   birthDate?: string | null;
+  birthPlace?: string;
   deathDate?: string | null;
   bio?: string;
   profilePhoto?: File;
@@ -289,6 +302,7 @@ export interface CreatePersonProfileRequest {
 export interface UpdatePersonProfileRequest {
   fullName?: string;
   birthDate?: string | null;
+  birthPlace?: string;
   deathDate?: string | null;
   bio?: string;
   profilePhoto?: File;

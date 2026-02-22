@@ -32,6 +32,7 @@ const SETTINGS_TABS = ['profile', 'vault', 'notifications', 'appearance', 'subsc
 const LOG_CATEGORIES = ['All', 'Uploads', 'Access', 'System', 'Management'] as const;
 const LOG_TIMEFRAMES = ['ALL', 'DAY', 'WEEK', 'MONTH'] as const;
 const VAULT_SORT = ['newest', 'oldest', 'title'] as const;
+const TIMELINE_SORT = ['newest', 'oldest'] as const;
 const VAULT_VIEW = ['grid', 'list'] as const;
 const VAULT_TAB = ['all', 'favorites'] as const;
 const MEMBER_ROLE_FILTER = ['ALL', UserRole.CONTRIBUTOR, UserRole.VIEWER] as const;
@@ -177,6 +178,7 @@ const timelineRoute = createRoute({
   path: '/timeline',
   validateSearch: (search: Record<string, unknown>) => ({
     decade: asString(search.decade),
+    sort: TIMELINE_SORT.includes(search.sort as any) ? (search.sort as string) : 'oldest',
   }),
   beforeLoad: requireRoles(ALL_ROLES),
   component: Timeline,

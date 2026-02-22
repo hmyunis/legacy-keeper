@@ -101,12 +101,22 @@ export interface MediaFile {
   createdAt?: string;
 }
 
+export interface MediaLinkedRelative {
+  id: string;
+  fullName: string;
+  photoUrl?: string;
+}
+
 export interface MediaItem {
   id: string;
   vaultId: string;
   uploaderId: string;
+  uploaderName?: string;
+  uploaderAvatar?: string;
+  linkedRelatives?: MediaLinkedRelative[];
   isFavorite: boolean;
   type: MediaType;
+  visibility: 'private' | 'family';
   title: string;
   description: string;
   dateTaken: string;

@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { X, Upload, Loader2, Image as ImageIcon, Calendar, MapPin, Tag as TagIcon, AlignLeft, File as FileIcon } from 'lucide-react';
+import { X, Upload, Loader2, Image as ImageIcon, Calendar, MapPin, Tag as TagIcon, AlignLeft, File as FileIcon, Lock, Users } from 'lucide-react';
 import DatePicker from '../DatePicker';
 import { useTranslation } from '../../i18n/LanguageContext';
 
@@ -12,12 +12,14 @@ interface UploadModalProps {
   location: string;
   tags: string;
   story: string;
+  visibility: 'private' | 'family';
   onDateChange: (date: Date) => void;
   onFilesChange: (files: File[]) => void;
   onTitleChange: (value: string) => void;
   onLocationChange: (value: string) => void;
   onTagsChange: (value: string) => void;
   onStoryChange: (value: string) => void;
+  onVisibilityChange: (value: 'private' | 'family') => void;
   onClose: () => void;
   onStartUpload: () => void;
 }
@@ -31,12 +33,14 @@ const UploadModal: React.FC<UploadModalProps> = ({
   location,
   tags,
   story,
+  visibility,
   onDateChange,
   onFilesChange,
   onTitleChange,
   onLocationChange,
   onTagsChange,
   onStoryChange,
+  onVisibilityChange,
   onClose,
   onStartUpload,
 }) => {
@@ -139,10 +143,64 @@ const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           )}
           <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 transition-opacity ${isUploading ? 'opacity-30 pointer-events-none' : ''}`}>
-            <div className="space-y-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><ImageIcon size={12} /> {t.modals.upload.fields.title}</label><input type="text" value={title} onChange={(event) => onTitleChange(event.target.value)} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm" /></div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <ImageIcon size={12} /> {t.modals.upload.fields.title}
+                <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={title}
+                required
+                aria-required="true"
+                onChange={(event) => onTitleChange(event.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm"
+              />
+            </div>
             <div className="space-y-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><Calendar size={12} /> {t.modals.upload.fields.date}</label><DatePicker date={uploadDate} onChange={onDateChange} /></div>
             <div className="space-y-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><MapPin size={12} /> {t.modals.upload.fields.location}</label><input type="text" value={location} onChange={(event) => onLocationChange(event.target.value)} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm" /></div>
             <div className="space-y-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><TagIcon size={12} /> {t.modals.upload.fields.tags}</label><input type="text" value={tags} onChange={(event) => onTagsChange(event.target.value)} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm" /></div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                {t.modals.upload.fields.visibility}
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => onVisibilityChange('private')}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                    visibility === 'private'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-primary/60'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2 text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                    <Lock size={13} className="text-slate-500" />
+                    {t.modals.upload.visibilityOptions.private.label}
+                  </span>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    {t.modals.upload.visibilityOptions.private.desc}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onVisibilityChange('family')}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                    visibility === 'family'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-primary/60'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2 text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                    <Users size={13} className="text-slate-500" />
+                    {t.modals.upload.visibilityOptions.family.label}
+                  </span>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    {t.modals.upload.visibilityOptions.family.desc}
+                  </p>
+                </button>
+              </div>
+            </div>
             <div className="md:col-span-2 space-y-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><AlignLeft size={12} /> {t.modals.upload.fields.story}</label><textarea rows={3} value={story} onChange={(event) => onStoryChange(event.target.value)} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm" /></div>
           </div>
         </div>

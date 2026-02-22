@@ -8,7 +8,18 @@ export const modals = {
       date: "ቀን",
       location: "ቦታ",
       tags: "መለያዎች",
+      visibility: "ግላዊነት",
       story: "ታሪኩ"
+    },
+    visibilityOptions: {
+      private: {
+        label: "የግል",
+        desc: "ይህን ትውስታ እርስዎ እና የቮልት አስተዳዳሪዎች ብቻ ይዩታል።"
+      },
+      family: {
+        label: "ቤተሰብ",
+        desc: "በቮልቱ ውስጥ ላሉ ንቁ አባላት ሁሉ ይታያል።"
+      }
     },
     actions: {
       cancel: "ሰርዝ",

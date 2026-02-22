@@ -241,6 +241,7 @@ const FamilyTree: React.FC = () => {
       data: {
         fullName: data.fullName,
         birthDate: data.birthDate,
+        birthPlace: data.birthPlace,
         deathDate: data.deathDate,
         biography: data.biography,
         profilePhoto: data.profilePhoto,

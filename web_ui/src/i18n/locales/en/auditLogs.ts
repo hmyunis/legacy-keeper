@@ -1,7 +1,7 @@
 export const auditLogs = {
   title: "System Registry",
   subtitle: "Verifiable ledger of all interactions.",
-  searchPlaceholder: "Filter keywords...",
+  searchPlaceholder: "Search by actor, action, or resource...",
   categories: {
     all: "All",
     uploads: "Uploads",

@@ -24,6 +24,7 @@ class PersonProfile(TimeStampedModel):
     
     # Vital Statistics
     birth_date = models.DateField(null=True, blank=True)
+    birth_place = models.CharField(max_length=255, blank=True)
     death_date = models.DateField(null=True, blank=True)
     is_deceased = models.BooleanField(default=False)
     

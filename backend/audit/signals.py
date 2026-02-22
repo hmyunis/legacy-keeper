@@ -15,11 +15,15 @@ AUDIT_MODELS = [FamilyVault, Membership, Invite, MediaItem, PersonProfile, Relat
 
 def get_vault_id(instance):
     """Helper to extract vault_id from various model types"""
-    if hasattr(instance, 'vault_id'):
+    if hasattr(instance, 'vault_id') and instance.vault_id:
         return instance.vault_id
-    elif hasattr(instance, 'vault'):
+    if hasattr(instance, 'vault') and getattr(instance, 'vault', None) is not None:
         return instance.vault.id
-    elif isinstance(instance, FamilyVault):
+    if hasattr(instance, 'from_person') and getattr(instance, 'from_person', None) is not None:
+        return instance.from_person.vault_id
+    if hasattr(instance, 'media_item') and getattr(instance, 'media_item', None) is not None:
+        return instance.media_item.vault_id
+    if isinstance(instance, FamilyVault):
         return instance.id
     return None
 
@@ -29,8 +33,7 @@ def log_save(sender, instance, created, **kwargs):
         return
 
     user = get_current_user()
-    if not user or not user.is_authenticated:
-        return
+    actor = user if user and getattr(user, 'is_authenticated', False) else None
 
     action = AuditLog.Action.CREATE if created else AuditLog.Action.UPDATE
     
@@ -38,7 +41,7 @@ def log_save(sender, instance, created, **kwargs):
     # For MVP, we just log that an update occurred
     
     AuditLog.objects.create(
-        actor=user,
+        actor=actor,
         vault_id=get_vault_id(instance),
         content_type=ContentType.objects.get_for_model(sender),
         object_id=instance.pk,
@@ -52,11 +55,10 @@ def log_delete(sender, instance, **kwargs):
         return
 
     user = get_current_user()
-    if not user or not user.is_authenticated:
-        return
+    actor = user if user and getattr(user, 'is_authenticated', False) else None
 
     AuditLog.objects.create(
-        actor=user,
+        actor=actor,
         vault_id=get_vault_id(instance),
         content_type=ContentType.objects.get_for_model(sender),
         object_id=instance.pk,

@@ -8,7 +8,18 @@ export const modals = {
       date: "Date",
       location: "Location",
       tags: "Tags",
+      visibility: "Privacy",
       story: "The Story"
+    },
+    visibilityOptions: {
+      private: {
+        label: "Private",
+        desc: "Only you and vault admins can access this memory."
+      },
+      family: {
+        label: "Family",
+        desc: "Visible to all active members in this vault."
+      }
     },
     actions: {
       cancel: "Cancel",
@@ -64,7 +75,7 @@ export const modals = {
     portrait: "Profile Portrait",
     fields: {
       name: "Full Legal Name",
-      namePlaceholder: "e.g. Eleanor Rose Harrington",
+      namePlaceholder: "e.g. Abebe Bikila Aferra",
       gender: "Gender",
       birthPlace: "Birth Place",
       birthPlacePlaceholder: "City, Country",

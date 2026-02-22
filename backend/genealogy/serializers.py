@@ -8,7 +8,7 @@ class PersonProfileSerializer(serializers.ModelSerializer):
         model = PersonProfile
         fields = (
             'id', 'vault', 'linked_user', 'full_name', 'maiden_name', 
-            'birth_date', 'death_date', 'is_deceased', 'bio', 
+            'birth_date', 'birth_place', 'death_date', 'is_deceased', 'bio', 
             'profile_photo', 'photo_url'
         )
         read_only_fields = ('vault',)

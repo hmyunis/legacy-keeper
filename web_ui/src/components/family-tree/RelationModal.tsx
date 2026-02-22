@@ -2,7 +2,7 @@ import React from 'react';
 import { X, GitMerge, User } from 'lucide-react';
 import { PersonProfile, Relationship } from '../../types';
 import { useTranslation } from '../../i18n/LanguageContext';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/Select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '../ui/Select';
 
 interface RelationModalProps {
   profiles?: PersonProfile[];
@@ -45,7 +45,9 @@ const RelationModal: React.FC<RelationModalProps> = ({
                 <Select value={relPersonA} onValueChange={onPersonAChange}>
                   <SelectTrigger className="w-full py-3">
                     <User size={14} className="text-primary mr-2 shrink-0" />
-                    <SelectValue placeholder={t.modals.relation.placeholder} />
+                    <span className={relPersonA ? 'text-slate-700 dark:text-slate-200 truncate' : 'text-slate-400 truncate'}>
+                      {getProfileName(relPersonA) || t.modals.relation.placeholder}
+                    </span>
                   </SelectTrigger>
                   <SelectContent>
                     {profiles?.map(p => (
@@ -67,7 +69,9 @@ const RelationModal: React.FC<RelationModalProps> = ({
                 <Select value={relPersonB} onValueChange={onPersonBChange}>
                   <SelectTrigger className="w-full py-3">
                     <User size={14} className="text-primary mr-2 shrink-0" />
-                    <SelectValue placeholder={t.modals.relation.placeholder} />
+                    <span className={relPersonB ? 'text-slate-700 dark:text-slate-200 truncate' : 'text-slate-400 truncate'}>
+                      {getProfileName(relPersonB) || t.modals.relation.placeholder}
+                    </span>
                   </SelectTrigger>
                   <SelectContent>
                     {profiles?.map(p => (

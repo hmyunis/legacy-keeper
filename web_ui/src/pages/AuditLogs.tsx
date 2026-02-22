@@ -12,6 +12,7 @@ import { useAuthStore } from '../stores/authStore';
 import { auditApi } from '../services/auditApi';
 import { getApiErrorMessage } from '../services/httpError';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/Select';
 
 const LOG_CATEGORIES = ['All', 'Uploads', 'Access', 'System', 'Management'] as const;
 const LOG_TIMEFRAMES = ['ALL', 'DAY', 'WEEK', 'MONTH'] as const;
@@ -178,7 +179,7 @@ const AuditLogs: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white dark:bg-slate-900/60 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col glow-card transition-all">
+      <div className="bg-white dark:bg-slate-900/60 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-visible flex flex-col glow-card transition-all">
         <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col xl:flex-row gap-6 justify-between items-center bg-slate-50/50 dark:bg-slate-900/40">
           <div className="relative w-full xl:w-[450px]">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -245,15 +246,22 @@ const AuditLogs: React.FC = () => {
         <div className="p-6 bg-slate-50/50 dark:bg-slate-950/20 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
            <div className="flex items-center gap-2">
              <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-bold tracking-wider">{t.auditLogs.pagination.show}</span>
-             <select 
-               value={table.getState().pagination.pageSize} 
-               onChange={e => table.setPageSize(Number(e.target.value))}
-               className="w-20 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl py-2 px-3 text-sm dark:text-slate-200"
+             <Select
+               value={String(table.getState().pagination.pageSize)}
+               onValueChange={(value) => table.setPageSize(Number(value))}
+               className="w-20"
              >
-               {[10, 20, 50].map(s => (
-                 <option key={s} value={s}>{s}</option>
-               ))}
-             </select>
+               <SelectTrigger className="h-9 rounded-xl py-2 px-3 text-sm">
+                 <SelectValue />
+               </SelectTrigger>
+               <SelectContent className="z-[300]">
+                 {[10, 20, 50].map((size) => (
+                   <SelectItem key={size} value={String(size)}>
+                     {size}
+                   </SelectItem>
+                 ))}
+               </SelectContent>
+             </Select>
            </div>
            <div className="flex items-center gap-3">
              <button onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()} className="p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl disabled:opacity-30 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all active:scale-90"><ChevronLeft size={16} className="dark:text-slate-300" /></button>

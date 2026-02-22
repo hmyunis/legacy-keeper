@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { X, Calendar, Plus, Trash2, Share2, Heart, MapPin, Download, Loader2, FileText, Music2, Film } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { X, Calendar, Plus, Trash2, Share2, Heart, MapPin, Download, Loader2, FileText, Music2, Film, Pencil, Save, Lock, Users } from 'lucide-react';
 import { MediaItem, PersonProfile } from '../../types';
 import { useProfiles } from '../../hooks/useProfiles';
 import { useAuthStore } from '../../stores/authStore';
 import { hasPermission } from '@/config/permissions';
 import { useCreateMediaTag, useDeleteMediaTag, useMediaTags, useDownloadMedia } from '../../hooks/useMediaTags';
 import { toast } from 'sonner';
+import DatePicker from '../DatePicker';
+import type { UpdateMediaMetadataPayload } from '../../services/mediaApi';
 
 interface MediaDetailModalProps {
   media: MediaItem;
@@ -22,7 +24,32 @@ interface MediaDetailModalProps {
   onTagInputChange: (val: string) => void;
   setTagInputVisible: (visible: boolean) => void;
   onManualTagSubmit: (e?: React.FormEvent) => void;
+  onUpdateMedia: (payload: UpdateMediaMetadataPayload, onSuccess?: (updatedMedia: MediaItem) => void) => void;
+  isUpdatingMedia?: boolean;
 }
+
+interface EditDraft {
+  title: string;
+  story: string;
+  location: string;
+  tags: string;
+  visibility: 'private' | 'family';
+  dateTaken?: Date;
+}
+
+const MAX_MEMORY_FILES = 10;
+
+const toEditDraft = (media: MediaItem): EditDraft => {
+  const parsedDate = media.dateTaken ? new Date(media.dateTaken) : undefined;
+  return {
+    title: media.title || '',
+    story: media.description || '',
+    location: media.location || '',
+    tags: (media.tags || []).join(', '),
+    visibility: media.visibility || 'family',
+    dateTaken: parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : undefined,
+  };
+};
 
 const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   media,
@@ -36,12 +63,19 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   onManualTagSubmit,
   onRemoveTag,
   setTagInputVisible,
+  onUpdateMedia,
+  isUpdatingMedia = false,
 }) => {
   const [taggingFaceId, setTaggingFaceId] = useState<string | null>(null);
   const [localFaces, setLocalFaces] = useState(media.detectedFaces || []);
   const [isLinkPickerOpen, setIsLinkPickerOpen] = useState(false);
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [isSharing, setIsSharing] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editDraft, setEditDraft] = useState<EditDraft>(() => toEditDraft(media));
+  const [pendingRemovedFileIds, setPendingRemovedFileIds] = useState<Set<string>>(new Set());
+  const [pendingNewFiles, setPendingNewFiles] = useState<File[]>([]);
+  const editFileInputRef = useRef<HTMLInputElement>(null);
   const { currentUser } = useAuthStore();
 
   const { data: profilesData } = useProfiles();
@@ -62,6 +96,10 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     setLocalFaces(media.detectedFaces || []);
     setTaggingFaceId(null);
     setIsLinkPickerOpen(false);
+    setIsEditMode(false);
+    setEditDraft(toEditDraft(media));
+    setPendingRemovedFileIds(new Set());
+    setPendingNewFiles([]);
   }, [media.id, media.detectedFaces]);
 
   const linkedPersonIds = useMemo(() => new Set((mediaTags || []).map((tag) => tag.personId)), [mediaTags]);
@@ -100,23 +138,84 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     ];
   }, [media]);
 
+  const activeExistingFiles = useMemo(
+    () => memoryFiles.filter((file) => !pendingRemovedFileIds.has(file.id)),
+    [memoryFiles, pendingRemovedFileIds],
+  );
+
+  const projectedFileCount = activeExistingFiles.length + pendingNewFiles.length;
+
   const activeFile = useMemo(() => {
-    if (!memoryFiles.length) return null;
+    const candidateFiles = isEditMode ? activeExistingFiles : memoryFiles;
+    if (!candidateFiles.length) return null;
     if (activeFileId) {
-      const matched = memoryFiles.find((file) => file.id === activeFileId);
+      const matched = candidateFiles.find((file) => file.id === activeFileId);
       if (matched) return matched;
     }
-    return memoryFiles.find((file) => file.isPrimary) || memoryFiles[0];
-  }, [activeFileId, memoryFiles]);
+    return candidateFiles.find((file) => file.isPrimary) || candidateFiles[0];
+  }, [activeExistingFiles, activeFileId, isEditMode, memoryFiles]);
 
   useEffect(() => {
-    if (!memoryFiles.length) {
+    const candidateFiles = isEditMode ? activeExistingFiles : memoryFiles;
+    if (!candidateFiles.length) {
       setActiveFileId(null);
       return;
     }
-    const primary = memoryFiles.find((file) => file.isPrimary) || memoryFiles[0];
+    const primary = candidateFiles.find((file) => file.isPrimary) || candidateFiles[0];
     setActiveFileId(primary.id);
-  }, [media.id, memoryFiles]);
+  }, [activeExistingFiles, isEditMode, media.id, memoryFiles]);
+
+  const mergePendingNewFiles = (incoming: File[]) => {
+    if (!incoming.length) return;
+
+    const existingRoom = MAX_MEMORY_FILES - activeExistingFiles.length;
+    if (existingRoom <= 0) {
+      toast.error('A memory can contain up to 10 files.');
+      return;
+    }
+
+    const merged = [...pendingNewFiles];
+    for (const file of incoming) {
+      const exists = merged.some(
+        (candidate) =>
+          candidate.name === file.name &&
+          candidate.size === file.size &&
+          candidate.lastModified === file.lastModified,
+      );
+      if (exists) continue;
+      if (activeExistingFiles.length + merged.length >= MAX_MEMORY_FILES) break;
+      merged.push(file);
+    }
+    setPendingNewFiles(merged);
+  };
+
+  const toggleFileRemoval = (fileId: string) => {
+    setPendingRemovedFileIds((current) => {
+      const next = new Set(current);
+      if (next.has(fileId)) next.delete(fileId);
+      else next.add(fileId);
+      return next;
+    });
+  };
+
+  const handleEditFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    mergePendingNewFiles(files);
+    event.target.value = '';
+  };
+
+  const removePendingNewFile = (index: number) => {
+    setPendingNewFiles((current) => current.filter((_, fileIndex) => fileIndex !== index));
+  };
+
+  useEffect(() => {
+    if (!activeFileId) return;
+    if (!isEditMode) return;
+    if (activeExistingFiles.some((file) => file.id === activeFileId)) return;
+    const next = activeExistingFiles.find((file) => file.isPrimary) || activeExistingFiles[0];
+    setActiveFileId(next?.id || null);
+  }, [activeExistingFiles, activeFileId, isEditMode]);
+
 
   const handleDownload = () => {
     const targetUrl = activeFile?.fileUrl || media.fileUrl;
@@ -246,6 +345,55 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     );
   };
 
+  const handleSaveMediaEdits = () => {
+    if (!canEdit) return;
+
+    const normalizedTitle = editDraft.title.trim();
+    if (!normalizedTitle) {
+      toast.error('Title is required.');
+      return;
+    }
+
+    const normalizedTags = Array.from(
+      new Set(
+        editDraft.tags
+          .split(',')
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      ),
+    );
+
+    if (projectedFileCount <= 0) {
+      toast.error('At least one file must remain attached to this memory.');
+      return;
+    }
+
+    if (projectedFileCount > MAX_MEMORY_FILES) {
+      toast.error('A memory can contain up to 10 files.');
+      return;
+    }
+
+    onUpdateMedia(
+      {
+        id: media.id,
+        title: normalizedTitle,
+        description: editDraft.story.trim(),
+        location: editDraft.location.trim(),
+        tags: normalizedTags,
+        dateTaken: editDraft.dateTaken ? editDraft.dateTaken.toISOString() : null,
+        visibility: editDraft.visibility,
+        removeFileIds: Array.from(pendingRemovedFileIds),
+        newFiles: pendingNewFiles,
+      },
+      (updatedMedia) => {
+        setIsEditMode(false);
+        setEditDraft(toEditDraft(updatedMedia));
+        setPendingRemovedFileIds(new Set());
+        setPendingNewFiles([]);
+      },
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-110 flex items-center justify-center p-4 backdrop-blur-xl bg-slate-950/60 animate-in fade-in duration-300">
       <div className="bg-white dark:bg-slate-900 w-full max-w-6xl h-[90vh] rounded-[3rem] shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row animate-in zoom-in-95 duration-500">
@@ -304,30 +452,208 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                     <MapPin size={12} /> {media.location}
                   </p>
                 )}
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-300 inline-flex items-center gap-1.5">
+                  {media.visibility === 'private' ? <Lock size={11} /> : <Users size={11} />}
+                  {media.visibility === 'private' ? 'Private' : 'Family'}
+                </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-all"><X size={20} /></button>
+            <div className="flex items-center gap-2">
+              {canEdit && (
+                isEditMode ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        setIsEditMode(false);
+                        setEditDraft(toEditDraft(media));
+                        setPendingRemovedFileIds(new Set());
+                        setPendingNewFiles([]);
+                      }}
+                      disabled={isUpdatingMedia}
+                      className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:border-primary transition-colors disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveMediaEdits}
+                      disabled={isUpdatingMedia}
+                      className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border border-primary bg-primary text-white flex items-center gap-1.5 shadow-lg shadow-primary/20 disabled:opacity-60"
+                    >
+                      {isUpdatingMedia ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                      Save
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setIsEditMode(true)}
+                    className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:border-primary hover:text-primary transition-colors flex items-center gap-1.5"
+                  >
+                    <Pencil size={12} />
+                    Edit
+                  </button>
+                )
+              )}
+              <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-all"><X size={20} /></button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto no-scrollbar p-8 space-y-8">
+            {isEditMode && (
+              <div className="space-y-4 rounded-2xl border border-primary/20 bg-primary/[0.03] p-4">
+                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Edit Memory</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                      Title <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      aria-required="true"
+                      value={editDraft.title}
+                      onChange={(event) =>
+                        setEditDraft((current) => ({
+                          ...current,
+                          title: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Date Taken</label>
+                    <DatePicker
+                      date={editDraft.dateTaken}
+                      onChange={(date) =>
+                        setEditDraft((current) => ({
+                          ...current,
+                          dateTaken: date,
+                        }))
+                      }
+                    />
+                    {editDraft.dateTaken && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditDraft((current) => ({
+                            ...current,
+                            dateTaken: undefined,
+                          }))
+                        }
+                        className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-primary transition-colors"
+                      >
+                        Clear Date
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Location</label>
+                    <input
+                      type="text"
+                      value={editDraft.location}
+                      onChange={(event) =>
+                        setEditDraft((current) => ({
+                          ...current,
+                          location: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Privacy</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditDraft((current) => ({
+                            ...current,
+                            visibility: 'private',
+                          }))
+                        }
+                        className={`rounded-xl border px-2.5 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                          editDraft.visibility === 'private'
+                            ? 'border-primary bg-primary/5 text-primary'
+                            : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300'
+                        }`}
+                      >
+                        Private
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditDraft((current) => ({
+                            ...current,
+                            visibility: 'family',
+                          }))
+                        }
+                        className={`rounded-xl border px-2.5 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                          editDraft.visibility === 'family'
+                            ? 'border-primary bg-primary/5 text-primary'
+                            : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300'
+                        }`}
+                      >
+                        Family
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tags (comma-separated)</label>
+                    <input
+                      type="text"
+                      value={editDraft.tags}
+                      onChange={(event) =>
+                        setEditDraft((current) => ({
+                          ...current,
+                          tags: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Story</label>
+                    <textarea
+                      rows={4}
+                      value={editDraft.story}
+                      onChange={(event) =>
+                        setEditDraft((current) => ({
+                          ...current,
+                          story: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             {memoryFiles.length > 0 && (
               <div className="space-y-4">
                 <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                  Files In This Memory ({memoryFiles.length})
+                  Files In This Memory ({isEditMode ? projectedFileCount : memoryFiles.length})
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {memoryFiles.map((file) => {
+                    const isRemoved = pendingRemovedFileIds.has(file.id);
                     const isActiveItem = file.id === activeFile?.id;
+                    const isCardDisabled = !isEditMode && isActiveItem;
                     return (
                       <button
                         key={file.id}
                         type="button"
-                        onClick={() => setActiveFileId(file.id)}
-                        disabled={isActiveItem}
+                        onClick={() => {
+                          if (isEditMode && isRemoved) return;
+                          setActiveFileId(file.id);
+                        }}
+                        disabled={isCardDisabled}
                         className={`w-full text-left rounded-2xl border p-2.5 flex items-center gap-3 transition-all ${
-                          isActiveItem
-                            ? 'border-primary bg-primary/5'
-                            : 'border-slate-200 dark:border-slate-700 hover:border-primary/60'
+                          isEditMode && isRemoved
+                            ? 'border-rose-200 bg-rose-50/70 dark:border-rose-900/50 dark:bg-rose-950/20 opacity-70'
+                          : isActiveItem
+                              ? 'border-primary bg-primary/5'
+                              : 'border-slate-200 dark:border-slate-700 hover:border-primary/60'
                         }`}
                       >
                         <div className="h-14 w-14 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden">
@@ -346,15 +672,92 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                             {file.fileType}
                           </p>
                         </div>
-                        {isActiveItem && (
-                          <span className="text-[9px] font-black uppercase tracking-widest text-primary">
-                            Viewing
-                          </span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {isEditMode ? (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleFileRemoval(file.id);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  toggleFileRemoval(file.id);
+                                }
+                              }}
+                              className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors ${
+                                isRemoved
+                                  ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20'
+                                  : 'text-rose-600 bg-rose-50 dark:bg-rose-900/20'
+                              }`}
+                            >
+                              {isRemoved ? 'Undo' : 'Remove'}
+                            </span>
+                          ) : null}
+                          {isActiveItem && !isRemoved && (
+                            <span className="text-[9px] font-black uppercase tracking-widest text-primary">
+                              Viewing
+                            </span>
+                          )}
+                        </div>
                       </button>
                     );
                   })}
                 </div>
+                {isEditMode && (
+                  <div className="space-y-3 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 p-3">
+                    <input
+                      ref={editFileInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={handleEditFileInputChange}
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => editFileInputRef.current?.click()}
+                        className="px-3 py-1.5 rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 text-[10px] font-black uppercase tracking-widest"
+                      >
+                        Add More Files
+                      </button>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        {projectedFileCount}/{MAX_MEMORY_FILES} files
+                      </span>
+                    </div>
+                    {pendingNewFiles.length > 0 && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {pendingNewFiles.map((file, index) => (
+                          <div
+                            key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                            className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-2"
+                          >
+                            <FileText size={14} className="text-slate-400 shrink-0" />
+                            <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-slate-700 dark:text-slate-200">
+                              {file.name}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removePendingNewFile(index)}
+                              className="text-slate-400 hover:text-rose-500 transition-colors"
+                              aria-label={`Remove ${file.name}`}
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {projectedFileCount <= 0 && (
+                      <p className="text-[10px] font-bold text-rose-600">
+                        At least one file must remain attached to this memory.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -425,53 +828,57 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               )}
             </div>
 
-            <div className="space-y-4">
-              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">The Story</h3>
-              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed italic border-l-2 border-primary/20 pl-4 py-1">
-                {media.description || 'No archival story recorded.'}
-              </p>
-            </div>
+            {!isEditMode && (
+              <div className="space-y-4">
+                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">The Story</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed italic border-l-2 border-primary/20 pl-4 py-1">
+                  {media.description || 'No archival story recorded.'}
+                </p>
+              </div>
+            )}
 
-            <div className="space-y-4">
-              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Preservation Tags</h3>
-              <div className="flex flex-wrap gap-2">
-                {media.tags.map((tag) => (
-                  <span key={tag} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 rounded-xl text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                    {tag}
-                    {canEdit && <button onClick={() => onRemoveTag(tag)} className="text-slate-300 hover:text-rose-500"><X size={12} /></button>}
-                  </span>
-                ))}
-                {canEdit && (
-                  <button onClick={() => setTagInputVisible(true)} className="px-3 flex gap-1.5 items-center py-1.5 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl text-[10px] font-bold text-slate-400 hover:text-primary transition-all">
-                    <Plus size={12} /> Add Tag
-                  </button>
+            {!isEditMode && (
+              <div className="space-y-4">
+                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Preservation Tags</h3>
+                <div className="flex flex-wrap gap-2">
+                  {media.tags.map((tag) => (
+                    <span key={tag} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 rounded-xl text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                      {tag}
+                      {canEdit && <button onClick={() => onRemoveTag(tag)} className="text-slate-300 hover:text-rose-500"><X size={12} /></button>}
+                    </span>
+                  ))}
+                  {canEdit && (
+                    <button onClick={() => setTagInputVisible(true)} className="px-3 flex gap-1.5 items-center py-1.5 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl text-[10px] font-bold text-slate-400 hover:text-primary transition-all">
+                      <Plus size={12} /> Add Tag
+                    </button>
+                  )}
+                </div>
+                {canEdit && isTagInputVisible && (
+                  <form onSubmit={onManualTagSubmit} className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      autoFocus
+                      value={manualTagValue}
+                      onChange={(event) => onTagInputChange(event.target.value)}
+                      placeholder="Enter a tag"
+                      className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+                    />
+                    <button
+                      type="submit"
+                      className="px-4 py-2 rounded-xl bg-primary text-white text-[10px] font-black uppercase tracking-widest"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTagInputVisible(false)}
+                      className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-widest text-slate-500"
+                    >
+                      Cancel
+                    </button>
+                  </form>
                 )}
               </div>
-              {canEdit && isTagInputVisible && (
-                <form onSubmit={onManualTagSubmit} className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    autoFocus
-                    value={manualTagValue}
-                    onChange={(event) => onTagInputChange(event.target.value)}
-                    placeholder="Enter a tag"
-                    className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
-                  />
-                  <button
-                    type="submit"
-                    className="px-4 py-2 rounded-xl bg-primary text-white text-[10px] font-black uppercase tracking-widest"
-                  >
-                    Add
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTagInputVisible(false)}
-                    className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-widest text-slate-500"
-                  >
-                    Cancel
-                  </button>
-                </form>
-              )}
-            </div>
+            )}
           </div>
 
           <div className="p-8 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 flex items-center gap-3">

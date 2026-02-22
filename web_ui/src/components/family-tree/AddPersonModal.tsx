@@ -11,7 +11,7 @@ type FormData = z.infer<typeof personProfileSchema>;
 interface AddPersonModalProps {
   isPending: boolean;
   onClose: () => void;
-  onSubmit: (data: { fullName: string; birthDate?: string; deathDate?: string; biography?: string; profilePhoto?: File }) => void;
+  onSubmit: (data: { fullName: string; birthDate?: string; birthPlace?: string; deathDate?: string; biography?: string; profilePhoto?: File }) => void;
 }
 
 const AddPersonModal: React.FC<AddPersonModalProps> = ({ isPending, onClose, onSubmit }) => {
@@ -24,6 +24,7 @@ const AddPersonModal: React.FC<AddPersonModalProps> = ({ isPending, onClose, onS
   const [formData, setFormData] = useState({
     fullName: '',
     birthDate: new Date('1950-01-01'),
+    birthPlace: '',
     deathDate: undefined as Date | undefined,
     biography: '',
   });
@@ -50,6 +51,7 @@ const AddPersonModal: React.FC<AddPersonModalProps> = ({ isPending, onClose, onS
       personProfileSchema.parse({
         fullName: formData.fullName,
         birthDate: formData.birthDate?.toISOString().split('T')[0] || null,
+        birthPlace: formData.birthPlace,
         deathDate: formData.deathDate?.toISOString().split('T')[0] || null,
         biography: formData.biography,
       });
@@ -75,6 +77,7 @@ const AddPersonModal: React.FC<AddPersonModalProps> = ({ isPending, onClose, onS
     onSubmit({
       fullName: formData.fullName,
       birthDate: formData.birthDate.toISOString().split('T')[0],
+      birthPlace: formData.birthPlace.trim(),
       deathDate: formData.deathDate?.toISOString().split('T')[0],
       biography: formData.biography,
       profilePhoto: selectedFile || undefined,
@@ -140,6 +143,17 @@ const AddPersonModal: React.FC<AddPersonModalProps> = ({ isPending, onClose, onS
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><Calendar size={12} /> {t.modals.addPerson.fields.birthDate}</label>
               <DatePicker date={formData.birthDate} onChange={d => setFormData({...formData, birthDate: d})} />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><MapPin size={12} /> {t.modals.addPerson.fields.birthPlace}</label>
+              <FormInput
+                type="text"
+                value={formData.birthPlace}
+                onChange={e => setFormData({...formData, birthPlace: e.target.value})}
+                placeholder={t.modals.addPerson.fields.birthPlacePlaceholder}
+                error={errors.birthPlace}
+              />
             </div>
 
             <div className="space-y-2">

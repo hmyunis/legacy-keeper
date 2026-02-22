@@ -38,6 +38,7 @@ export const useProfile = (profileId: string) => {
 export interface ProfileFormData {
   fullName: string;
   birthDate?: string | null;
+  birthPlace?: string;
   deathDate?: string | null;
   biography?: string;
   profilePhoto?: File;
@@ -54,6 +55,7 @@ export const useAddProfile = () => {
         vault: activeVaultId,
         fullName: data.fullName,
         birthDate: data.birthDate || null,
+        birthPlace: data.birthPlace,
         deathDate: data.deathDate || null,
         bio: data.biography,
         profilePhoto: data.profilePhoto,
@@ -85,6 +87,7 @@ export const useUpdateProfile = () => {
     }) => genealogyApi.updateProfile(profileId, {
       fullName: data.fullName,
       birthDate: data.birthDate,
+      birthPlace: data.birthPlace,
       deathDate: data.deathDate,
       bio: data.biography,
       profilePhoto: data.profilePhoto,

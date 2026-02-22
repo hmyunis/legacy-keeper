@@ -31,6 +31,7 @@ import {
   useUploadMedia,
   useUpdateMediaMetadata,
 } from '../hooks/useMedia';
+import { useVault } from '../hooks/useVaults';
 import { useTranslation } from '../i18n/LanguageContext';
 import { useAuthStore } from '../stores/authStore';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -98,7 +99,9 @@ const Vault: React.FC<{
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const searchParams = useSearch({ strict: false }) as { sort?: string; view?: string; tab?: VaultTab };
-  const { currentUser } = useAuthStore();
+  const { currentUser, activeVaultId } = useAuthStore();
+  const { data: activeVault } = useVault(activeVaultId || '');
+  const vaultDefaultVisibility = (activeVault?.defaultVisibility || 'family') as 'private' | 'family';
 
   const normalizedInitialPeople = useMemo(
     () => uniqueStrings([...(initialPeople || []), ...(initialPerson ? [initialPerson] : [])]),
@@ -143,6 +146,7 @@ const Vault: React.FC<{
     location: '',
     tags: '',
     story: '',
+    visibility: 'family' as 'private' | 'family',
   });
   const [confirmState, setConfirmState] = useState<VaultConfirmState | null>(null);
   const sortRef = useRef<HTMLDivElement>(null);
@@ -205,6 +209,7 @@ const Vault: React.FC<{
   const mediaQueryParams = useMemo(
     () => ({
       sortBy,
+      sortField: 'created_at' as const,
       search: debouncedSearchQuery || undefined,
       people: filters.people.length ? filters.people : undefined,
       tags: filters.tags.length ? filters.tags : undefined,
@@ -319,9 +324,9 @@ const Vault: React.FC<{
 
   useEffect(() => {
     if (initialAction === 'upload' && canUpload) {
-      setUploadState((state) => ({ ...state, open: true }));
+      setUploadState((state) => ({ ...state, open: true, visibility: vaultDefaultVisibility }));
     }
-  }, [initialAction, canUpload]);
+  }, [initialAction, canUpload, vaultDefaultVisibility]);
 
   useEffect(() => {
     const click = (e: MouseEvent) => {
@@ -386,13 +391,24 @@ const Vault: React.FC<{
       location: '',
       tags: '',
       story: '',
+      visibility: vaultDefaultVisibility,
     });
+
+  useEffect(() => {
+    setUploadState((state) => (state.open ? state : { ...state, visibility: vaultDefaultVisibility }));
+  }, [vaultDefaultVisibility]);
 
   const handleStartUpload = () => {
     if (!canUpload || uploadMutation.isPending) return;
 
     if (!uploadState.files.length) {
       toast.error('Please select at least one file to upload.');
+      return;
+    }
+
+    const normalizedTitle = uploadState.title.trim();
+    if (!normalizedTitle) {
+      toast.error('Title is required.');
       return;
     }
 
@@ -410,11 +426,12 @@ const Vault: React.FC<{
       {
         payload: {
           files: uploadState.files,
-          title: uploadState.title,
+          title: normalizedTitle,
           description: uploadState.story,
           dateTaken: uploadState.date?.toISOString(),
           location: uploadState.location,
           tags: parsedTags,
+          visibility: uploadState.visibility,
         },
         onUploadProgress: (progress) => {
           setUploadState((state) => ({ ...state, progress }));
@@ -545,7 +562,13 @@ const Vault: React.FC<{
           </button>
           {canUpload && (
             <button
-              onClick={() => setUploadState((state) => ({ ...state, open: true }))}
+              onClick={() =>
+                setUploadState((state) => ({
+                  ...state,
+                  open: true,
+                  visibility: vaultDefaultVisibility,
+                }))
+              }
               className="w-full sm:w-auto bg-primary text-white px-6 py-3 rounded-xl font-bold text-[10px] uppercase flex items-center justify-center gap-2 hover:opacity-90 glow-primary transition-all shadow-lg shadow-primary/20"
             >
               <UploadCloud size={16} />
@@ -838,6 +861,15 @@ const Vault: React.FC<{
             persistTags([...selectedMedia.tags, tagState.value.trim()]);
             setTagState({ visible: false, value: '' });
           }}
+          onUpdateMedia={(payload, onSuccess) =>
+            updateMediaMetadataMutation.mutate(payload, {
+              onSuccess: (updatedMedia) => {
+                syncMediaRecord(updatedMedia);
+                onSuccess?.(updatedMedia);
+              },
+            })
+          }
+          isUpdatingMedia={updateMediaMetadataMutation.isPending}
         />
       )}
 
@@ -851,6 +883,7 @@ const Vault: React.FC<{
           location={uploadState.location}
           tags={uploadState.tags}
           story={uploadState.story}
+          visibility={uploadState.visibility}
           onDateChange={(date) => setUploadState((state) => ({ ...state, date }))}
           onFilesChange={(files) =>
             setUploadState((state) => ({
@@ -862,6 +895,7 @@ const Vault: React.FC<{
           onLocationChange={(value) => setUploadState((state) => ({ ...state, location: value }))}
           onTagsChange={(value) => setUploadState((state) => ({ ...state, tags: value }))}
           onStoryChange={(value) => setUploadState((state) => ({ ...state, story: value }))}
+          onVisibilityChange={(value) => setUploadState((state) => ({ ...state, visibility: value }))}
           onClose={() => resetUploadState()}
           onStartUpload={handleStartUpload}
         />
