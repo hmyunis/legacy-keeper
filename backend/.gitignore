@@ -1,7 +1,7 @@
 *.pyc
 db.sqlite3
 .env
-/media/
+/media/uploads/
 .idea/
 .vscode/
 Desktop.ini
