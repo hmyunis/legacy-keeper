@@ -169,8 +169,8 @@ SIMPLE_JWT = {
 
 # OPTION A: Local File Storage (Active)
 DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_URL = config('MEDIA_URL', default='/media/')
+MEDIA_ROOT = config('MEDIA_ROOT', default=os.path.join(BASE_DIR, 'media'))
 
 # OPTION B: MinIO / S3 Storage (Commented Out)
 # To switch: Comment out OPTION A and Uncomment OPTION B.
