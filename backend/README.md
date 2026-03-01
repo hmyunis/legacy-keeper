@@ -2,6 +2,16 @@
 
 Django REST API for the Intelligent Family Memory Vault.
 
+## Docker (Recommended)
+
+From the repository root:
+
+```bash
+docker compose up --build
+```
+
+The backend will run on `http://localhost:8000` with Postgres + MinIO preconfigured.
+
 ## Quick Start
 
 1. **Install dependencies**
@@ -76,3 +86,53 @@ Key variables:
 - `VAPID_PRIVATE_KEY`: VAPID private key for browser push notifications
 - `VAPID_SUBJECT`: contact URI for VAPID claims (example: `mailto:admin@example.com`)
 - `AWS_*`: Cloud storage configuration
+
+### VAPID Key Setup (Push Notifications)
+
+#### Docker compose (automatic)
+
+When running with Docker, VAPID keys are generated automatically on container startup if missing.
+
+- Controlled by `AUTO_GENERATE_VAPID_KEYS` (default `true` in `backend/.env.docker`)
+- Subject is taken from `VAPID_SUBJECT`
+- Keys are stored in `VAPID_KEYS_FILE` (default `/data/vapid/keys.env`) on a Docker volume (`backend_vapid`)
+- Triggered by `backend/entrypoint.sh` before migrations/server start
+
+So with `docker compose up --build`, you do not need to pre-generate keys manually.
+
+If you want to rotate keys intentionally, clear the volume and recreate containers:
+
+```bash
+docker compose down -v
+docker compose up --build
+```
+
+#### Manual / non-docker setup
+
+Generate keys using the backend management command:
+
+```bash
+cd backend
+python manage.py generate_vapid_keys --subject "mailto:you@example.com"
+```
+
+Or write/update env values automatically:
+
+```bash
+cd backend
+python manage.py generate_vapid_keys --subject "mailto:you@example.com" --write-env .env
+python manage.py generate_vapid_keys --subject "mailto:you@example.com" --write-env .env.docker
+```
+
+If you do not use `--write-env`, set these in backend env files manually:
+
+- Local run: `backend/.env`
+- Docker compose run: `backend/.env.docker`
+
+Required values:
+
+- `VAPID_PUBLIC_KEY=<public key from command output>`
+- `VAPID_PRIVATE_KEY=<private key from command output>`
+- `VAPID_SUBJECT=mailto:you@example.com`
+
+For local frontend fallback, you can also set `VITE_VAPID_PUBLIC_KEY` to the same public key.

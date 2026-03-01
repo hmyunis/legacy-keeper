@@ -340,5 +340,6 @@ export interface TransferOwnershipRequest {
 
 export interface UpdateProfileRequest {
   fullName?: string;
+  bio?: string;
   avatar?: File;
 }

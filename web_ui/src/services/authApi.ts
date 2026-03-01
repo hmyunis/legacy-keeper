@@ -41,6 +41,7 @@ export interface ApiAuthUser {
   id: string | number;
   email: string;
   fullName: string;
+  bio?: string;
   avatar?: string | null;
   role?: UserRole;
   activeVaultId?: string | null;
@@ -97,6 +98,7 @@ export const mapApiUserToUser = (apiUser: ApiAuthUser): User => ({
   id: String(apiUser.id),
   email: apiUser.email,
   fullName: apiUser.fullName,
+  bio: apiUser.bio || '',
   profilePhoto: toAbsoluteUrl(apiUser.avatar) || fallbackAvatar(apiUser.fullName, apiUser.email),
   role: parseUserRole(apiUser.role),
   subscriptionTier: apiUser.subscriptionTier || 'BASIC',
@@ -123,6 +125,9 @@ export const authApi = {
     const formData = new FormData();
     if (payload.fullName) {
       formData.append('fullName', payload.fullName);
+    }
+    if (payload.bio !== undefined) {
+      formData.append('bio', payload.bio);
     }
     if (payload.avatar) {
       formData.append('avatar', payload.avatar);

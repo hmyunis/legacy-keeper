@@ -22,5 +22,5 @@ urlpatterns = [
     path('api/', include('notifications.urls')),
 ]
 
-if settings.DEBUG:
+if settings.DEBUG and not getattr(settings, 'USE_S3', False) and getattr(settings, 'MEDIA_ROOT', None):
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -101,7 +101,7 @@ const Settings: React.FC = () => {
   const [formData, setFormData] = useState({ 
     fullName: currentUser?.fullName || '', 
     email: currentUser?.email || '', 
-    bio: '' 
+    bio: currentUser?.bio || '',
   });
   const [selectedAvatar, setSelectedAvatar] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
@@ -120,8 +120,9 @@ const Settings: React.FC = () => {
       ...prev,
       fullName: currentUser?.fullName || '',
       email: currentUser?.email || '',
+      bio: currentUser?.bio || '',
     }));
-  }, [currentUser?.email, currentUser?.fullName]);
+  }, [currentUser?.bio, currentUser?.email, currentUser?.fullName]);
 
   useEffect(() => {
     setFamilyNameDraft(activeVault?.familyName || '');
@@ -284,13 +285,14 @@ const Settings: React.FC = () => {
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
     const fullName = formData.fullName.trim();
+    const bio = formData.bio;
     if (!fullName) {
       toast.error(t.settings.profile.toasts.error || 'Name is required.');
       return;
     }
 
     updateProfileMutation.mutate(
-      { fullName, avatar: selectedAvatar || undefined },
+      { fullName, bio, avatar: selectedAvatar || undefined },
       {
         onSuccess: () => {
           toast.success(t.settings.profile.toasts.success, { icon: <ShieldCheck size={16} className="text-primary" /> });

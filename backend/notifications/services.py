@@ -141,8 +141,8 @@ def _send_push(subscription, payload):
         if response is not None:
             status_code = getattr(response, 'status_code', None)
 
-        # Stale endpoints should be disabled so they stop failing on every trigger.
-        if status_code in (404, 410):
+        # Stale or unauthorized endpoints should be disabled so they stop failing on every trigger.
+        if status_code in (401, 403, 404, 410):
             subscription.is_active = False
 
         subscription.last_error = str(exc)[:2000]

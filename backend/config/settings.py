@@ -2,14 +2,22 @@ import os
 from pathlib import Path
 from decouple import config
 import dj_database_url
+from datetime import timedelta
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def get_csv_list(name, default=''):
+    raw_value = config(name, default=default)
+    if isinstance(raw_value, (list, tuple)):
+        return [str(item).strip() for item in raw_value if str(item).strip()]
+    return [item.strip() for item in str(raw_value).split(',') if item.strip()]
+
 SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG', default=False, cast=bool)
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost']).split(',')
-CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='').split(',')
+ALLOWED_HOSTS = get_csv_list('ALLOWED_HOSTS', default='127.0.0.1,localhost')
+CORS_ALLOWED_ORIGINS = get_csv_list('CORS_ALLOWED_ORIGINS', default='')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -74,7 +82,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': dj_database_url.config(
-        default=config('DATABASE_URL')
+        default=config('DATABASE_URL', default=f"sqlite:///{(BASE_DIR / 'db.sqlite3').as_posix()}")
     )
 }
 
@@ -99,10 +107,6 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-
-# Media Files
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -156,7 +160,6 @@ VAPID_SUBJECT = config('VAPID_SUBJECT', default='mailto:admin@legacykeeper.local
 AUTH_USER_MODEL = 'users.User'
 
 # JWT Settings
-from datetime import timedelta
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
@@ -166,26 +169,51 @@ SIMPLE_JWT = {
 }
 
 # --- STORAGE CONFIGURATION ---
+USE_S3 = config('USE_S3', default=False, cast=bool)
 
-# OPTION A: Local File Storage (Active)
-DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
-MEDIA_URL = config('MEDIA_URL', default='/media/')
-MEDIA_ROOT = config('MEDIA_ROOT', default=os.path.join(BASE_DIR, 'media'))
+if USE_S3:
+    AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
+    AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='')
+    AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='legacykeeper')
+    AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='us-east-1')
+    AWS_S3_ENDPOINT_URL = config('AWS_S3_ENDPOINT_URL', default='')
+    AWS_S3_CUSTOM_DOMAIN = config('AWS_S3_CUSTOM_DOMAIN', default='')
+    AWS_S3_ADDRESSING_STYLE = config('AWS_S3_ADDRESSING_STYLE', default='path')
+    AWS_S3_SIGNATURE_VERSION = config('AWS_S3_SIGNATURE_VERSION', default='s3v4')
+    AWS_S3_URL_PROTOCOL = config('AWS_S3_URL_PROTOCOL', default='http:')
+    AWS_QUERYSTRING_AUTH = config('AWS_QUERYSTRING_AUTH', default=False, cast=bool)
+    AWS_S3_FILE_OVERWRITE = config('AWS_S3_FILE_OVERWRITE', default=False, cast=bool)
+    AWS_S3_OBJECT_PARAMETERS = {
+        'CacheControl': config('AWS_S3_CACHE_CONTROL', default='max-age=86400'),
+    }
+    aws_default_acl = config('AWS_DEFAULT_ACL', default='')
+    AWS_DEFAULT_ACL = aws_default_acl or None
 
-# OPTION B: MinIO / S3 Storage (Commented Out)
-# To switch: Comment out OPTION A and Uncomment OPTION B.
-# Ensure you have these in your .env file:
-# AWS_ACCESS_KEY_ID=minioadmin
-# AWS_SECRET_ACCESS_KEY=minioadmin
-# AWS_STORAGE_BUCKET_NAME=legacykeeper
-# AWS_S3_ENDPOINT_URL=http://localhost:9000
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
 
-# AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
-# AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='')
-# AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='legacykeeper')
-# AWS_S3_ENDPOINT_URL = config('AWS_S3_ENDPOINT_URL', default='http://localhost:9000')
-# AWS_S3_OBJECT_PARAMETERS = {
-#     'CacheControl': 'max-age=86400',
-# }
-# AWS_DEFAULT_ACL = 'public-read' # or 'private' based on your needs
-# DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    if AWS_S3_CUSTOM_DOMAIN:
+        MEDIA_URL = f"http://{AWS_S3_CUSTOM_DOMAIN.strip('/')}/"
+    elif AWS_S3_ENDPOINT_URL:
+        MEDIA_URL = f"{AWS_S3_ENDPOINT_URL.rstrip('/')}/{AWS_STORAGE_BUCKET_NAME}/"
+    else:
+        MEDIA_URL = f"/{AWS_STORAGE_BUCKET_NAME}/"
+    MEDIA_ROOT = None
+else:
+    MEDIA_URL = config('MEDIA_URL', default='/media/')
+    MEDIA_ROOT = config('MEDIA_ROOT', default=os.path.join(BASE_DIR, 'media'))
+
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }

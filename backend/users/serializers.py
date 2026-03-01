@@ -18,6 +18,7 @@ def serialize_user_payload(user):
         'id': user.id,
         'email': user.email,
         'full_name': user.full_name,
+        'bio': user.bio,
         'avatar': user.avatar.url if user.avatar else None,
         'role': primary_membership.role if primary_membership else None,
         'active_vault_id': str(primary_membership.vault_id) if primary_membership else None,
@@ -49,7 +50,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ('id', 'email', 'full_name', 'avatar', 'is_verified', 'role', 'active_vault_id')
+        fields = ('id', 'email', 'full_name', 'bio', 'avatar', 'is_verified', 'role', 'active_vault_id')
         read_only_fields = ('email', 'is_verified')
 
     def get_role(self, obj):

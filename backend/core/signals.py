@@ -1,15 +1,37 @@
 from django.db.models.signals import post_delete, pre_save
 from django.dispatch import receiver
 from django.db import models
-import os
+import logging
 
-def delete_file_if_unused(file_field):
-    """ Helper to delete file from filesystem """
-    if file_field and os.path.isfile(file_field.path):
-        try:
-            os.remove(file_field.path)
-        except Exception as e:
-            print(f"Error deleting file: {e}")
+logger = logging.getLogger(__name__)
+
+
+def delete_file_if_unused(model, field_name, file_field, instance_pk=None):
+    """Delete a file only when no other rows reference the same storage key."""
+    if not file_field:
+        return
+
+    file_name = str(getattr(file_field, 'name', '') or '').strip()
+    if not file_name:
+        return
+
+    lookup = {field_name: file_name}
+    existing_rows = model._default_manager.filter(**lookup)
+    if instance_pk is not None:
+        existing_rows = existing_rows.exclude(pk=instance_pk)
+
+    if existing_rows.exists():
+        return
+
+    storage = getattr(file_field, 'storage', None)
+    if not storage:
+        return
+
+    try:
+        if storage.exists(file_name):
+            storage.delete(file_name)
+    except Exception as exc:
+        logger.warning("Unable to delete file %s: %s", file_name, exc)
 
 @receiver(post_delete)
 def delete_files_when_row_deleted(sender, instance, **kwargs):
@@ -20,7 +42,7 @@ def delete_files_when_row_deleted(sender, instance, **kwargs):
     for field in sender._meta.fields:
         if isinstance(field, (models.FileField, models.ImageField)):
             file_field = getattr(instance, field.name)
-            delete_file_if_unused(file_field)
+            delete_file_if_unused(sender, field.name, file_field)
 
 @receiver(pre_save)
 def delete_old_file_when_image_updated(sender, instance, **kwargs):
@@ -42,4 +64,4 @@ def delete_old_file_when_image_updated(sender, instance, **kwargs):
 
             # If the file has changed and the old file exists
             if old_file and old_file != new_file:
-                delete_file_if_unused(old_file)
+                delete_file_if_unused(sender, field.name, old_file, instance_pk=instance.pk)

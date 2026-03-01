@@ -13,6 +13,7 @@ class User(AbstractUser):
     
     # Custom fields
     full_name = models.CharField(max_length=255)
+    bio = models.TextField(blank=True, default='')
     avatar = models.ImageField(upload_to=get_upload_path, null=True, blank=True)
     
     # Verification Logic

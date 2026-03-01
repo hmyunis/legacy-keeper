@@ -61,6 +61,29 @@ const subscriptionToPayload = (subscription: PushSubscription) => ({
 const hasSubscriptionCryptoKeys = (subscription: PushSubscription) =>
   Boolean(subscription.getKey('p256dh') && subscription.getKey('auth'));
 
+const hasMatchingApplicationServerKey = (
+  subscription: PushSubscription,
+  expectedServerKey: Uint8Array
+) => {
+  const currentServerKey = subscription.options?.applicationServerKey;
+  if (!currentServerKey) {
+    return false;
+  }
+
+  const currentBytes = new Uint8Array(currentServerKey);
+  if (currentBytes.length !== expectedServerKey.length) {
+    return false;
+  }
+
+  for (let index = 0; index < currentBytes.length; index += 1) {
+    if (currentBytes[index] !== expectedServerKey[index]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 export type PushEnableResult =
   | { ok: true }
   | { ok: false; reason: 'unsupported' | 'missing_key' | 'permission_denied' | 'subscribe_failed' };
@@ -100,15 +123,22 @@ export const usePushNotifications = () => {
 
         try {
           const registration = await navigator.serviceWorker.register(SW_PATH);
+          const applicationServerKey = urlBase64ToUint8Array(publicKey);
           let subscription = await registration.pushManager.getSubscription();
 
-          if (!subscription || !hasSubscriptionCryptoKeys(subscription)) {
-            if (subscription) {
-              await subscription.unsubscribe();
-            }
+          if (
+            subscription &&
+            (!hasSubscriptionCryptoKeys(subscription) ||
+              !hasMatchingApplicationServerKey(subscription, applicationServerKey))
+          ) {
+            await subscription.unsubscribe();
+            subscription = null;
+          }
+
+          if (!subscription) {
             subscription = await registration.pushManager.subscribe({
               userVisibleOnly: true,
-              applicationServerKey: urlBase64ToUint8Array(publicKey),
+              applicationServerKey,
             });
           }
 

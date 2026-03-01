@@ -28,6 +28,7 @@ export interface User {
   id: string;
   fullName: string;
   email: string;
+  bio?: string;
   role: UserRole;
   profilePhoto?: string;
   subscriptionTier: SubscriptionTier;
