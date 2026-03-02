@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Calendar, Plus, Trash2, Share2, Heart, MapPin, Download, Loader2, FileText, Music2, Film, Pencil, Save, Lock, Users } from 'lucide-react';
-import { MediaItem, PersonProfile } from '../../types';
+import { X, Calendar, Plus, Trash2, Share2, Heart, MapPin, Download, Loader2, FileText, Music2, Film, Pencil, Save, Lock, Users, CheckCircle2 } from 'lucide-react';
+import { MediaExifStatus, MediaItem, PersonProfile } from '../../types';
 import { useProfiles } from '../../hooks/useProfiles';
 import { useAuthStore } from '../../stores/authStore';
 import { hasPermission } from '@/config/permissions';
 import { useCreateMediaTag, useDeleteMediaTag, useMediaTags, useDownloadMedia } from '../../hooks/useMediaTags';
+import { useConfirmMediaExif, useMediaExifStatus } from '../../hooks/useMedia';
 import { toast } from 'sonner';
 import DatePicker from '../DatePicker';
 import type { UpdateMediaMetadataPayload } from '../../services/mediaApi';
@@ -25,6 +26,8 @@ interface MediaDetailModalProps {
   setTagInputVisible: (visible: boolean) => void;
   onManualTagSubmit: (e?: React.FormEvent) => void;
   onUpdateMedia: (payload: UpdateMediaMetadataPayload, onSuccess?: (updatedMedia: MediaItem) => void) => void;
+  onSyncMedia?: (updatedMedia: MediaItem) => void;
+  shouldPollExif?: boolean;
   isUpdatingMedia?: boolean;
 }
 
@@ -38,6 +41,16 @@ interface EditDraft {
 }
 
 const MAX_MEMORY_FILES = 10;
+const EXIF_STATUS_LABELS: Record<MediaExifStatus, string> = {
+  [MediaExifStatus.NOT_STARTED]: 'Not started',
+  [MediaExifStatus.QUEUED]: 'Queued',
+  [MediaExifStatus.PROCESSING]: 'Processing',
+  [MediaExifStatus.AWAITING_CONFIRMATION]: 'Awaiting your confirmation',
+  [MediaExifStatus.CONFIRMED]: 'Confirmed',
+  [MediaExifStatus.REJECTED]: 'Rejected',
+  [MediaExifStatus.NOT_AVAILABLE]: 'No EXIF found',
+  [MediaExifStatus.FAILED]: 'Failed',
+};
 
 const toEditDraft = (media: MediaItem): EditDraft => {
   const parsedDate = media.dateTaken ? new Date(media.dateTaken) : undefined;
@@ -64,6 +77,8 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   onRemoveTag,
   setTagInputVisible,
   onUpdateMedia,
+  onSyncMedia,
+  shouldPollExif = false,
   isUpdatingMedia = false,
 }) => {
   const [taggingFaceId, setTaggingFaceId] = useState<string | null>(null);
@@ -75,6 +90,8 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   const [editDraft, setEditDraft] = useState<EditDraft>(() => toEditDraft(media));
   const [pendingRemovedFileIds, setPendingRemovedFileIds] = useState<Set<string>>(new Set());
   const [pendingNewFiles, setPendingNewFiles] = useState<File[]>([]);
+  const [selectedExifCandidateFileId, setSelectedExifCandidateFileId] = useState<string>('');
+  const [exifDecision, setExifDecision] = useState({ applyDateTaken: true, applyGps: true });
   const editFileInputRef = useRef<HTMLInputElement>(null);
   const { currentUser } = useAuthStore();
 
@@ -88,32 +105,56 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   const createMediaTagMutation = useCreateMediaTag();
   const deleteMediaTagMutation = useDeleteMediaTag();
   const downloadMediaMutation = useDownloadMedia();
+  const confirmMediaExifMutation = useConfirmMediaExif();
+  const { data: exifStatusData, isFetching: isFetchingExifStatus } = useMediaExifStatus(media.id, {
+    enabled:
+      media.type === 'PHOTO' ||
+      (media.exifStatus !== MediaExifStatus.NOT_STARTED && media.exifStatus !== MediaExifStatus.NOT_AVAILABLE),
+    poll: shouldPollExif,
+  });
 
   const canEdit = currentUser ? hasPermission(currentUser.role, 'EDIT_MEDIA') : false;
   const canDelete = currentUser ? hasPermission(currentUser.role, 'DELETE_MEDIA') : false;
+  const isUploader = currentUser?.id === media.uploaderId;
 
-  useEffect(() => {
-    setLocalFaces(media.detectedFaces || []);
-    setTaggingFaceId(null);
-    setIsLinkPickerOpen(false);
-    setIsEditMode(false);
-    setEditDraft(toEditDraft(media));
-    setPendingRemovedFileIds(new Set());
-    setPendingNewFiles([]);
-  }, [media.id, media.detectedFaces]);
-
-  const linkedPersonIds = useMemo(() => new Set((mediaTags || []).map((tag) => tag.personId)), [mediaTags]);
-
-  const linkedProfiles = useMemo(
-    () => (profiles || []).filter((profile) => linkedPersonIds.has(profile.id)),
-    [linkedPersonIds, profiles]
-  );
-
-  const availableProfiles = useMemo(
-    () => (profiles || []).filter((profile) => !linkedPersonIds.has(profile.id)),
-    [linkedPersonIds, profiles]
-  );
-
+  const effectiveExifStatus = exifStatusData?.status || media.exifStatus || MediaExifStatus.NOT_STARTED;
+  const effectiveExifError = (exifStatusData?.error || media.exifError || '').trim();
+  const exifCandidates = useMemo(() => {
+    if (exifStatusData?.candidates?.length) return exifStatusData.candidates;
+    return exifStatusData?.candidate ? [exifStatusData.candidate] : [];
+  }, [exifStatusData?.candidate, exifStatusData?.candidates]);
+  const selectedExifCandidate = useMemo(() => {
+    if (!exifCandidates.length) return undefined;
+    if (selectedExifCandidateFileId) {
+      const matched = exifCandidates.find((candidate) => candidate.fileId === selectedExifCandidateFileId);
+      if (matched) return matched;
+    }
+    return exifCandidates[0];
+  }, [exifCandidates, selectedExifCandidateFileId]);
+  const exifNeedsConfirmation =
+    (exifStatusData?.requiresConfirmation ?? false) || effectiveExifStatus === MediaExifStatus.AWAITING_CONFIRMATION;
+  const exifDateCandidateText =
+    selectedExifCandidate?.dateTaken && !Number.isNaN(new Date(selectedExifCandidate.dateTaken).getTime())
+      ? new Date(selectedExifCandidate.dateTaken).toLocaleString()
+      : '';
+  const hasExifDateCandidate = Boolean(exifDateCandidateText);
+  const exifGpsCandidateText =
+    selectedExifCandidate?.gps &&
+    typeof selectedExifCandidate.gps.latitude === 'number' &&
+    typeof selectedExifCandidate.gps.longitude === 'number'
+      ? `${selectedExifCandidate.gps.latitude.toFixed(6)}, ${selectedExifCandidate.gps.longitude.toFixed(6)}`
+      : '';
+  const hasExifGpsCandidate = Boolean(exifGpsCandidateText);
+  const exifIsInProgress =
+    effectiveExifStatus === MediaExifStatus.QUEUED || effectiveExifStatus === MediaExifStatus.PROCESSING;
+  const exifWarnings = exifStatusData?.warnings || [];
+  const exifSourceName = useMemo(() => {
+    const metadata = media.metadata && typeof media.metadata === 'object' ? media.metadata : {};
+    const exifSource = (metadata as Record<string, unknown>).exifSource;
+    if (!exifSource || typeof exifSource !== 'object') return '';
+    const originalName = String((exifSource as Record<string, unknown>).originalName || '').trim();
+    return originalName;
+  }, [media.metadata]);
   const memoryFiles = useMemo(() => {
     if (media.files?.length) {
       const files = [...media.files];
@@ -137,6 +178,61 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
       },
     ];
   }, [media]);
+  const exifCandidateItems = useMemo(() => {
+    return exifCandidates.map((candidate) => {
+      const matchedFile = memoryFiles.find((file) => file.id === candidate.fileId);
+      return {
+        candidate,
+        fileType: matchedFile?.fileType || 'DOCUMENT',
+        previewUrl: matchedFile?.fileType === 'PHOTO' ? matchedFile.fileUrl : undefined,
+      };
+    });
+  }, [exifCandidates, memoryFiles]);
+
+  useEffect(() => {
+    setLocalFaces(media.detectedFaces || []);
+    setTaggingFaceId(null);
+    setIsLinkPickerOpen(false);
+    setIsEditMode(false);
+    setEditDraft(toEditDraft(media));
+    setPendingRemovedFileIds(new Set());
+    setPendingNewFiles([]);
+    setSelectedExifCandidateFileId('');
+  }, [media.id, media.detectedFaces]);
+
+  useEffect(() => {
+    if (!exifCandidates.length) {
+      setSelectedExifCandidateFileId('');
+      return;
+    }
+    const selectedFromServer = exifStatusData?.selectedFileId || exifStatusData?.candidate?.fileId;
+    const defaultCandidateId = selectedFromServer || exifCandidates[0]?.fileId || '';
+    setSelectedExifCandidateFileId((current) => {
+      if (current && exifCandidates.some((candidate) => candidate.fileId === current)) {
+        return current;
+      }
+      return defaultCandidateId;
+    });
+  }, [exifCandidates, exifStatusData?.candidate?.fileId, exifStatusData?.selectedFileId]);
+
+  useEffect(() => {
+    setExifDecision({
+      applyDateTaken: hasExifDateCandidate,
+      applyGps: hasExifGpsCandidate,
+    });
+  }, [media.id, hasExifDateCandidate, hasExifGpsCandidate]);
+
+  const linkedPersonIds = useMemo(() => new Set((mediaTags || []).map((tag) => tag.personId)), [mediaTags]);
+
+  const linkedProfiles = useMemo(
+    () => (profiles || []).filter((profile) => linkedPersonIds.has(profile.id)),
+    [linkedPersonIds, profiles]
+  );
+
+  const availableProfiles = useMemo(
+    () => (profiles || []).filter((profile) => !linkedPersonIds.has(profile.id)),
+    [linkedPersonIds, profiles]
+  );
 
   const activeExistingFiles = useMemo(
     () => memoryFiles.filter((file) => !pendingRemovedFileIds.has(file.id)),
@@ -373,6 +469,8 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
       return;
     }
 
+    const hasFileMutations = pendingRemovedFileIds.size > 0 || pendingNewFiles.length > 0;
+
     onUpdateMedia(
       {
         id: media.id,
@@ -390,6 +488,42 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         setEditDraft(toEditDraft(updatedMedia));
         setPendingRemovedFileIds(new Set());
         setPendingNewFiles([]);
+        if (
+          updatedMedia.type === 'PHOTO' &&
+          (updatedMedia.exifStatus === MediaExifStatus.QUEUED ||
+            updatedMedia.exifStatus === MediaExifStatus.PROCESSING)
+        ) {
+          toast.info('Memory updated. EXIF extraction restarted in the background for this photo set.');
+        }
+      },
+    );
+  };
+
+  const handleExifDecision = (action: 'accept' | 'reject') => {
+    if (!isUploader || confirmMediaExifMutation.isPending) return;
+
+    const applyDateTaken = action === 'accept' ? exifDecision.applyDateTaken && hasExifDateCandidate : false;
+    const applyGps = action === 'accept' ? exifDecision.applyGps && hasExifGpsCandidate : false;
+
+    if (action === 'accept' && !applyDateTaken && !applyGps) {
+      toast.error('Select at least one EXIF field to apply, or reject this metadata.');
+      return;
+    }
+
+    confirmMediaExifMutation.mutate(
+      {
+        mediaId: media.id,
+        payload: {
+          action,
+          applyDateTaken,
+          applyGps,
+          candidateFileId: selectedExifCandidate?.fileId,
+        },
+      },
+      {
+        onSuccess: (updatedMedia) => {
+          onSyncMedia?.(updatedMedia);
+        },
       },
     );
   };
@@ -440,15 +574,15 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         </div>
 
         <div className="w-full md:w-112.5 flex flex-col h-full bg-white dark:bg-slate-900">
-          <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-slate-800 dark:text-white leading-tight">{media.title}</h2>
-              <div className="flex items-center gap-4 mt-2">
+          <div className="p-6 sm:p-8 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xl font-bold text-slate-800 dark:text-white leading-tight break-words">{media.title}</h2>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 min-w-0">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                   <Calendar size={12} /> {new Date(media.dateTaken).toLocaleString()}
                 </p>
                 {media.location && (
-                  <p className="text-[10px] font-bold text-primary uppercase tracking-widest flex items-center gap-2">
+                  <p className="max-w-full sm:max-w-[240px] text-[10px] font-bold text-primary uppercase tracking-widest flex items-center gap-2 truncate">
                     <MapPin size={12} /> {media.location}
                   </p>
                 )}
@@ -456,9 +590,15 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                   {media.visibility === 'private' ? <Lock size={11} /> : <Users size={11} />}
                   {media.visibility === 'private' ? 'Private' : 'Family'}
                 </p>
+                {exifSourceName && (
+                  <p className="max-w-full sm:max-w-[240px] text-[10px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 truncate">
+                    <CheckCircle2 size={11} />
+                    EXIF Source: {exifSourceName}
+                  </p>
+                )}
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full sm:w-auto flex-wrap items-center justify-end gap-2">
               {canEdit && (
                 isEditMode ? (
                   <>
@@ -629,6 +769,194 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               </div>
             )}
 
+            {(media.type === 'PHOTO' || effectiveExifStatus !== MediaExifStatus.NOT_STARTED) && !isEditMode && (
+              <div className="space-y-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/50 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">EXIF Metadata</h3>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
+                    {EXIF_STATUS_LABELS[effectiveExifStatus]}
+                  </span>
+                </div>
+
+                {exifIsInProgress && (
+                  <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                    <Loader2 size={14} className="animate-spin text-primary" />
+                    <span>Extracting photo metadata in the background...</span>
+                  </div>
+                )}
+
+                {effectiveExifStatus === MediaExifStatus.FAILED && (
+                  <p className="text-xs text-rose-600">
+                    {effectiveExifError || 'EXIF extraction failed. Please edit and re-save the memory file to retry.'}
+                  </p>
+                )}
+
+                {exifNeedsConfirmation && (
+                  <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/70 dark:border-amber-900/50 dark:bg-amber-900/10 p-3">
+                    <p className="text-xs text-slate-700 dark:text-slate-200">
+                      We found metadata in the original file. Confirm to apply it to this memory.
+                    </p>
+                    {exifCandidateItems.length > 1 && (
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                          Choose Source File
+                        </p>
+                        <div className="grid grid-cols-1 gap-2">
+                          {exifCandidateItems.map(({ candidate, fileType, previewUrl }) => {
+                            const isSelectedCandidate = candidate.fileId === selectedExifCandidate?.fileId;
+                            const candidateDate =
+                              candidate.dateTaken && !Number.isNaN(new Date(candidate.dateTaken).getTime())
+                                ? new Date(candidate.dateTaken).toLocaleString()
+                                : null;
+                            const candidateGps =
+                              candidate.gps &&
+                              typeof candidate.gps.latitude === 'number' &&
+                              typeof candidate.gps.longitude === 'number'
+                                ? `${candidate.gps.latitude.toFixed(6)}, ${candidate.gps.longitude.toFixed(6)}`
+                                : null;
+
+                            return (
+                              <button
+                                key={candidate.fileId}
+                                type="button"
+                                onClick={() => setSelectedExifCandidateFileId(candidate.fileId)}
+                                className={`w-full rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                                  isSelectedCandidate
+                                    ? 'border-primary bg-primary/10'
+                                    : 'border-amber-200/70 dark:border-amber-900/50 hover:border-primary/60'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5">
+                                  <div className={`h-11 w-11 rounded-lg border bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden shrink-0 relative ${
+                                    isSelectedCandidate
+                                      ? 'border-primary ring-2 ring-primary/40'
+                                      : 'border-slate-200 dark:border-slate-700'
+                                  }`}>
+                                    {previewUrl ? (
+                                      <img src={previewUrl} alt={candidate.originalName} className="h-full w-full object-cover" />
+                                    ) : fileType === 'VIDEO' ? (
+                                      <Film size={14} className="text-primary" />
+                                    ) : fileType === 'AUDIO' ? (
+                                      <Music2 size={14} className="text-primary" />
+                                    ) : (
+                                      <FileText size={14} className="text-primary" />
+                                    )}
+                                    {isSelectedCandidate && (
+                                      <span className="absolute -top-1 -right-1 rounded-full bg-white dark:bg-slate-900 text-primary">
+                                        <CheckCircle2 size={14} />
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">
+                                      {candidate.originalName}
+                                      {candidate.isPrimary ? ' (Primary)' : ''}
+                                    </p>
+                                    <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                                      {previewUrl ? 'Image preview' : fileType} • {candidateDate || 'No date'} • {candidateGps || 'No GPS'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    <div className="space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                      {selectedExifCandidate?.originalName && (
+                        <p><strong>Source file:</strong> {selectedExifCandidate.originalName}</p>
+                      )}
+                      {exifDateCandidateText && <p><strong>Date taken:</strong> {exifDateCandidateText}</p>}
+                      {exifGpsCandidateText && <p><strong>GPS:</strong> {exifGpsCandidateText}</p>}
+                      {!exifDateCandidateText && !exifGpsCandidateText && (
+                        <p>No usable date or GPS value was found.</p>
+                      )}
+                    </div>
+                    {exifWarnings.length > 0 && (
+                      <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                        Some files could not provide EXIF metadata. You can still confirm available values.
+                      </p>
+                    )}
+                    {isUploader ? (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <label className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5"
+                              checked={exifDecision.applyDateTaken && hasExifDateCandidate}
+                              disabled={confirmMediaExifMutation.isPending || !hasExifDateCandidate}
+                              onChange={(event) =>
+                                setExifDecision((current) => ({
+                                  ...current,
+                                  applyDateTaken: event.target.checked,
+                                }))
+                              }
+                            />
+                            Apply date taken
+                          </label>
+                          <label className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5"
+                              checked={exifDecision.applyGps && hasExifGpsCandidate}
+                              disabled={confirmMediaExifMutation.isPending || !hasExifGpsCandidate}
+                              onChange={(event) =>
+                                setExifDecision((current) => ({
+                                  ...current,
+                                  applyGps: event.target.checked,
+                                }))
+                              }
+                            />
+                            Apply GPS location
+                          </label>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleExifDecision('accept')}
+                            disabled={confirmMediaExifMutation.isPending}
+                            className="px-3 py-1.5 rounded-lg bg-primary text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-60"
+                          >
+                            {confirmMediaExifMutation.isPending ? 'Saving...' : 'Accept EXIF'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleExifDecision('reject')}
+                            disabled={confirmMediaExifMutation.isPending}
+                            className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300 disabled:opacity-60"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Waiting for the uploader to confirm this metadata.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {effectiveExifStatus === MediaExifStatus.CONFIRMED && (
+                  <p className="text-xs text-emerald-600">
+                    EXIF metadata has been confirmed and applied to this memory.
+                  </p>
+                )}
+
+                {effectiveExifStatus === MediaExifStatus.REJECTED && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Extracted EXIF metadata was rejected and not applied.
+                  </p>
+                )}
+
+                {!exifIsInProgress && isFetchingExifStatus && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Refreshing EXIF status...</p>
+                )}
+              </div>
+            )}
+
             {memoryFiles.length > 0 && (
               <div className="space-y-4">
                 <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
@@ -709,6 +1037,9 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 </div>
                 {isEditMode && (
                   <div className="space-y-3 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 p-3">
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Updating files re-runs background processing for photo memories.
+                    </p>
                     <input
                       ref={editFileInputRef}
                       type="file"

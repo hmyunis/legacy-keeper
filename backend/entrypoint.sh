@@ -32,6 +32,8 @@ python - <<'PY'
 import os
 import sys
 import time
+from urllib.parse import urlparse
+
 import psycopg2
 
 database_url = os.environ.get("DATABASE_URL", "").strip()
@@ -53,6 +55,44 @@ else:
             time.sleep(2)
     else:
         sys.exit("PostgreSQL did not become ready in time.")
+
+broker_url = os.environ.get("CELERY_BROKER_URL", "").strip()
+if broker_url.startswith("redis://") or broker_url.startswith("rediss://"):
+    try:
+        import redis
+    except Exception as exc:
+        sys.exit(f"Redis client dependency is unavailable: {exc}")
+
+    parsed = urlparse(broker_url)
+    redis_host = parsed.hostname or "127.0.0.1"
+    redis_port = parsed.port or 6379
+    redis_password = parsed.password
+    redis_db = 0
+    try:
+        redis_db = int(parsed.path.lstrip("/") or 0)
+    except ValueError:
+        redis_db = 0
+
+    max_attempts = 30
+    for attempt in range(1, max_attempts + 1):
+        try:
+            client = redis.Redis(
+                host=redis_host,
+                port=redis_port,
+                db=redis_db,
+                password=redis_password,
+                socket_timeout=2,
+            )
+            client.ping()
+            print("Redis is ready.")
+            break
+        except Exception as exc:
+            print(f"Waiting for Redis ({attempt}/{max_attempts}): {exc}")
+            time.sleep(2)
+    else:
+        sys.exit("Redis did not become ready in time.")
+else:
+    print("CELERY_BROKER_URL is not Redis. Skipping Redis wait.")
 PY
 
 python manage.py migrate --noinput

@@ -1,80 +1,63 @@
 import logging
-import time
-from PIL import Image, ExifTags
-from django.core.files.base import ContentFile
-# import face_recognition  # Install this later for real AI
+from uuid import uuid4
+
+from django.db import transaction
+from django.utils import timezone
+
+from .models import MediaItem
+from .tasks import extract_media_exif_task
+
 
 logger = logging.getLogger(__name__)
 
+
 class AIProcessingService:
-    def process_media(self, media_item):
-        """
-        Orchestrates processing pipeline:
-        1. Extract EXIF (Date/GPS)
-        2. Detect Faces (Stubbed)
-        """
-        media_item.ai_status = media_item.AIStatus.PROCESSING
-        media_item.save()
+    @staticmethod
+    def _mark_photo_queued(media_item_id: str, task_id: str):
+        MediaItem.objects.filter(pk=media_item_id).update(
+            ai_status=MediaItem.AIStatus.PENDING,
+            exif_status=MediaItem.ExifStatus.QUEUED,
+            exif_error='',
+            exif_extracted_data={},
+            exif_task_id=task_id,
+            exif_processed_at=None,
+            exif_confirmed_at=None,
+        )
 
-        try:
-            # 1. Extract EXIF
-            self.extract_exif_metadata(media_item)
+    @staticmethod
+    def _mark_non_photo_complete(media_item_id: str):
+        MediaItem.objects.filter(pk=media_item_id).update(
+            ai_status=MediaItem.AIStatus.COMPLETED,
+            exif_status=MediaItem.ExifStatus.NOT_AVAILABLE,
+            exif_error='',
+            exif_extracted_data={},
+            exif_processed_at=timezone.now(),
+            exif_confirmed_at=None,
+            exif_task_id='',
+        )
 
-            # 2. Detect Faces (Mock for now)
-            # In production, this would be: self.detect_faces(media_item)
-            time.sleep(1) # Simulate processing time
-            
-            media_item.ai_status = media_item.AIStatus.COMPLETED
-            media_item.save()
-            
-        except Exception as e:
-            logger.error(f"AI Processing failed for {media_item.id}: {str(e)}")
-            media_item.ai_status = media_item.AIStatus.FAILED
-            media_item.save()
+    def enqueue_media_processing(self, media_item):
+        media_item_id = str(media_item.pk)
+        task_id = uuid4().hex
+        self._mark_photo_queued(media_item_id, task_id)
 
-    def extract_exif_metadata(self, media_item):
-        """
-        Opens image using Pillow and extracts date taken.
-        """
-        try:
-            # Ensure it's an image
-            if media_item.media_type != 'PHOTO':
-                return
+        def _enqueue():
+            try:
+                extract_media_exif_task.apply_async(
+                    args=[media_item_id],
+                    queue='media',
+                    task_id=task_id,
+                )
+            except Exception as exc:
+                logger.exception('Failed to enqueue EXIF extraction for media item %s', media_item_id)
+                MediaItem.objects.filter(pk=media_item_id, exif_task_id=task_id).update(
+                    ai_status=MediaItem.AIStatus.FAILED,
+                    exif_status=MediaItem.ExifStatus.FAILED,
+                    exif_error=f'Unable to queue EXIF extraction: {exc}',
+                    exif_extracted_data={},
+                    exif_processed_at=timezone.now(),
+                    exif_confirmed_at=None,
+                    exif_task_id='',
+                )
 
-            # Open image from storage
-            with Image.open(media_item.file) as img:
-                exif_data = img._getexif()
-                if not exif_data:
-                    return
-
-                # Map Exif codes to names
-                exif = {
-                    ExifTags.TAGS[k]: v
-                    for k, v in exif_data.items()
-                    if k in ExifTags.TAGS
-                }
-
-                # Save raw exif to metadata field
-                # Convert non-serializable objects to string if necessary
-                clean_exif = {}
-                for k, v in exif.items():
-                    if isinstance(v, (str, int, float)):
-                        clean_exif[k] = v
-
-                existing_metadata = media_item.metadata if isinstance(media_item.metadata, dict) else {}
-                merged_metadata = dict(existing_metadata)
-                merged_metadata['exif'] = clean_exif
-                media_item.metadata = merged_metadata
-                
-                # Try to find Date Taken
-                date_str = clean_exif.get('DateTimeOriginal') or clean_exif.get('DateTime')
-                if date_str:
-                    # Parse date string (YYYY:MM:DD HH:MM:SS)
-                    # For brevity, skipping rigorous datetime parsing here, 
-                    # but you would convert this string to a Python DateTime object
-                    pass
-
-                media_item.save()
-
-        except Exception as e:
-            print(f"EXIF Extraction Warning: {e}")
+        transaction.on_commit(_enqueue)

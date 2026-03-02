@@ -98,8 +98,44 @@ export interface ApiMediaItem {
   createdAt: string;
   fileUrl?: string | null;
   aiStatus?: string;
+  exifStatus?: string;
+  exifError?: string;
+  exifProcessedAt?: string | null;
+  exifConfirmedAt?: string | null;
   metadata?: Record<string, unknown> | null;
   files?: ApiMediaFile[];
+}
+
+export interface ApiMediaExifCandidate {
+  fileId?: string;
+  file_id?: string;
+  originalName?: string | null;
+  original_name?: string | null;
+  isPrimary?: boolean;
+  is_primary?: boolean;
+  dateTaken?: string | null;
+  date_taken?: string | null;
+  gps?: {
+    latitude?: number | null;
+    longitude?: number | null;
+  } | null;
+  extractedAt?: string | null;
+  extracted_at?: string | null;
+}
+
+export interface ApiMediaExifStatusResponse {
+  mediaId?: string;
+  status?: string;
+  error?: string;
+  taskId?: string;
+  processedAt?: string | null;
+  confirmedAt?: string | null;
+  requiresConfirmation?: boolean;
+  candidate?: ApiMediaExifCandidate | null;
+  candidates?: ApiMediaExifCandidate[] | null;
+  selectedFileId?: string | null;
+  selected_file_id?: string | null;
+  warnings?: string[] | null;
 }
 
 export interface ApiLinkedRelative {

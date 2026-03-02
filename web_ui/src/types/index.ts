@@ -18,6 +18,17 @@ export enum MediaStatus {
   FAILED = 'FAILED'
 }
 
+export enum MediaExifStatus {
+  NOT_STARTED = 'NOT_STARTED',
+  QUEUED = 'QUEUED',
+  PROCESSING = 'PROCESSING',
+  AWAITING_CONFIRMATION = 'AWAITING_CONFIRMATION',
+  CONFIRMED = 'CONFIRMED',
+  REJECTED = 'REJECTED',
+  NOT_AVAILABLE = 'NOT_AVAILABLE',
+  FAILED = 'FAILED',
+}
+
 export enum MediaType {
   PHOTO = 'PHOTO',
   DOCUMENT = 'DOCUMENT',
@@ -125,6 +136,10 @@ export interface MediaItem {
   thumbnailUrl: string;
   tags: string[];
   status: MediaStatus;
+  exifStatus: MediaExifStatus;
+  exifError?: string;
+  exifProcessedAt?: string;
+  exifConfirmedAt?: string;
   location?: string;
   metadata?: Record<string, unknown>;
   files: MediaFile[];
@@ -159,6 +174,32 @@ export interface MediaTag {
   personId: string;
   personName: string;
   faceCoordinates?: Record<string, number> | null;
+}
+
+export interface MediaExifCandidate {
+  fileId: string;
+  originalName: string;
+  isPrimary: boolean;
+  dateTaken?: string;
+  gps?: {
+    latitude: number;
+    longitude: number;
+  };
+  extractedAt?: string;
+}
+
+export interface MediaExifWorkflowStatus {
+  mediaId: string;
+  status: MediaExifStatus;
+  error?: string;
+  taskId?: string;
+  processedAt?: string;
+  confirmedAt?: string;
+  requiresConfirmation: boolean;
+  candidate?: MediaExifCandidate;
+  candidates?: MediaExifCandidate[];
+  selectedFileId?: string;
+  warnings?: string[];
 }
 
 export interface AuditLog {

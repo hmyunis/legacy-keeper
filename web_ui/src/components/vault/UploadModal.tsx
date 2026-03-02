@@ -8,13 +8,15 @@ interface UploadModalProps {
   uploadProgress: number;
   uploadDate: Date | undefined;
   selectedFiles: File[];
+  primaryFileIndex: number;
   title: string;
   location: string;
   tags: string;
   story: string;
   visibility: 'private' | 'family';
   onDateChange: (date: Date) => void;
-  onFilesChange: (files: File[]) => void;
+  onFilesChange: (files: File[], primaryFileIndex?: number) => void;
+  onPrimaryFileChange: (index: number) => void;
   onTitleChange: (value: string) => void;
   onLocationChange: (value: string) => void;
   onTagsChange: (value: string) => void;
@@ -29,6 +31,7 @@ const UploadModal: React.FC<UploadModalProps> = ({
   uploadProgress,
   uploadDate,
   selectedFiles,
+  primaryFileIndex,
   title,
   location,
   tags,
@@ -36,6 +39,7 @@ const UploadModal: React.FC<UploadModalProps> = ({
   visibility,
   onDateChange,
   onFilesChange,
+  onPrimaryFileChange,
   onTitleChange,
   onLocationChange,
   onTagsChange,
@@ -64,7 +68,11 @@ const UploadModal: React.FC<UploadModalProps> = ({
       merged.push(file);
     }
 
-    onFilesChange(merged);
+    const safePrimaryIndex =
+      merged.length === 0
+        ? 0
+        : Math.min(Math.max(primaryFileIndex, 0), merged.length - 1);
+    onFilesChange(merged, safePrimaryIndex);
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,7 +83,18 @@ const UploadModal: React.FC<UploadModalProps> = ({
 
   const handleRemoveFile = (e: React.MouseEvent, index: number) => {
     e.stopPropagation();
-    onFilesChange(selectedFiles.filter((_, fileIndex) => fileIndex !== index));
+    const nextFiles = selectedFiles.filter((_, fileIndex) => fileIndex !== index);
+    let nextPrimary = primaryFileIndex;
+    if (nextFiles.length === 0) {
+      nextPrimary = 0;
+    } else if (index < primaryFileIndex) {
+      nextPrimary = primaryFileIndex - 1;
+    } else if (index === primaryFileIndex) {
+      nextPrimary = 0;
+    } else {
+      nextPrimary = Math.min(primaryFileIndex, nextFiles.length - 1);
+    }
+    onFilesChange(nextFiles, nextPrimary);
   };
 
   return (
@@ -116,6 +135,20 @@ const UploadModal: React.FC<UploadModalProps> = ({
                         <span className="text-[11px] font-medium text-slate-700 dark:text-slate-200 truncate">{file.name}</span>
                         <button
                           type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onPrimaryFileChange(index);
+                          }}
+                          className={`ml-1 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors ${
+                            index === primaryFileIndex
+                              ? 'bg-primary text-white'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:text-primary'
+                          }`}
+                        >
+                          {index === primaryFileIndex ? 'Primary' : 'Set Primary'}
+                        </button>
+                        <button
+                          type="button"
                           onClick={(event) => handleRemoveFile(event, index)}
                           className="ml-auto text-slate-400 hover:text-rose-500 transition-colors"
                           aria-label={`Remove ${file.name}`}
@@ -142,6 +175,14 @@ const UploadModal: React.FC<UploadModalProps> = ({
               </div>
             </div>
           )}
+          <div className="rounded-2xl border border-sky-200/80 bg-sky-50/70 dark:border-sky-900/40 dark:bg-sky-950/20 px-4 py-3">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-sky-700 dark:text-sky-300">
+              Photo EXIF workflow
+            </p>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+              For photos, date taken and GPS are extracted in the background after upload. The uploader can review and confirm before applying these values.
+            </p>
+          </div>
           <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 transition-opacity ${isUploading ? 'opacity-30 pointer-events-none' : ''}`}>
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">

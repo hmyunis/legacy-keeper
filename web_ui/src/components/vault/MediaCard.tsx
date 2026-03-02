@@ -1,7 +1,7 @@
 
 import React from 'react';
-import { Heart, Maximize2, Calendar, MapPin, Check, FileText, Music2, Film } from 'lucide-react';
-import { MediaItem } from '../../types';
+import { Heart, Maximize2, Calendar, MapPin, Check, FileText, Music2, Film, Loader2, AlertTriangle, Clock3 } from 'lucide-react';
+import { MediaExifStatus, MediaItem } from '../../types';
 
 interface MediaCardProps {
   item: MediaItem;
@@ -25,10 +25,38 @@ const MediaCard: React.FC<MediaCardProps> = ({
   const primaryFile = item.files.find((file) => file.isPrimary) || item.files[0];
   const fileType = primaryFile?.fileType || 'PHOTO';
 
+  const exifBadge = (() => {
+    if (item.exifStatus === MediaExifStatus.QUEUED || item.exifStatus === MediaExifStatus.PROCESSING) {
+      return {
+        icon: <Loader2 size={11} className="animate-spin" />,
+        label: 'EXIF processing',
+        className:
+          'bg-sky-500/90 border border-sky-400/80 text-white backdrop-blur-md',
+      };
+    }
+    if (item.exifStatus === MediaExifStatus.AWAITING_CONFIRMATION) {
+      return {
+        icon: <Clock3 size={11} />,
+        label: 'EXIF needs review',
+        className:
+          'bg-amber-500/90 border border-amber-400/80 text-white backdrop-blur-md',
+      };
+    }
+    if (item.exifStatus === MediaExifStatus.FAILED) {
+      return {
+        icon: <AlertTriangle size={11} />,
+        label: 'EXIF failed',
+        className:
+          'bg-rose-500/90 border border-rose-400/80 text-white backdrop-blur-md',
+      };
+    }
+    return null;
+  })();
+
   return (
     <div 
       onClick={() => isSelectionMode ? onToggleSelection(item.id) : onSelect(item)} 
-      className={`bg-white dark:bg-slate-900/60 rounded-[2rem] border overflow-hidden transition-all duration-500 cursor-pointer group glow-card relative ${
+      className={`bg-white dark:bg-slate-900/60 rounded-4xl border overflow-hidden transition-all duration-500 cursor-pointer group glow-card relative ${
         isSelectionMode && isSelected ? 'border-primary ring-4 ring-primary/10 scale-[0.98]' : 'border-slate-100 dark:border-slate-800 hover:shadow-2xl dark:hover:border-primary/30'
       }`}
     >
@@ -41,7 +69,7 @@ const MediaCard: React.FC<MediaCardProps> = ({
           </div>
         </div>
       )}
-      <div className="relative aspect-[4/3] overflow-hidden">
+      <div className="relative aspect-4/3 overflow-hidden">
         {fileType === 'PHOTO' && (
           <img src={item.thumbnailUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt={item.title} />
         )}
@@ -49,13 +77,13 @@ const MediaCard: React.FC<MediaCardProps> = ({
           <video src={primaryFile.fileUrl} className="w-full h-full object-cover" muted />
         )}
         {fileType === 'AUDIO' && (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 text-slate-600 dark:text-slate-300 gap-2">
+          <div className="w-full h-full flex flex-col items-center justify-center bg-linear-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 text-slate-600 dark:text-slate-300 gap-2">
             <Music2 size={24} className="text-primary" />
             <p className="text-[10px] font-bold px-3 text-center truncate max-w-full">{primaryFile?.originalName || item.title}</p>
           </div>
         )}
         {fileType === 'DOCUMENT' && (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 text-slate-600 dark:text-slate-300 gap-2">
+          <div className="w-full h-full flex flex-col items-center justify-center bg-linear-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 text-slate-600 dark:text-slate-300 gap-2">
             <FileText size={24} className="text-primary" />
             <p className="text-[10px] font-bold px-3 text-center truncate max-w-full">{primaryFile?.originalName || item.title}</p>
           </div>
@@ -71,6 +99,13 @@ const MediaCard: React.FC<MediaCardProps> = ({
         >
           <Heart size={16} fill={isFavorite ? "currentColor" : "none"} />
         </button>
+
+        {exifBadge && !isSelectionMode && (
+          <div className={`absolute bottom-4 left-4 z-20 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 ${exifBadge.className}`}>
+            {exifBadge.icon}
+            {exifBadge.label}
+          </div>
+        )}
 
         {!isSelectionMode && (
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">

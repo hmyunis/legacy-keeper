@@ -1,14 +1,25 @@
-import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
-import { mediaApi, type UploadMediaPayload, type UpdateMediaMetadataPayload, type MediaQueryParams } from '../services/mediaApi';
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery, type QueryClient } from '@tanstack/react-query';
+import {
+  mediaApi,
+  type UploadMediaPayload,
+  type UpdateMediaMetadataPayload,
+  type MediaQueryParams,
+  type ConfirmExifPayload,
+} from '../services/mediaApi';
 import { toast } from 'sonner';
 import { useAuthStore } from '../stores/authStore';
 import { getApiErrorMessage } from '../services/httpError';
-import type { MediaItem } from '../types';
+import { MediaExifStatus, type MediaItem, type MediaExifWorkflowStatus } from '../types';
 
 const DEFAULT_PAGE_SIZE = 20;
+const EXIF_ACTIVE_STATUSES = new Set<MediaExifStatus>([
+  MediaExifStatus.QUEUED,
+  MediaExifStatus.PROCESSING,
+]);
 
 interface QueryOptions {
   enabled?: boolean;
+  poll?: boolean;
 }
 
 const updateFavoriteStateInPages = (old: any, mediaId: string, isFavorite: boolean) => {
@@ -143,13 +154,80 @@ export const useUploadMedia = () => {
       if (!activeVaultId) throw new Error('No active vault selected');
       return mediaApi.createMedia(activeVaultId, payload, onUploadProgress);
     },
-    onSuccess: () => {
+    onSuccess: (createdMedia) => {
       queryClient.invalidateQueries({ queryKey: ['media'] });
       toast.success('Memory preserved in vault');
+      if (
+        createdMedia.exifStatus === MediaExifStatus.QUEUED ||
+        createdMedia.exifStatus === MediaExifStatus.PROCESSING ||
+        createdMedia.exifStatus === MediaExifStatus.AWAITING_CONFIRMATION
+      ) {
+        toast.info('Photo EXIF extraction started in the background. You can confirm suggested date/GPS once ready.');
+      }
     },
     onError: (error) => {
       toast.error('Failed to preserve memory', {
         description: getApiErrorMessage(error, 'Please verify file size and details, then try again.'),
+      });
+    },
+  });
+};
+
+export const useMediaExifStatus = (mediaId: string, options?: QueryOptions) => {
+  const enabled = options?.enabled ?? true;
+  const poll = options?.poll ?? false;
+  return useQuery({
+    queryKey: ['mediaExifStatus', mediaId],
+    queryFn: () => mediaApi.getExifStatus(mediaId),
+    enabled: Boolean(mediaId) && enabled,
+    refetchInterval: (query) => {
+      if (!poll) return false;
+      const status = (query.state.data as MediaExifWorkflowStatus | undefined)?.status;
+      if (status === MediaExifStatus.NOT_STARTED) {
+        return query.state.dataUpdateCount < 10 ? 3000 : false;
+      }
+      return status && EXIF_ACTIVE_STATUSES.has(status) ? 3000 : false;
+    },
+  });
+};
+
+const syncUpdatedMediaInCaches = (queryClient: QueryClient, updatedMedia: MediaItem) => {
+  queryClient.setQueriesData({ queryKey: ['media'] }, (old: any) => {
+    if (!old?.pages) return old;
+    return {
+      ...old,
+      pages: old.pages.map((page: any) => ({
+        ...page,
+        items: page.items.map((item: MediaItem) => (item.id === updatedMedia.id ? updatedMedia : item)),
+      })),
+    };
+  });
+  queryClient.setQueriesData({ queryKey: ['mediaFavorites'] }, (old: any) => {
+    if (!old?.pages) return old;
+    return {
+      ...old,
+      pages: old.pages.map((page: any) => ({
+        ...page,
+        items: page.items.map((item: MediaItem) => (item.id === updatedMedia.id ? updatedMedia : item)),
+      })),
+    };
+  });
+};
+
+export const useConfirmMediaExif = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ mediaId, payload }: { mediaId: string; payload: ConfirmExifPayload }) =>
+      mediaApi.confirmExif(mediaId, payload),
+    onSuccess: (updatedMedia) => {
+      syncUpdatedMediaInCaches(queryClient, updatedMedia);
+      queryClient.invalidateQueries({ queryKey: ['mediaExifStatus', updatedMedia.id] });
+      toast.success('EXIF metadata decision saved.');
+    },
+    onError: (error) => {
+      toast.error('Failed to save EXIF confirmation', {
+        description: getApiErrorMessage(error, 'Please try again.'),
       });
     },
   });

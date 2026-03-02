@@ -24,6 +24,16 @@ class MediaItem(TimeStampedModel):
         PRIVATE = 'PRIVATE', _('Private')
         FAMILY = 'FAMILY', _('Family')
 
+    class ExifStatus(models.TextChoices):
+        NOT_STARTED = 'NOT_STARTED', _('Not Started')
+        QUEUED = 'QUEUED', _('Queued')
+        PROCESSING = 'PROCESSING', _('Processing')
+        AWAITING_CONFIRMATION = 'AWAITING_CONFIRMATION', _('Awaiting Confirmation')
+        CONFIRMED = 'CONFIRMED', _('Confirmed')
+        REJECTED = 'REJECTED', _('Rejected')
+        NOT_AVAILABLE = 'NOT_AVAILABLE', _('Not Available')
+        FAILED = 'FAILED', _('Failed')
+
     # Relationships
     vault = models.ForeignKey(FamilyVault, on_delete=models.CASCADE, related_name='media_items')
     uploader = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='uploaded_media')
@@ -49,6 +59,17 @@ class MediaItem(TimeStampedModel):
     
     # AI Processing
     ai_status = models.CharField(max_length=20, choices=AIStatus.choices, default=AIStatus.PENDING)
+    exif_status = models.CharField(
+        max_length=32,
+        choices=ExifStatus.choices,
+        default=ExifStatus.NOT_STARTED,
+        db_index=True,
+    )
+    exif_extracted_data = models.JSONField(default=dict, blank=True)
+    exif_error = models.TextField(blank=True, default='')
+    exif_task_id = models.CharField(max_length=64, blank=True, default='')
+    exif_processed_at = models.DateTimeField(null=True, blank=True)
+    exif_confirmed_at = models.DateTimeField(null=True, blank=True)
 
     def _calculate_content_hash(self):
         if not self.file:

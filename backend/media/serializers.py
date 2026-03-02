@@ -61,9 +61,28 @@ class MediaItemSerializer(serializers.ModelSerializer):
             'id', 'vault', 'uploader', 'uploader_name', 'uploader_avatar',
             'file', 'file_url', 'is_favorite', 'file_size', 'media_type', 
             'title', 'description', 'date_taken', 'visibility',
-            'ai_status', 'created_at', 'metadata', 'files', 'linked_relatives'
+            'ai_status',
+            'exif_status',
+            'exif_error',
+            'exif_processed_at',
+            'exif_confirmed_at',
+            'created_at',
+            'metadata',
+            'files',
+            'linked_relatives',
         )
-        read_only_fields = ('id', 'uploader', 'is_favorite', 'file_size', 'ai_status', 'created_at')
+        read_only_fields = (
+            'id',
+            'uploader',
+            'is_favorite',
+            'file_size',
+            'ai_status',
+            'exif_status',
+            'exif_error',
+            'exif_processed_at',
+            'exif_confirmed_at',
+            'created_at',
+        )
 
     def get_file_url(self, obj):
         request = self.context.get('request')

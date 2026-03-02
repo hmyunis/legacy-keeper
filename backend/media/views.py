@@ -1,9 +1,11 @@
 from collections import Counter
 from datetime import datetime, time
 import json
+import mimetypes
 from pathlib import Path
 
 from django.db import transaction
+from django.core.files.base import ContentFile
 from django.db.models import Count, Exists, Max, Min, OuterRef, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -184,18 +186,33 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             return normalized_requested
 
         content_type = str(getattr(uploaded_file, 'content_type', '') or '').lower()
+        if not content_type:
+            file_name = str(getattr(uploaded_file, 'name', '') or '').strip().lower()
+            content_type = str(mimetypes.guess_type(file_name)[0] or '').lower()
         if content_type.startswith('image/'):
             return MediaItem.MediaType.PHOTO
         if content_type.startswith('video/'):
             return MediaItem.MediaType.VIDEO
         return MediaItem.MediaType.DOCUMENT
 
-    def _resolve_primary_file_index(self, uploaded_files):
+    def _resolve_primary_file_index(self, uploaded_files, requested_index=None):
+        if requested_index is not None:
+            try:
+                normalized_index = int(requested_index)
+            except (TypeError, ValueError):
+                raise ValidationError({'primaryFileIndex': ['Primary file index must be a valid integer.']})
+            if 0 <= normalized_index < len(uploaded_files):
+                return normalized_index
+            raise ValidationError({'primaryFileIndex': ['Primary file index is out of range.']})
+
         preferred_prefixes = ('image/', 'video/', 'audio/')
 
         for prefix in preferred_prefixes:
             for index, uploaded_file in enumerate(uploaded_files):
                 content_type = str(getattr(uploaded_file, 'content_type', '') or '').lower()
+                if not content_type:
+                    file_name = str(getattr(uploaded_file, 'name', '') or '').strip().lower()
+                    content_type = str(mimetypes.guess_type(file_name)[0] or '').lower()
                 if content_type.startswith(prefix):
                     return index
 
@@ -228,8 +245,129 @@ class MediaItemViewSet(viewsets.ModelViewSet):
 
     def _create_media_item(self, serializer, vault):
         media_item = serializer.save(uploader=self.request.user, vault=vault)
-        AIProcessingService().process_media(media_item)
+        AIProcessingService().enqueue_media_processing(media_item)
+        media_item.refresh_from_db()
         return media_item
+
+    def _normalize_exif_gps(self, raw_value):
+        if not isinstance(raw_value, dict):
+            return None
+        try:
+            lat = float(raw_value.get('latitude'))
+            lng = float(raw_value.get('longitude'))
+        except (TypeError, ValueError):
+            return None
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
+            return None
+        return {'latitude': lat, 'longitude': lng}
+
+    def _normalize_exif_candidates(self, media_item):
+        payload = media_item.exif_extracted_data if isinstance(media_item.exif_extracted_data, dict) else {}
+        raw_candidates = payload.get('candidates') if isinstance(payload.get('candidates'), list) else []
+        normalized_candidates = []
+
+        for raw_candidate in raw_candidates:
+            if not isinstance(raw_candidate, dict):
+                continue
+            file_id = str(raw_candidate.get('file_id') or raw_candidate.get('fileId') or '').strip()
+            if not file_id:
+                continue
+            date_taken = str(raw_candidate.get('date_taken') or raw_candidate.get('dateTaken') or '').strip() or None
+            gps = self._normalize_exif_gps(raw_candidate.get('gps'))
+            if not date_taken and not gps:
+                continue
+
+            normalized_candidates.append(
+                {
+                    'file_id': file_id,
+                    'original_name': str(
+                        raw_candidate.get('original_name') or raw_candidate.get('originalName') or 'Memory file'
+                    ).strip()
+                    or 'Memory file',
+                    'is_primary': bool(raw_candidate.get('is_primary', raw_candidate.get('isPrimary', False))),
+                    'date_taken': date_taken,
+                    'gps': gps,
+                    'extracted_at': str(
+                        raw_candidate.get('extracted_at') or raw_candidate.get('extractedAt') or ''
+                    ).strip()
+                    or None,
+                    'raw_exif': raw_candidate.get('raw_exif') if isinstance(raw_candidate.get('raw_exif'), dict) else {},
+                }
+            )
+
+        if normalized_candidates:
+            return normalized_candidates
+
+        # Backward compatibility for previously stored single-candidate payloads.
+        legacy_date_taken = str(payload.get('date_taken') or '').strip() or None
+        legacy_gps = self._normalize_exif_gps(payload.get('gps'))
+        if not legacy_date_taken and not legacy_gps:
+            return []
+
+        metadata = media_item.metadata if isinstance(media_item.metadata, dict) else {}
+        primary_name = str(metadata.get('primaryFileName') or '').strip()
+        if not primary_name:
+            primary_name = Path(media_item.file.name).name if media_item.file else 'Primary file'
+        return [
+            {
+                'file_id': f'primary-{media_item.id}',
+                'original_name': primary_name,
+                'is_primary': True,
+                'date_taken': legacy_date_taken,
+                'gps': legacy_gps,
+                'extracted_at': str(payload.get('extracted_at') or '').strip() or None,
+                'raw_exif': payload.get('raw_exif') if isinstance(payload.get('raw_exif'), dict) else {},
+            }
+        ]
+
+    def _resolve_exif_candidate_selection(self, media_item, candidates, requested_file_id=None):
+        if not candidates:
+            return None
+
+        if requested_file_id:
+            matched = next((candidate for candidate in candidates if candidate['file_id'] == requested_file_id), None)
+            if matched:
+                return matched
+
+        payload = media_item.exif_extracted_data if isinstance(media_item.exif_extracted_data, dict) else {}
+        selected_file_id = str(payload.get('selected_file_id') or payload.get('selectedFileId') or '').strip()
+        if selected_file_id:
+            matched = next((candidate for candidate in candidates if candidate['file_id'] == selected_file_id), None)
+            if matched:
+                return matched
+
+        return candidates[0]
+
+    def _serialize_exif_status(self, media_item):
+        candidates = self._normalize_exif_candidates(media_item)
+        selected_candidate = self._resolve_exif_candidate_selection(media_item, candidates)
+        payload = media_item.exif_extracted_data if isinstance(media_item.exif_extracted_data, dict) else {}
+
+        def _to_public_candidate(candidate):
+            if not candidate:
+                return None
+            return {
+                'file_id': candidate['file_id'],
+                'original_name': candidate['original_name'],
+                'is_primary': candidate['is_primary'],
+                'date_taken': candidate.get('date_taken'),
+                'gps': candidate.get('gps'),
+                'extracted_at': candidate.get('extracted_at'),
+            }
+
+        return {
+            'media_id': str(media_item.id),
+            'status': media_item.exif_status,
+            'error': media_item.exif_error or '',
+            'task_id': media_item.exif_task_id or '',
+            'processed_at': media_item.exif_processed_at,
+            'confirmed_at': media_item.exif_confirmed_at,
+            'requires_confirmation': media_item.exif_status == MediaItem.ExifStatus.AWAITING_CONFIRMATION,
+            'candidate': _to_public_candidate(selected_candidate),
+            'candidates': [_to_public_candidate(candidate) for candidate in candidates],
+            'selected_file_id': selected_candidate['file_id'] if selected_candidate else '',
+            'warnings': payload.get('warnings') if isinstance(payload.get('warnings'), list) else [],
+        }
 
     def _resolve_ordering(self):
         sort_alias = (self.request.query_params.get('sort') or '').strip().lower()
@@ -286,11 +424,62 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             files.extend(request.FILES.getlist(key))
         return files
 
+    def _resolve_uploaded_file_mime_type(self, uploaded_file):
+        content_type = str(getattr(uploaded_file, 'content_type', '') or '').strip().lower()
+        if content_type:
+            return content_type
+        file_name = str(getattr(uploaded_file, 'name', '') or '').strip().lower()
+        return str(mimetypes.guess_type(file_name)[0] or '')
+
+    def _clone_storage_file(self, source_file):
+        if not source_file:
+            raise FileNotFoundError('Source file is missing.')
+
+        source_name = Path(str(getattr(source_file, 'name', '') or '')).name or 'memory-file'
+        file_bytes = b''
+
+        if hasattr(source_file, 'open'):
+            source_file.open('rb')
+        try:
+            if hasattr(source_file, 'read'):
+                file_bytes = source_file.read() or b''
+        finally:
+            if hasattr(source_file, 'close'):
+                try:
+                    source_file.close()
+                except Exception:
+                    pass
+
+        return ContentFile(file_bytes, name=source_name)
+
+    def _safe_file_size(self, file_obj):
+        if not file_obj:
+            return 0
+        try:
+            return int(getattr(file_obj, 'size', 0) or 0)
+        except (FileNotFoundError, OSError, ValueError):
+            return 0
+
     def _extract_update_payload(self, request):
-        data = request.data.copy()
-        for key in ('remove_file_ids', 'removeFileIds', 'new_files', 'newFiles'):
-            if key in data:
-                data.pop(key)
+        excluded_keys = {'remove_file_ids', 'removeFileIds', 'new_files', 'newFiles', 'files'}
+        source = request.data
+        data = {}
+
+        if hasattr(source, 'lists'):
+            for key, values in source.lists():
+                if key in excluded_keys or not values:
+                    continue
+                data[key] = values if len(values) > 1 else values[0]
+        elif isinstance(source, dict):
+            for key, value in source.items():
+                if key in excluded_keys:
+                    continue
+                data[key] = value
+        else:
+            for key in source.keys():
+                if key in excluded_keys:
+                    continue
+                data[key] = source.get(key)
 
         for key in ('date_taken', 'dateTaken'):
             if key in data:
@@ -344,18 +533,39 @@ class MediaItemViewSet(viewsets.ModelViewSet):
 
         if remove_primary:
             if retained_attachments:
-                promoted_attachment = retained_attachments.pop(0)
-                media_item.file = promoted_attachment.file
-                if promoted_attachment.file_type == MediaAttachment.FileType.PHOTO:
-                    media_item.media_type = MediaItem.MediaType.PHOTO
-                elif promoted_attachment.file_type == MediaAttachment.FileType.VIDEO:
-                    media_item.media_type = MediaItem.MediaType.VIDEO
+                promoted_attachment = None
+                while retained_attachments and not promoted_attachment:
+                    candidate_attachment = retained_attachments.pop(0)
+                    try:
+                        cloned_file = self._clone_storage_file(candidate_attachment.file)
+                    except (FileNotFoundError, OSError):
+                        candidate_attachment.delete()
+                        continue
+
+                    media_item.file = cloned_file
+                    if candidate_attachment.file_type == MediaAttachment.FileType.PHOTO:
+                        media_item.media_type = MediaItem.MediaType.PHOTO
+                    elif candidate_attachment.file_type == MediaAttachment.FileType.VIDEO:
+                        media_item.media_type = MediaItem.MediaType.VIDEO
+                    else:
+                        media_item.media_type = MediaItem.MediaType.DOCUMENT
+
+                    promoted_name = str(
+                        candidate_attachment.original_name or Path(candidate_attachment.file.name).name
+                    ).strip()
+                    if promoted_name:
+                        next_metadata['primaryFileName'] = promoted_name
+                    promoted_attachment = candidate_attachment
+
+                if promoted_attachment:
+                    promoted_attachment.delete()
+                elif pending_new_files:
+                    replacement = pending_new_files.pop(0)
+                    media_item.file = replacement
+                    media_item.media_type = self._resolve_media_type(replacement)
+                    next_metadata['primaryFileName'] = replacement.name
                 else:
-                    media_item.media_type = MediaItem.MediaType.DOCUMENT
-                promoted_name = str(promoted_attachment.original_name or Path(promoted_attachment.file.name).name).strip()
-                if promoted_name:
-                    next_metadata['primaryFileName'] = promoted_name
-                promoted_attachment.delete()
+                    raise ValidationError({'removeFileIds': ['At least one file must remain attached to this memory.']})
             elif pending_new_files:
                 replacement = pending_new_files.pop(0)
                 media_item.file = replacement
@@ -368,7 +578,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             attachment.delete()
 
         for uploaded_file in pending_new_files:
-            mime_type = str(getattr(uploaded_file, 'content_type', '') or '')
+            mime_type = self._resolve_uploaded_file_mime_type(uploaded_file)
             MediaAttachment.objects.create(
                 media_item=media_item,
                 file=uploaded_file,
@@ -380,8 +590,8 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         next_metadata['fileCount'] = projected_file_count
         media_item.metadata = next_metadata
         remaining_attachments = list(MediaAttachment.objects.filter(media_item=media_item))
-        total_size = int(getattr(media_item.file, 'size', 0) or 0) + sum(
-            int(attachment.file_size or 0) for attachment in remaining_attachments
+        total_size = self._safe_file_size(media_item.file) + sum(
+            self._safe_file_size(attachment.file) for attachment in remaining_attachments
         )
         media_item.file_size = total_size
         media_item.content_hash = ''
@@ -399,14 +609,22 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         remove_file_ids = self._parse_remove_file_ids(request)
         raw_new_files = self._parse_new_files(request)
         new_files = self._process_files_for_vault(raw_new_files, media_item.vault)
-        serializer = self.get_serializer(media_item, data=self._extract_update_payload(request), partial=partial)
+        update_payload = self._extract_update_payload(request)
+        serializer = self.get_serializer(media_item, data=update_payload, partial=partial)
         serializer.is_valid(raise_exception=True)
+        has_attribute_updates = bool(serializer.validated_data)
+        has_file_mutations = bool(remove_file_ids or new_files)
         self.perform_update(serializer)
 
         updated_media = serializer.instance
-        if remove_file_ids or new_files:
+        if has_file_mutations:
             with transaction.atomic():
                 updated_media = self._apply_file_mutations(updated_media, remove_file_ids, new_files)
+
+        should_enqueue_processing = has_file_mutations or has_attribute_updates
+        if should_enqueue_processing:
+            AIProcessingService().enqueue_media_processing(updated_media)
+            updated_media.refresh_from_db()
 
         # Ensure response serialization does not reuse stale prefetched attachments/tags.
         if hasattr(updated_media, '_prefetched_objects_cache'):
@@ -537,6 +755,124 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @decorators.action(detail=True, methods=['get'], url_path='exif-status')
+    def exif_status(self, request, pk=None):
+        media_item = self.get_object()
+        return Response(self._serialize_exif_status(media_item))
+
+    @decorators.action(detail=True, methods=['post'], url_path='exif-confirm')
+    def exif_confirm(self, request, pk=None):
+        media_item = self.get_object()
+        if media_item.uploader_id != request.user.id:
+            raise PermissionDenied('Only the original uploader can confirm extracted EXIF metadata.')
+
+        if media_item.exif_status != MediaItem.ExifStatus.AWAITING_CONFIRMATION:
+            raise ValidationError({'detail': 'There is no pending EXIF metadata to confirm.'})
+
+        action = str(request.data.get('action') or '').strip().lower()
+        if action not in {'accept', 'reject'}:
+            raise ValidationError({'action': ['Action must be "accept" or "reject".']})
+
+        requested_candidate_file_id = str(
+            request.data.get('candidate_file_id', request.data.get('candidateFileId')) or ''
+        ).strip()
+        candidate_pool = self._normalize_exif_candidates(media_item)
+        if not candidate_pool:
+            raise ValidationError({'detail': 'No extracted EXIF candidates are available to confirm.'})
+
+        candidate = self._resolve_exif_candidate_selection(
+            media_item,
+            candidate_pool,
+            requested_candidate_file_id or None,
+        )
+        if requested_candidate_file_id and (not candidate or candidate['file_id'] != requested_candidate_file_id):
+            raise ValidationError({'candidateFileId': ['Selected EXIF candidate was not found.']})
+
+        candidate_date_taken = candidate.get('date_taken')
+        candidate_gps = candidate.get('gps') if isinstance(candidate.get('gps'), dict) else None
+
+        apply_date_taken = self._parse_bool(
+            request.data.get('apply_date_taken', request.data.get('applyDateTaken'))
+        )
+        apply_gps = self._parse_bool(
+            request.data.get('apply_gps', request.data.get('applyGps'))
+        )
+        if apply_date_taken is None:
+            apply_date_taken = True
+        if apply_gps is None:
+            apply_gps = True
+
+        if action == 'reject':
+            media_item.exif_status = MediaItem.ExifStatus.REJECTED
+            media_item.exif_error = ''
+            media_item.exif_confirmed_at = timezone.now()
+            media_item.exif_extracted_data = {}
+            media_item.save(update_fields=['exif_status', 'exif_error', 'exif_confirmed_at', 'exif_extracted_data'])
+            output = self.get_serializer(media_item)
+            return Response(output.data, status=status.HTTP_200_OK)
+
+        has_date_candidate = bool(candidate_date_taken)
+        has_gps_candidate = bool(candidate_gps)
+        should_apply_date_taken = bool(apply_date_taken and has_date_candidate)
+        should_apply_gps = bool(apply_gps and has_gps_candidate)
+
+        if not should_apply_date_taken and not should_apply_gps:
+            raise ValidationError({'detail': 'Select at least one EXIF field to apply, or reject this metadata.'})
+
+        metadata = media_item.metadata if isinstance(media_item.metadata, dict) else {}
+        next_metadata = dict(metadata)
+        raw_exif = candidate.get('raw_exif')
+        if isinstance(raw_exif, dict):
+            next_metadata['exif'] = raw_exif
+        next_metadata['exifSource'] = {
+            'fileId': candidate.get('file_id'),
+            'originalName': candidate.get('original_name'),
+        }
+
+        if should_apply_gps and candidate_gps:
+            try:
+                lat = float(candidate_gps.get('latitude'))
+                lng = float(candidate_gps.get('longitude'))
+            except (TypeError, ValueError):
+                raise ValidationError({'detail': 'Extracted GPS value is invalid. Please reject and retry extraction.'})
+
+            if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
+                raise ValidationError({'detail': 'Extracted GPS value is out of range. Please reject and retry extraction.'})
+
+            next_metadata['gps'] = {'latitude': lat, 'longitude': lng}
+            if not str(next_metadata.get('location') or '').strip():
+                next_metadata['location'] = f'{lat:.6f}, {lng:.6f}'
+
+        update_fields = [
+            'metadata',
+            'exif_status',
+            'exif_error',
+            'exif_confirmed_at',
+            'exif_extracted_data',
+        ]
+        media_item.metadata = next_metadata
+        media_item.exif_status = MediaItem.ExifStatus.CONFIRMED
+        media_item.exif_error = ''
+        media_item.exif_confirmed_at = timezone.now()
+        media_item.exif_extracted_data = {}
+
+        if should_apply_date_taken and candidate_date_taken:
+            try:
+                normalized_candidate = str(candidate_date_taken).replace('Z', '+00:00')
+                parsed_date_taken = datetime.fromisoformat(normalized_candidate)
+            except ValueError:
+                parsed_date_taken = None
+            if parsed_date_taken is None:
+                raise ValidationError({'detail': 'Extracted date value is invalid. Please reject and retry extraction.'})
+            if timezone.is_naive(parsed_date_taken):
+                parsed_date_taken = timezone.make_aware(parsed_date_taken, timezone.get_current_timezone())
+            media_item.date_taken = parsed_date_taken
+            update_fields.append('date_taken')
+
+        media_item.save(update_fields=update_fields)
+        output = self.get_serializer(media_item)
+        return Response(output.data, status=status.HTTP_200_OK)
+
     @decorators.action(detail=False, methods=['get'], url_path='filters')
     def filters(self, request, *args, **kwargs):
         queryset = self.get_queryset()
@@ -656,7 +992,8 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         shared_metadata = self._parse_metadata_payload(request.data.get('metadata'))
         requested_media_type = request.data.get('media_type') or request.data.get('mediaType')
         requested_visibility = request.data.get('visibility')
-        primary_file_index = self._resolve_primary_file_index(uploaded_files)
+        requested_primary_file_index = request.data.get('primary_file_index', request.data.get('primaryFileIndex'))
+        primary_file_index = self._resolve_primary_file_index(uploaded_files, requested_primary_file_index)
         primary_source_file = uploaded_files[primary_file_index]
         primary_file = processed_uploaded_files[primary_file_index]
 
@@ -688,7 +1025,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                     continue
 
                 original_file_name = uploaded_files[index].name
-                mime_type = str(getattr(uploaded_file, 'content_type', '') or '')
+                mime_type = self._resolve_uploaded_file_mime_type(uploaded_file)
                 attachment = MediaAttachment.objects.create(
                     media_item=media_item,
                     file=uploaded_file,
@@ -702,7 +1039,8 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                 media_item.file_size = total_size
                 media_item.save(update_fields=['file_size'])
 
-        AIProcessingService().process_media(media_item)
+        AIProcessingService().enqueue_media_processing(media_item)
+        media_item.refresh_from_db()
 
         output = self.get_serializer(media_item)
         return Response(output.data, status=status.HTTP_201_CREATED)

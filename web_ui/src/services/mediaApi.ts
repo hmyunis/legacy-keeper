@@ -4,9 +4,10 @@ import type {
     ApiMediaFile,
     ApiLinkedRelative,
     ApiMediaFilterSummary,
+    ApiMediaExifStatusResponse,
     PaginatedApiResponse,
 } from '../types/api.types';
-import { MediaItem, MediaStatus } from '../types';
+import { MediaItem, MediaStatus, MediaExifStatus, MediaExifWorkflowStatus } from '../types';
 import { MediaType } from '../types';
 import { appEnv } from './env';
 
@@ -55,6 +56,15 @@ const parseMetadataLocation = (metadata?: Record<string, unknown> | null): strin
 const normalizeVisibility = (value?: string | null): 'private' | 'family' => {
     const normalized = String(value || '').trim().toUpperCase();
     return normalized === 'PRIVATE' ? 'private' : 'family';
+};
+
+const normalizeExifStatus = (value?: string | null): MediaExifStatus => {
+    const normalized = String(value || '').trim().toUpperCase();
+    const validStatuses = Object.values(MediaExifStatus);
+    if (validStatuses.includes(normalized as MediaExifStatus)) {
+        return normalized as MediaExifStatus;
+    }
+    return MediaExifStatus.NOT_STARTED;
 };
 
 const parseLinkedRelatives = (item: ApiMediaItem): MediaItem['linkedRelatives'] => {
@@ -164,6 +174,10 @@ const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => {
         fileUrl: primaryFile?.fileUrl || undefined,
         tags: parseMetadataTags(item.metadata),
         status: (item.aiStatus as MediaStatus) || MediaStatus.PENDING,
+        exifStatus: normalizeExifStatus(item.exifStatus),
+        exifError: String(item.exifError || '').trim() || undefined,
+        exifProcessedAt: item.exifProcessedAt || undefined,
+        exifConfirmedAt: item.exifConfirmedAt || undefined,
         location: parseMetadataLocation(item.metadata),
         metadata: (item.metadata && typeof item.metadata === 'object' ? item.metadata : {}) as Record<string, unknown>,
         files,
@@ -178,6 +192,7 @@ const unwrapList = <T>(payload: T[] | PaginatedApiResponse<T> | null | undefined
 
 export interface UploadMediaPayload {
     files: File[];
+    primaryFileIndex?: number;
     title?: string;
     description?: string;
     dateTaken?: string;
@@ -208,6 +223,13 @@ export interface PaginatedMediaResult {
 export interface ToggleFavoriteResponse {
     mediaId: string;
     isFavorite: boolean;
+}
+
+export interface ConfirmExifPayload {
+    action: 'accept' | 'reject';
+    applyDateTaken?: boolean;
+    applyGps?: boolean;
+    candidateFileId?: string;
 }
 
 export interface MediaQueryParams {
@@ -243,6 +265,48 @@ export interface MediaFilterSummary {
         end: string | null;
     };
 }
+
+const parseExifCandidate = (candidate: Record<string, unknown> | null | undefined) => {
+    if (!candidate || typeof candidate !== 'object') return null;
+
+    const rawGps = candidate.gps;
+    const gps =
+        rawGps &&
+        typeof rawGps === 'object' &&
+        typeof (rawGps as any).latitude === 'number' &&
+        typeof (rawGps as any).longitude === 'number'
+            ? {
+                latitude: (rawGps as any).latitude,
+                longitude: (rawGps as any).longitude,
+            }
+            : undefined;
+
+    const fileId = String((candidate as any).fileId ?? (candidate as any).file_id ?? '').trim();
+    if (!fileId) return null;
+
+    const originalName = String((candidate as any).originalName ?? (candidate as any).original_name ?? '').trim() || 'Memory file';
+    const dateTaken =
+        typeof (candidate as any).dateTaken === 'string'
+            ? (candidate as any).dateTaken
+            : typeof (candidate as any).date_taken === 'string'
+                ? (candidate as any).date_taken
+                : undefined;
+    const extractedAt =
+        typeof (candidate as any).extractedAt === 'string'
+            ? (candidate as any).extractedAt
+            : typeof (candidate as any).extracted_at === 'string'
+                ? (candidate as any).extracted_at
+                : undefined;
+
+    return {
+        fileId,
+        originalName,
+        isPrimary: Boolean((candidate as any).isPrimary ?? (candidate as any).is_primary),
+        dateTaken,
+        gps,
+        extractedAt,
+    };
+};
 
 const normalizeFacetOptions = (value: unknown): FacetOption[] => {
     if (!Array.isArray(value)) return [];
@@ -376,6 +440,49 @@ export const mediaApi = {
         return mapApiMediaToMediaItem(response.data);
     },
 
+    getExifStatus: async (mediaId: string): Promise<MediaExifWorkflowStatus> => {
+        const response = await axiosClient.get<ApiMediaExifStatusResponse | Record<string, unknown>>(
+            `${MEDIA_ENDPOINT}${mediaId}/exif-status/`,
+        );
+        const payload: any = response.data || {};
+        const parsedCandidates = Array.isArray(payload.candidates)
+            ? payload.candidates
+                .map((entry: unknown) => parseExifCandidate(entry as Record<string, unknown>))
+                .filter(Boolean)
+            : [];
+        const selectedCandidate = parseExifCandidate(
+            payload.candidate && typeof payload.candidate === 'object' ? payload.candidate : undefined,
+        );
+        const fallbackCandidate = selectedCandidate || parsedCandidates[0];
+
+        return {
+            mediaId: String(payload.mediaId ?? payload.media_id ?? mediaId),
+            status: normalizeExifStatus(payload.status),
+            error: String(payload.error || '').trim() || undefined,
+            taskId: String(payload.taskId ?? payload.task_id ?? '').trim() || undefined,
+            processedAt: typeof payload.processedAt === 'string' ? payload.processedAt : undefined,
+            confirmedAt: typeof payload.confirmedAt === 'string' ? payload.confirmedAt : undefined,
+            requiresConfirmation: Boolean(payload.requiresConfirmation ?? payload.requires_confirmation),
+            candidate: fallbackCandidate || undefined,
+            candidates: parsedCandidates,
+            selectedFileId:
+                String(payload.selectedFileId ?? payload.selected_file_id ?? '').trim() || fallbackCandidate?.fileId,
+            warnings: Array.isArray(payload.warnings)
+                ? payload.warnings.map((warning: unknown) => String(warning).trim()).filter(Boolean)
+                : undefined,
+        };
+    },
+
+    confirmExif: async (mediaId: string, payload: ConfirmExifPayload): Promise<MediaItem> => {
+        const response = await axiosClient.post<ApiMediaItem>(`${MEDIA_ENDPOINT}${mediaId}/exif-confirm/`, {
+            action: payload.action,
+            applyDateTaken: payload.applyDateTaken ?? true,
+            applyGps: payload.applyGps ?? true,
+            candidateFileId: payload.candidateFileId || undefined,
+        });
+        return mapApiMediaToMediaItem(response.data);
+    },
+
     createMedia: async (
         vaultId: string,
         payload: UploadMediaPayload,
@@ -388,10 +495,18 @@ export const mediaApi = {
             throw new Error('You can upload up to 10 files at a time.');
         }
 
-        const primaryFile = payload.files[0];
+        const normalizedPrimaryFileIndex =
+            typeof payload.primaryFileIndex === 'number' &&
+            Number.isInteger(payload.primaryFileIndex) &&
+            payload.primaryFileIndex >= 0 &&
+            payload.primaryFileIndex < payload.files.length
+                ? payload.primaryFileIndex
+                : 0;
+        const primaryFile = payload.files[normalizedPrimaryFileIndex];
         const formData = new FormData();
         formData.append('vault', vaultId);
         formData.append('file', primaryFile);
+        formData.append('primaryFileIndex', String(normalizedPrimaryFileIndex));
         payload.files.forEach((file) => {
             formData.append('files', file);
         });

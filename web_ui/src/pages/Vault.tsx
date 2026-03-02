@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   Filter as FilterIcon,
@@ -14,7 +14,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { MediaItem, MediaType } from '../types';
+import { MediaExifStatus, MediaItem, MediaType } from '../types';
 import { toast } from 'sonner';
 import MediaCard from '../components/vault/MediaCard';
 import VaultFilters from '../components/vault/VaultFilters';
@@ -65,6 +65,20 @@ const toggleTypeItem = (items: MediaType[], value: MediaType) =>
   items.includes(value) ? items.filter((item) => item !== value) : [...items, value];
 
 const uniqueStrings = (items: string[]) => Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
+const EXIF_RUNNING_STATUSES = new Set<MediaExifStatus>([
+  MediaExifStatus.QUEUED,
+  MediaExifStatus.PROCESSING,
+]);
+const EXIF_TERMINAL_STATUSES = new Set<MediaExifStatus>([
+  MediaExifStatus.CONFIRMED,
+  MediaExifStatus.REJECTED,
+  MediaExifStatus.NOT_AVAILABLE,
+  MediaExifStatus.FAILED,
+]);
+const EXIF_POLL_WINDOW_MS = 120000;
+
+const isExifRunning = (status?: MediaExifStatus) => Boolean(status && EXIF_RUNNING_STATUSES.has(status));
+const isExifTerminal = (status?: MediaExifStatus) => Boolean(status && EXIF_TERMINAL_STATUSES.has(status));
 
 const Vault: React.FC<{
   initialSearch?: string;
@@ -142,6 +156,7 @@ const Vault: React.FC<{
     progress: 0,
     date: new Date(),
     files: [] as File[],
+    primaryFileIndex: 0,
     title: '',
     location: '',
     tags: '',
@@ -150,6 +165,10 @@ const Vault: React.FC<{
   });
   const [confirmState, setConfirmState] = useState<VaultConfirmState | null>(null);
   const sortRef = useRef<HTMLDivElement>(null);
+  const hasInitializedExifStatusRef = useRef(false);
+  const previousExifStatusRef = useRef<Map<string, MediaExifStatus>>(new Map());
+  const exifPollingTimeoutsRef = useRef<Map<string, number>>(new Map());
+  const [exifPollingMediaIds, setExifPollingMediaIds] = useState<Set<string>>(new Set());
 
   const syncVaultSearch = (
     nextSearch: string,
@@ -199,6 +218,54 @@ const Vault: React.FC<{
       },
     } as any);
   };
+
+  const clearExifPollingTimeout = useCallback((mediaId: string) => {
+    const timeoutId = exifPollingTimeoutsRef.current.get(mediaId);
+    if (timeoutId === undefined) return;
+    window.clearTimeout(timeoutId);
+    exifPollingTimeoutsRef.current.delete(mediaId);
+  }, []);
+
+  const stopExifPollingForMedia = useCallback(
+    (mediaId: string) => {
+      clearExifPollingTimeout(mediaId);
+      setExifPollingMediaIds((current) => {
+        if (!current.has(mediaId)) return current;
+        const next = new Set(current);
+        next.delete(mediaId);
+        return next;
+      });
+    },
+    [clearExifPollingTimeout],
+  );
+
+  const startExifPollingForMedia = useCallback(
+    (mediaId: string, status?: MediaExifStatus) => {
+      if (!mediaId) return;
+      if (isExifTerminal(status)) {
+        stopExifPollingForMedia(mediaId);
+        return;
+      }
+      clearExifPollingTimeout(mediaId);
+      setExifPollingMediaIds((current) => {
+        if (current.has(mediaId)) return current;
+        const next = new Set(current);
+        next.add(mediaId);
+        return next;
+      });
+      const timeoutId = window.setTimeout(() => {
+        setExifPollingMediaIds((current) => {
+          if (!current.has(mediaId)) return current;
+          const next = new Set(current);
+          next.delete(mediaId);
+          return next;
+        });
+        exifPollingTimeoutsRef.current.delete(mediaId);
+      }, EXIF_POLL_WINDOW_MS);
+      exifPollingTimeoutsRef.current.set(mediaId, timeoutId);
+    },
+    [clearExifPollingTimeout, stopExifPollingForMedia],
+  );
 
   const applyFilterChange = (updater: (current: typeof filters) => typeof filters) => {
     const next = updater(filters);
@@ -283,6 +350,24 @@ const Vault: React.FC<{
     if (!activeMediaData) return 0;
     return activeMediaData.pages[0]?.totalCount || 0;
   }, [activeMediaData]);
+  const exifProgressSummary = useMemo(() => {
+    let active = 0;
+    let awaitingConfirmation = 0;
+    let failed = 0;
+
+    for (const item of allMedia) {
+      if (item.type !== MediaType.PHOTO) continue;
+      if (item.exifStatus === MediaExifStatus.QUEUED || item.exifStatus === MediaExifStatus.PROCESSING) {
+        active += 1;
+      } else if (item.exifStatus === MediaExifStatus.AWAITING_CONFIRMATION) {
+        awaitingConfirmation += 1;
+      } else if (item.exifStatus === MediaExifStatus.FAILED) {
+        failed += 1;
+      }
+    }
+
+    return { active, awaitingConfirmation, failed };
+  }, [allMedia]);
 
   useEffect(() => {
     setSearchQuery(initialSearch);
@@ -329,6 +414,99 @@ const Vault: React.FC<{
   }, [initialAction, canUpload, vaultDefaultVisibility]);
 
   useEffect(() => {
+    if (!allMedia.length) return;
+
+    const statusSnapshot = new Map<string, MediaExifStatus>();
+    for (const item of allMedia) {
+      statusSnapshot.set(item.id, item.exifStatus);
+    }
+
+    if (!hasInitializedExifStatusRef.current) {
+      previousExifStatusRef.current = statusSnapshot;
+      hasInitializedExifStatusRef.current = true;
+      return;
+    }
+
+    for (const item of allMedia) {
+      if (item.type !== MediaType.PHOTO) continue;
+
+      const previousStatus = previousExifStatusRef.current.get(item.id);
+      const currentStatus = item.exifStatus;
+      if (!previousStatus) {
+        if (isExifRunning(currentStatus)) {
+          toast.loading(`Extracting EXIF metadata for "${item.title}"...`, {
+            id: `exif-bg-${item.id}`,
+            duration: Infinity,
+          });
+        }
+        continue;
+      }
+
+      const wasRunning = isExifRunning(previousStatus);
+      const isRunning = isExifRunning(currentStatus);
+      const toastId = `exif-bg-${item.id}`;
+
+      if (!wasRunning && isRunning) {
+        toast.loading(`Extracting EXIF metadata for "${item.title}"...`, {
+          id: toastId,
+          duration: Infinity,
+        });
+        continue;
+      }
+
+      if (!wasRunning || isRunning || previousStatus === currentStatus) {
+        continue;
+      }
+
+      if (currentStatus === MediaExifStatus.CONFIRMED) {
+        toast.success(`EXIF metadata applied for "${item.title}".`, { id: toastId });
+      } else if (currentStatus === MediaExifStatus.FAILED) {
+        toast.error(`EXIF extraction failed for "${item.title}".`, {
+          id: toastId,
+          description: item.exifError || 'Please retry by editing and re-saving the memory.',
+        });
+      } else if (currentStatus === MediaExifStatus.AWAITING_CONFIRMATION) {
+        toast.info(`EXIF ready for "${item.title}". Confirm to apply extracted date/GPS.`, { id: toastId });
+      } else if (currentStatus === MediaExifStatus.NOT_AVAILABLE) {
+        toast.info(`No EXIF date/GPS found for "${item.title}".`, { id: toastId });
+      } else if (currentStatus === MediaExifStatus.REJECTED) {
+        toast.info(`Extracted EXIF was rejected for "${item.title}".`, { id: toastId });
+      } else {
+        toast.dismiss(toastId);
+      }
+    }
+
+    previousExifStatusRef.current = statusSnapshot;
+  }, [allMedia]);
+
+  useEffect(
+    () => () => {
+      for (const timeoutId of exifPollingTimeoutsRef.current.values()) {
+        window.clearTimeout(timeoutId);
+      }
+      exifPollingTimeoutsRef.current.clear();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!allMedia.length || exifPollingMediaIds.size === 0) return;
+    const settledIds = allMedia
+      .filter((item) => {
+        if (!exifPollingMediaIds.has(item.id)) return false;
+        if (item.type !== MediaType.PHOTO) return true;
+        if (item.exifStatus === MediaExifStatus.NOT_STARTED) return false;
+        return !isExifRunning(item.exifStatus);
+      })
+      .map((item) => item.id);
+
+    if (!settledIds.length) return;
+    for (const mediaId of settledIds) {
+      stopExifPollingForMedia(mediaId);
+    }
+  }, [allMedia, exifPollingMediaIds, stopExifPollingForMedia]);
+
+  useEffect(() => {
     const click = (e: MouseEvent) => {
       if (sortRef.current && !sortRef.current.contains(e.target as Node)) setIsSortOpen(false);
     };
@@ -347,6 +525,18 @@ const Vault: React.FC<{
     if (debouncedSearchQuery === currentSearch) return;
     syncVaultSearch(debouncedSearchQuery, sortBy, view, filters, true, activeTab);
   }, [activeTab, debouncedSearchQuery, filters, initialSearch, sortBy, view]);
+
+  useEffect(() => {
+    if (exifPollingMediaIds.size === 0) return;
+    const timer = window.setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ['media'] });
+      queryClient.invalidateQueries({ queryKey: ['mediaFavorites'] });
+      for (const mediaId of exifPollingMediaIds) {
+        queryClient.invalidateQueries({ queryKey: ['mediaExifStatus', mediaId] });
+      }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [exifPollingMediaIds, queryClient]);
 
   const toggleFav = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -387,6 +577,7 @@ const Vault: React.FC<{
       progress: 0,
       date: new Date(),
       files: [],
+      primaryFileIndex: 0,
       title: '',
       location: '',
       tags: '',
@@ -397,6 +588,14 @@ const Vault: React.FC<{
   useEffect(() => {
     setUploadState((state) => (state.open ? state : { ...state, visibility: vaultDefaultVisibility }));
   }, [vaultDefaultVisibility]);
+
+  const handleUploadSuccess = (createdMedia: MediaItem) => {
+    resetUploadState();
+    setSelectedMedia(createdMedia);
+    if (createdMedia.type === MediaType.PHOTO) {
+      startExifPollingForMedia(createdMedia.id, createdMedia.exifStatus);
+    }
+  };
 
   const handleStartUpload = () => {
     if (!canUpload || uploadMutation.isPending) return;
@@ -426,6 +625,7 @@ const Vault: React.FC<{
       {
         payload: {
           files: uploadState.files,
+          primaryFileIndex: uploadState.primaryFileIndex,
           title: normalizedTitle,
           description: uploadState.story,
           dateTaken: uploadState.date?.toISOString(),
@@ -438,8 +638,8 @@ const Vault: React.FC<{
         },
       },
       {
-        onSuccess: () => {
-          resetUploadState();
+        onSuccess: (createdMedia) => {
+          handleUploadSuccess(createdMedia);
         },
       },
     );
@@ -577,6 +777,26 @@ const Vault: React.FC<{
           )}
         </div>
       </div>
+
+      {(exifProgressSummary.active > 0 || exifProgressSummary.awaitingConfirmation > 0 || exifProgressSummary.failed > 0) && (
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/70 p-3 text-xs text-slate-600 dark:text-slate-300 flex flex-wrap items-center gap-3">
+          {exifProgressSummary.active > 0 && (
+            <span className="inline-flex items-center gap-2 rounded-full bg-sky-50 dark:bg-sky-900/30 px-3 py-1 font-semibold text-sky-700 dark:text-sky-300">
+              {exifProgressSummary.active} photo{exifProgressSummary.active === 1 ? '' : 's'} processing EXIF
+            </span>
+          )}
+          {exifProgressSummary.awaitingConfirmation > 0 && (
+            <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 dark:bg-amber-900/30 px-3 py-1 font-semibold text-amber-700 dark:text-amber-300">
+              {exifProgressSummary.awaitingConfirmation} awaiting uploader confirmation
+            </span>
+          )}
+          {exifProgressSummary.failed > 0 && (
+            <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 dark:bg-rose-900/30 px-3 py-1 font-semibold text-rose-700 dark:text-rose-300">
+              {exifProgressSummary.failed} EXIF extraction failed
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="inline-flex items-center gap-2 bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200 dark:border-slate-800 p-1.5">
         <button
@@ -865,10 +1085,15 @@ const Vault: React.FC<{
             updateMediaMetadataMutation.mutate(payload, {
               onSuccess: (updatedMedia) => {
                 syncMediaRecord(updatedMedia);
+                if (updatedMedia.type === MediaType.PHOTO) {
+                  startExifPollingForMedia(updatedMedia.id, updatedMedia.exifStatus);
+                }
                 onSuccess?.(updatedMedia);
               },
             })
           }
+          onSyncMedia={syncMediaRecord}
+          shouldPollExif={exifPollingMediaIds.has(selectedMedia.id)}
           isUpdatingMedia={updateMediaMetadataMutation.isPending}
         />
       )}
@@ -879,16 +1104,27 @@ const Vault: React.FC<{
           uploadProgress={uploadState.progress}
           uploadDate={uploadState.date}
           selectedFiles={uploadState.files}
+          primaryFileIndex={uploadState.primaryFileIndex}
           title={uploadState.title}
           location={uploadState.location}
           tags={uploadState.tags}
           story={uploadState.story}
           visibility={uploadState.visibility}
           onDateChange={(date) => setUploadState((state) => ({ ...state, date }))}
-          onFilesChange={(files) =>
+          onFilesChange={(files, nextPrimaryFileIndex) =>
             setUploadState((state) => ({
               ...state,
               files: files.slice(0, 10),
+              primaryFileIndex:
+                typeof nextPrimaryFileIndex === 'number'
+                  ? Math.max(0, Math.min(nextPrimaryFileIndex, Math.max(files.length - 1, 0)))
+                  : Math.min(state.primaryFileIndex, Math.max(files.length - 1, 0)),
+            }))
+          }
+          onPrimaryFileChange={(index) =>
+            setUploadState((state) => ({
+              ...state,
+              primaryFileIndex: Math.max(0, Math.min(index, Math.max(state.files.length - 1, 0))),
             }))
           }
           onTitleChange={(value) => setUploadState((state) => ({ ...state, title: value }))}
