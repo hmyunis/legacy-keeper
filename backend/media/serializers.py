@@ -1,6 +1,7 @@
 import json
 import mimetypes
 from rest_framework import serializers
+from core.storage_urls import build_storage_file_url, build_storage_path_url
 from .models import MediaAttachment, MediaItem
 
 MAX_UPLOAD_MB = 20
@@ -38,11 +39,7 @@ class MediaAttachmentSerializer(serializers.ModelSerializer):
 
     def get_file_url(self, obj):
         request = self.context.get('request')
-        if not obj.file:
-            return None
-        if request:
-            return request.build_absolute_uri(obj.file.url)
-        return obj.file.url
+        return build_storage_file_url(obj.file, request=request)
 
     def get_is_primary(self, _obj):
         return False
@@ -54,6 +51,7 @@ class MediaItemSerializer(serializers.ModelSerializer):
     is_favorite = serializers.SerializerMethodField()
     files = serializers.SerializerMethodField()
     linked_relatives = serializers.SerializerMethodField()
+    detected_faces = serializers.SerializerMethodField()
 
     class Meta:
         model = MediaItem
@@ -66,10 +64,14 @@ class MediaItemSerializer(serializers.ModelSerializer):
             'exif_error',
             'exif_processed_at',
             'exif_confirmed_at',
+            'face_detection_status',
+            'face_detection_error',
+            'face_detection_processed_at',
             'created_at',
             'metadata',
             'files',
             'linked_relatives',
+            'detected_faces',
         )
         read_only_fields = (
             'id',
@@ -81,21 +83,22 @@ class MediaItemSerializer(serializers.ModelSerializer):
             'exif_error',
             'exif_processed_at',
             'exif_confirmed_at',
+            'face_detection_status',
+            'face_detection_error',
+            'face_detection_processed_at',
             'created_at',
         )
 
     def get_file_url(self, obj):
         request = self.context.get('request')
-        if obj.file:
-            return request.build_absolute_uri(obj.file.url) if request else obj.file.url
-        return None
+        return build_storage_file_url(obj.file, request=request)
 
     def get_uploader_avatar(self, obj):
         request = self.context.get('request')
         uploader = getattr(obj, 'uploader', None)
         if not uploader or not getattr(uploader, 'avatar', None):
             return None
-        return request.build_absolute_uri(uploader.avatar.url) if request else uploader.avatar.url
+        return build_storage_file_url(uploader.avatar, request=request)
 
     def get_is_favorite(self, obj):
         annotated = getattr(obj, 'is_favorite', None)
@@ -119,7 +122,7 @@ class MediaItemSerializer(serializers.ModelSerializer):
             files.append(
                 {
                     'id': f'primary-{obj.id}',
-                    'file_url': request.build_absolute_uri(obj.file.url) if request else obj.file.url,
+                    'file_url': build_storage_file_url(obj.file, request=request),
                     'file_size': int(obj.file.size or 0),
                     'mime_type': mime_type,
                     'file_type': resolve_attachment_file_type(mime_type),
@@ -153,7 +156,7 @@ class MediaItemSerializer(serializers.ModelSerializer):
 
             photo_url = None
             if person.profile_photo:
-                photo_url = request.build_absolute_uri(person.profile_photo.url) if request else person.profile_photo.url
+                photo_url = build_storage_file_url(person.profile_photo, request=request)
 
             payload.append(
                 {
@@ -165,6 +168,87 @@ class MediaItemSerializer(serializers.ModelSerializer):
 
         payload.sort(key=lambda relative: str(relative.get('full_name') or '').lower())
         return payload
+
+    def _normalize_face_coordinates(self, raw_value):
+        if not isinstance(raw_value, dict):
+            return None
+        try:
+            x = float(raw_value.get('x'))
+            y = float(raw_value.get('y'))
+            w = float(raw_value.get('w'))
+            h = float(raw_value.get('h'))
+        except (TypeError, ValueError):
+            return None
+        if w <= 0 or h <= 0:
+            return None
+        if x < 0 or y < 0:
+            return None
+        if x + w > 1.000001 or y + h > 1.000001:
+            return None
+        return {
+            'x': round(x, 6),
+            'y': round(y, 6),
+            'w': round(w, 6),
+            'h': round(h, 6),
+        }
+
+    def _absolute_storage_url(self, path):
+        request = self.context.get('request')
+        return build_storage_path_url(path, request=request)
+
+    def get_detected_faces(self, obj):
+        payload = obj.face_detection_data if isinstance(obj.face_detection_data, dict) else {}
+        raw_faces = payload.get('faces') if isinstance(payload.get('faces'), list) else []
+        tags_by_face_id = {}
+        for media_tag in obj.tags.all():
+            detected_face_id = str(getattr(media_tag, 'detected_face_id', '') or '').strip()
+            if not detected_face_id:
+                continue
+            tags_by_face_id.setdefault(detected_face_id, media_tag)
+
+        faces = []
+        for raw_face in raw_faces:
+            if not isinstance(raw_face, dict):
+                continue
+            face_id = str(raw_face.get('face_id') or raw_face.get('faceId') or '').strip()
+            if not face_id:
+                continue
+            file_id = str(raw_face.get('file_id') or raw_face.get('fileId') or '').strip()
+            if not file_id:
+                continue
+
+            face_coordinates = self._normalize_face_coordinates(raw_face.get('face_coordinates'))
+            if not face_coordinates:
+                continue
+
+            try:
+                confidence = float(raw_face.get('confidence') or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+
+            matched_tag = tags_by_face_id.get(face_id)
+            person = getattr(matched_tag, 'person', None) if matched_tag else None
+
+            faces.append(
+                {
+                    'id': face_id,
+                    'file_id': file_id,
+                    'confidence': round(max(0.0, min(1.0, confidence)), 3),
+                    'thumbnail_url': self._absolute_storage_url(
+                        raw_face.get('thumbnail_path') or raw_face.get('thumbnailPath')
+                    ),
+                    'bounding_box': {
+                        'x': face_coordinates['x'],
+                        'y': face_coordinates['y'],
+                        'width': face_coordinates['w'],
+                        'height': face_coordinates['h'],
+                    },
+                    'person_id': str(person.id) if person else None,
+                    'name': person.full_name if person else '',
+                }
+            )
+
+        return faces
 
     def validate_file(self, value):
         """

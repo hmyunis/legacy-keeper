@@ -8,6 +8,17 @@ export interface CreateMediaTagPayload {
   mediaId: string;
   personId: string;
   faceCoordinates?: Record<string, number> | null;
+  detectedFaceId?: string;
+  taggedFileId?: string;
+}
+
+export interface UpdateMediaTagPayload {
+  tagId: string;
+  mediaId: string;
+  personId: string;
+  faceCoordinates?: Record<string, number> | null;
+  detectedFaceId?: string;
+  taggedFileId?: string;
 }
 
 export const useMediaTags = (mediaId?: string) => {
@@ -30,9 +41,14 @@ export const useCreateMediaTag = () => {
         mediaItem: payload.mediaId,
         person: payload.personId,
         faceCoordinates: payload.faceCoordinates || null,
+        detectedFaceId: payload.detectedFaceId || undefined,
+        taggedFileId: payload.taggedFileId || undefined,
       }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['mediaTags', variables.mediaId] });
+      queryClient.invalidateQueries({ queryKey: ['mediaFaceDetectionStatus', variables.mediaId] });
+      queryClient.invalidateQueries({ queryKey: ['media'] });
+      queryClient.invalidateQueries({ queryKey: ['mediaFavorites'] });
       toast.success('Relative linked to media');
     },
     onError: (error) => {
@@ -51,10 +67,39 @@ export const useDeleteMediaTag = () => {
       mediaTagsApi.deleteTag(tagId).then(() => mediaId),
     onSuccess: (mediaId) => {
       queryClient.invalidateQueries({ queryKey: ['mediaTags', mediaId] });
+      queryClient.invalidateQueries({ queryKey: ['mediaFaceDetectionStatus', mediaId] });
+      queryClient.invalidateQueries({ queryKey: ['media'] });
+      queryClient.invalidateQueries({ queryKey: ['mediaFavorites'] });
       toast.success('Relative unlinked from media');
     },
     onError: (error) => {
       toast.error('Failed to unlink relative', {
+        description: getApiErrorMessage(error, 'Please try again.'),
+      });
+    },
+  });
+};
+
+export const useUpdateMediaTag = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: UpdateMediaTagPayload) =>
+      mediaTagsApi.updateTag(payload.tagId, {
+        person: payload.personId,
+        faceCoordinates: payload.faceCoordinates || null,
+        detectedFaceId: payload.detectedFaceId || undefined,
+        taggedFileId: payload.taggedFileId || undefined,
+      }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['mediaTags', variables.mediaId] });
+      queryClient.invalidateQueries({ queryKey: ['mediaFaceDetectionStatus', variables.mediaId] });
+      queryClient.invalidateQueries({ queryKey: ['media'] });
+      queryClient.invalidateQueries({ queryKey: ['mediaFavorites'] });
+      toast.success('Relative link updated');
+    },
+    onError: (error) => {
+      toast.error('Failed to update linked relative', {
         description: getApiErrorMessage(error, 'Please try again.'),
       });
     },

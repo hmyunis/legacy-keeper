@@ -14,7 +14,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { MediaExifStatus, MediaItem, MediaType } from '../types';
+import { MediaExifStatus, MediaFaceDetectionStatus, MediaItem, MediaType } from '../types';
 import { toast } from 'sonner';
 import MediaCard from '../components/vault/MediaCard';
 import VaultFilters from '../components/vault/VaultFilters';
@@ -69,16 +69,15 @@ const EXIF_RUNNING_STATUSES = new Set<MediaExifStatus>([
   MediaExifStatus.QUEUED,
   MediaExifStatus.PROCESSING,
 ]);
-const EXIF_TERMINAL_STATUSES = new Set<MediaExifStatus>([
-  MediaExifStatus.CONFIRMED,
-  MediaExifStatus.REJECTED,
-  MediaExifStatus.NOT_AVAILABLE,
-  MediaExifStatus.FAILED,
+const FACE_DETECTION_RUNNING_STATUSES = new Set<MediaFaceDetectionStatus>([
+  MediaFaceDetectionStatus.QUEUED,
+  MediaFaceDetectionStatus.PROCESSING,
 ]);
 const EXIF_POLL_WINDOW_MS = 120000;
 
 const isExifRunning = (status?: MediaExifStatus) => Boolean(status && EXIF_RUNNING_STATUSES.has(status));
-const isExifTerminal = (status?: MediaExifStatus) => Boolean(status && EXIF_TERMINAL_STATUSES.has(status));
+const isFaceDetectionRunning = (status?: MediaFaceDetectionStatus) =>
+  Boolean(status && FACE_DETECTION_RUNNING_STATUSES.has(status));
 
 const Vault: React.FC<{
   initialSearch?: string;
@@ -240,9 +239,15 @@ const Vault: React.FC<{
   );
 
   const startExifPollingForMedia = useCallback(
-    (mediaId: string, status?: MediaExifStatus) => {
+    (
+      mediaId: string,
+      exifStatus?: MediaExifStatus,
+      faceDetectionStatus?: MediaFaceDetectionStatus,
+    ) => {
       if (!mediaId) return;
-      if (isExifTerminal(status)) {
+      const hasActiveBackgroundTask =
+        isExifRunning(exifStatus) || isFaceDetectionRunning(faceDetectionStatus);
+      if (!hasActiveBackgroundTask) {
         stopExifPollingForMedia(mediaId);
         return;
       }
@@ -354,6 +359,8 @@ const Vault: React.FC<{
     let active = 0;
     let awaitingConfirmation = 0;
     let failed = 0;
+    let faceProcessing = 0;
+    let faceFailed = 0;
 
     for (const item of allMedia) {
       if (item.type !== MediaType.PHOTO) continue;
@@ -364,9 +371,18 @@ const Vault: React.FC<{
       } else if (item.exifStatus === MediaExifStatus.FAILED) {
         failed += 1;
       }
+
+      if (
+        item.faceDetectionStatus === MediaFaceDetectionStatus.QUEUED ||
+        item.faceDetectionStatus === MediaFaceDetectionStatus.PROCESSING
+      ) {
+        faceProcessing += 1;
+      } else if (item.faceDetectionStatus === MediaFaceDetectionStatus.FAILED) {
+        faceFailed += 1;
+      }
     }
 
-    return { active, awaitingConfirmation, failed };
+    return { active, awaitingConfirmation, failed, faceProcessing, faceFailed };
   }, [allMedia]);
 
   useEffect(() => {
@@ -495,8 +511,7 @@ const Vault: React.FC<{
       .filter((item) => {
         if (!exifPollingMediaIds.has(item.id)) return false;
         if (item.type !== MediaType.PHOTO) return true;
-        if (item.exifStatus === MediaExifStatus.NOT_STARTED) return false;
-        return !isExifRunning(item.exifStatus);
+        return !isExifRunning(item.exifStatus) && !isFaceDetectionRunning(item.faceDetectionStatus);
       })
       .map((item) => item.id);
 
@@ -533,6 +548,7 @@ const Vault: React.FC<{
       queryClient.invalidateQueries({ queryKey: ['mediaFavorites'] });
       for (const mediaId of exifPollingMediaIds) {
         queryClient.invalidateQueries({ queryKey: ['mediaExifStatus', mediaId] });
+        queryClient.invalidateQueries({ queryKey: ['mediaFaceDetectionStatus', mediaId] });
       }
     }, 3000);
     return () => window.clearInterval(timer);
@@ -593,7 +609,11 @@ const Vault: React.FC<{
     resetUploadState();
     setSelectedMedia(createdMedia);
     if (createdMedia.type === MediaType.PHOTO) {
-      startExifPollingForMedia(createdMedia.id, createdMedia.exifStatus);
+      startExifPollingForMedia(
+        createdMedia.id,
+        createdMedia.exifStatus,
+        createdMedia.faceDetectionStatus,
+      );
     }
   };
 
@@ -778,7 +798,11 @@ const Vault: React.FC<{
         </div>
       </div>
 
-      {(exifProgressSummary.active > 0 || exifProgressSummary.awaitingConfirmation > 0 || exifProgressSummary.failed > 0) && (
+      {(exifProgressSummary.active > 0 ||
+        exifProgressSummary.awaitingConfirmation > 0 ||
+        exifProgressSummary.failed > 0 ||
+        exifProgressSummary.faceProcessing > 0 ||
+        exifProgressSummary.faceFailed > 0) && (
         <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/70 p-3 text-xs text-slate-600 dark:text-slate-300 flex flex-wrap items-center gap-3">
           {exifProgressSummary.active > 0 && (
             <span className="inline-flex items-center gap-2 rounded-full bg-sky-50 dark:bg-sky-900/30 px-3 py-1 font-semibold text-sky-700 dark:text-sky-300">
@@ -793,6 +817,16 @@ const Vault: React.FC<{
           {exifProgressSummary.failed > 0 && (
             <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 dark:bg-rose-900/30 px-3 py-1 font-semibold text-rose-700 dark:text-rose-300">
               {exifProgressSummary.failed} EXIF extraction failed
+            </span>
+          )}
+          {exifProgressSummary.faceProcessing > 0 && (
+            <span className="inline-flex items-center gap-2 rounded-full bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 font-semibold text-indigo-700 dark:text-indigo-300">
+              {exifProgressSummary.faceProcessing} photo{exifProgressSummary.faceProcessing === 1 ? '' : 's'} processing faces
+            </span>
+          )}
+          {exifProgressSummary.faceFailed > 0 && (
+            <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 dark:bg-rose-900/30 px-3 py-1 font-semibold text-rose-700 dark:text-rose-300">
+              {exifProgressSummary.faceFailed} face detection failed
             </span>
           )}
         </div>
@@ -833,7 +867,7 @@ const Vault: React.FC<{
       </div>
 
       {isSelectionMode && bulkSelection.size > 0 && canDelete && (
-        <div className="bg-white dark:bg-slate-900 border-2 border-primary rounded-[1.5rem] p-4 flex flex-col sm:flex-row items-center justify-between shadow-xl animate-in slide-in-from-top-4 gap-3">
+        <div className="bg-white dark:bg-slate-900 border-2 border-primary rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between shadow-xl animate-in slide-in-from-top-4 gap-3">
           <span className="text-[10px] font-black text-primary uppercase tracking-widest sm:pl-2">
             {bulkSelection.size} {t.vault.actions.artifactSelected}
           </span>
@@ -1086,7 +1120,11 @@ const Vault: React.FC<{
               onSuccess: (updatedMedia) => {
                 syncMediaRecord(updatedMedia);
                 if (updatedMedia.type === MediaType.PHOTO) {
-                  startExifPollingForMedia(updatedMedia.id, updatedMedia.exifStatus);
+                  startExifPollingForMedia(
+                    updatedMedia.id,
+                    updatedMedia.exifStatus,
+                    updatedMedia.faceDetectionStatus,
+                  );
                 }
                 onSuccess?.(updatedMedia);
               },

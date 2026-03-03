@@ -17,12 +17,15 @@ import { useAuthStore } from '../stores/authStore';
 import { UserRole } from '../types';
 import { useMemo } from 'react';
 import { useVault } from '../hooks/useVaults';
+import PresignedImage from '../components/ui/PresignedImage';
+import { useSignedUrlRecovery } from '../hooks/useSignedUrlRecovery';
 
 const Dashboard: React.FC = () => {
   const { t } = useTranslation();
   const { currentUser, activeVaultId } = useAuthStore();
   const { data: mediaData, isLoading: isLoadingMedia } = useMedia();
   const { data: activeVault, isLoading: isLoadingVault } = useVault(activeVaultId || '');
+  const recoverSignedUrls = useSignedUrlRecovery();
   const navigate = useNavigate();
   
   const handleAddMemory = () => {
@@ -151,7 +154,12 @@ const Dashboard: React.FC = () => {
                   className="group cursor-pointer"
                 >
                   <div className="relative aspect-[3/4] rounded-xl sm:rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all border border-slate-200 dark:border-slate-800">
-                    <img src={item.thumbnailUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt={item.title} />
+                    <PresignedImage
+                      src={item.thumbnailUrl}
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                      alt={item.title}
+                      onRecover={() => recoverSignedUrls(item.id)}
+                    />
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent opacity-0 sm:group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3 sm:p-4">
                       <p className="text-white text-[10px] sm:text-xs font-bold truncate">{item.title}</p>
                       <p className="text-white/60 text-[8px] sm:text-[10px]">{new Date(item.dateTaken).getFullYear()}</p>

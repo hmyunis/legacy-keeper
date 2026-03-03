@@ -9,12 +9,22 @@ import {
 import { toast } from 'sonner';
 import { useAuthStore } from '../stores/authStore';
 import { getApiErrorMessage } from '../services/httpError';
-import { MediaExifStatus, type MediaItem, type MediaExifWorkflowStatus } from '../types';
+import {
+  MediaExifStatus,
+  MediaFaceDetectionStatus,
+  type MediaItem,
+  type MediaExifWorkflowStatus,
+  type MediaFaceDetectionWorkflowStatus,
+} from '../types';
 
 const DEFAULT_PAGE_SIZE = 20;
 const EXIF_ACTIVE_STATUSES = new Set<MediaExifStatus>([
   MediaExifStatus.QUEUED,
   MediaExifStatus.PROCESSING,
+]);
+const FACE_DETECTION_ACTIVE_STATUSES = new Set<MediaFaceDetectionStatus>([
+  MediaFaceDetectionStatus.QUEUED,
+  MediaFaceDetectionStatus.PROCESSING,
 ]);
 
 interface QueryOptions {
@@ -164,6 +174,12 @@ export const useUploadMedia = () => {
       ) {
         toast.info('Photo EXIF extraction started in the background. You can confirm suggested date/GPS once ready.');
       }
+      if (
+        createdMedia.faceDetectionStatus === MediaFaceDetectionStatus.QUEUED ||
+        createdMedia.faceDetectionStatus === MediaFaceDetectionStatus.PROCESSING
+      ) {
+        toast.info('Face detection started in the background. Review each detected face before confirming a person.');
+      }
     },
     onError: (error) => {
       toast.error('Failed to preserve memory', {
@@ -187,6 +203,24 @@ export const useMediaExifStatus = (mediaId: string, options?: QueryOptions) => {
         return query.state.dataUpdateCount < 10 ? 3000 : false;
       }
       return status && EXIF_ACTIVE_STATUSES.has(status) ? 3000 : false;
+    },
+  });
+};
+
+export const useMediaFaceDetectionStatus = (mediaId: string, options?: QueryOptions) => {
+  const enabled = options?.enabled ?? true;
+  const poll = options?.poll ?? false;
+  return useQuery({
+    queryKey: ['mediaFaceDetectionStatus', mediaId],
+    queryFn: () => mediaApi.getFaceDetectionStatus(mediaId),
+    enabled: Boolean(mediaId) && enabled,
+    refetchInterval: (query) => {
+      if (!poll) return false;
+      const status = (query.state.data as MediaFaceDetectionWorkflowStatus | undefined)?.status;
+      if (status === MediaFaceDetectionStatus.NOT_STARTED) {
+        return query.state.dataUpdateCount < 10 ? 3000 : false;
+      }
+      return status && FACE_DETECTION_ACTIVE_STATUSES.has(status) ? 3000 : false;
     },
   });
 };

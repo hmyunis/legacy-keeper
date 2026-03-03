@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { Maximize, MapPin, Share2, ArrowUpRight } from 'lucide-react';
 import { MediaItem } from '../../types';
+import PresignedImage from '../ui/PresignedImage';
+import { useSignedUrlRecovery } from '../../hooks/useSignedUrlRecovery';
 
 interface TimelineCardProps {
   item: MediaItem;
@@ -25,6 +27,7 @@ const getInitials = (name: string) => {
 };
 
 const TimelineCard: React.FC<TimelineCardProps> = ({ item, isEven, onSelect }) => {
+  const recoverSignedUrls = useSignedUrlRecovery();
   const uploaderName = item.uploaderName?.trim() || 'Vault Member';
   const peopleDeck = useMemo(() => {
     const entries: DeckPerson[] = [];
@@ -67,7 +70,12 @@ const TimelineCard: React.FC<TimelineCardProps> = ({ item, isEven, onSelect }) =
       <div className={`flex w-full pl-10 sm:pl-16 md:w-[calc(50%-2rem)] md:pl-0 ${isEven ? 'justify-start' : 'justify-end'}`}>
         <div className="group glow-card w-full overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-sm transition-all duration-500 hover:shadow-2xl dark:border-slate-800 dark:bg-slate-900/60 sm:rounded-4xl lg:rounded-[2.5rem]">
           <div className="relative aspect-video overflow-hidden">
-            <img src={item.thumbnailUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-2000" alt={item.title} />
+            <PresignedImage
+              src={item.thumbnailUrl}
+              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-2000"
+              alt={item.title}
+              onRecover={() => recoverSignedUrls(item.id)}
+            />
             <div className="absolute inset-0 flex items-end bg-linear-to-t from-black/60 via-transparent to-transparent p-4 opacity-0 transition-opacity duration-500 group-hover:opacity-100 sm:p-6 md:p-8">
                <button 
                 onClick={onSelect}
@@ -125,7 +133,12 @@ const TimelineCard: React.FC<TimelineCardProps> = ({ item, isEven, onSelect }) =
                           }`}
                         >
                           {person.photoUrl ? (
-                            <img src={person.photoUrl} alt={person.name} className="h-full w-full object-cover" />
+                            <PresignedImage
+                              src={person.photoUrl}
+                              alt={person.name}
+                              className="h-full w-full object-cover"
+                              onRecover={() => recoverSignedUrls(item.id)}
+                            />
                           ) : (
                             <span className="text-[10px] font-black uppercase tracking-tight">{getInitials(person.name)}</span>
                           )}

@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from vaults.models import Membership
+from core.storage_urls import build_storage_file_url
 
 User = get_user_model()
 
@@ -19,7 +20,7 @@ def serialize_user_payload(user):
         'email': user.email,
         'full_name': user.full_name,
         'bio': user.bio,
-        'avatar': user.avatar.url if user.avatar else None,
+        'avatar': build_storage_file_url(user.avatar),
         'role': primary_membership.role if primary_membership else None,
         'active_vault_id': str(primary_membership.vault_id) if primary_membership else None,
     }

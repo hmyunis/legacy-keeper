@@ -20,6 +20,7 @@ from .models import MediaAttachment, MediaFavorite, MediaItem
 from .serializers import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, MediaItemSerializer, resolve_attachment_file_type
 from .file_processing import process_uploaded_file_for_storage
 from .services import AIProcessingService
+from core.storage_urls import build_storage_path_url
 from vaults.models import FamilyVault, Membership
 from vaults.permissions import IsVaultMember
 
@@ -369,6 +370,97 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             'warnings': payload.get('warnings') if isinstance(payload.get('warnings'), list) else [],
         }
 
+    def _normalize_face_coordinates(self, raw_value):
+        if not isinstance(raw_value, dict):
+            return None
+        try:
+            x = float(raw_value.get('x'))
+            y = float(raw_value.get('y'))
+            w = float(raw_value.get('w'))
+            h = float(raw_value.get('h'))
+        except (TypeError, ValueError):
+            return None
+        if w <= 0 or h <= 0:
+            return None
+        if x < 0 or y < 0:
+            return None
+        if x + w > 1.000001 or y + h > 1.000001:
+            return None
+        return {
+            'x': round(x, 6),
+            'y': round(y, 6),
+            'w': round(w, 6),
+            'h': round(h, 6),
+        }
+
+    def _resolve_face_thumbnail_url(self, thumbnail_path):
+        return build_storage_path_url(thumbnail_path, request=self.request)
+
+    def _normalize_detected_faces(self, media_item):
+        payload = media_item.face_detection_data if isinstance(media_item.face_detection_data, dict) else {}
+        raw_faces = payload.get('faces') if isinstance(payload.get('faces'), list) else []
+
+        tags_by_face_id = {}
+        for media_tag in media_item.tags.all():
+            detected_face_id = str(getattr(media_tag, 'detected_face_id', '') or '').strip()
+            if not detected_face_id:
+                continue
+            tags_by_face_id.setdefault(detected_face_id, media_tag)
+
+        normalized_faces = []
+        for raw_face in raw_faces:
+            if not isinstance(raw_face, dict):
+                continue
+            face_id = str(raw_face.get('face_id') or raw_face.get('faceId') or '').strip()
+            file_id = str(raw_face.get('file_id') or raw_face.get('fileId') or '').strip()
+            if not face_id or not file_id:
+                continue
+
+            coordinates = self._normalize_face_coordinates(raw_face.get('face_coordinates'))
+            if not coordinates:
+                continue
+
+            try:
+                confidence = float(raw_face.get('confidence') or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+
+            matched_tag = tags_by_face_id.get(face_id)
+            person = getattr(matched_tag, 'person', None) if matched_tag else None
+            normalized_faces.append(
+                {
+                    'id': face_id,
+                    'file_id': file_id,
+                    'confidence': round(max(0.0, min(1.0, confidence)), 3),
+                    'thumbnail_url': self._resolve_face_thumbnail_url(
+                        raw_face.get('thumbnail_path') or raw_face.get('thumbnailPath')
+                    ),
+                    'bounding_box': {
+                        'x': coordinates['x'],
+                        'y': coordinates['y'],
+                        'width': coordinates['w'],
+                        'height': coordinates['h'],
+                    },
+                    'person_id': str(person.id) if person else None,
+                    'name': person.full_name if person else '',
+                }
+            )
+        return normalized_faces
+
+    def _serialize_face_detection_status(self, media_item):
+        payload = media_item.face_detection_data if isinstance(media_item.face_detection_data, dict) else {}
+        faces = self._normalize_detected_faces(media_item)
+        return {
+            'media_id': str(media_item.id),
+            'status': media_item.face_detection_status,
+            'error': media_item.face_detection_error or '',
+            'task_id': media_item.face_detection_task_id or '',
+            'processed_at': media_item.face_detection_processed_at,
+            'face_count': len(faces),
+            'faces': faces,
+            'warnings': payload.get('warnings') if isinstance(payload.get('warnings'), list) else [],
+        }
+
     def _resolve_ordering(self):
         sort_alias = (self.request.query_params.get('sort') or '').strip().lower()
         sort_to_ordering = {
@@ -612,7 +704,6 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         update_payload = self._extract_update_payload(request)
         serializer = self.get_serializer(media_item, data=update_payload, partial=partial)
         serializer.is_valid(raise_exception=True)
-        has_attribute_updates = bool(serializer.validated_data)
         has_file_mutations = bool(remove_file_ids or new_files)
         self.perform_update(serializer)
 
@@ -621,7 +712,8 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 updated_media = self._apply_file_mutations(updated_media, remove_file_ids, new_files)
 
-        should_enqueue_processing = has_file_mutations or has_attribute_updates
+        # EXIF/face processing is only needed when media files change.
+        should_enqueue_processing = has_file_mutations
         if should_enqueue_processing:
             AIProcessingService().enqueue_media_processing(updated_media)
             updated_media.refresh_from_db()
@@ -759,6 +851,11 @@ class MediaItemViewSet(viewsets.ModelViewSet):
     def exif_status(self, request, pk=None):
         media_item = self.get_object()
         return Response(self._serialize_exif_status(media_item))
+
+    @decorators.action(detail=True, methods=['get'], url_path='face-detection-status')
+    def face_detection_status(self, request, pk=None):
+        media_item = self.get_object()
+        return Response(self._serialize_face_detection_status(media_item))
 
     @decorators.action(detail=True, methods=['post'], url_path='exif-confirm')
     def exif_confirm(self, request, pk=None):

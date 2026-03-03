@@ -18,7 +18,7 @@ This starts:
 - `postgres`
 - `minio`
 
-### Check Background EXIF Stack
+### Check Background AI Stack
 
 ```bash
 docker compose logs -f backend media_worker redis
@@ -50,23 +50,25 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-5. Start Redis + Celery worker (required for EXIF background processing):
+5. Start Redis + Celery worker (required for EXIF + face detection background processing):
 
 ```bash
 redis-server
 celery -A config worker -l info -Q default,media
 ```
 
-## EXIF Workflow (Redis + Celery)
+## AI Workflow (Redis + Celery)
 
 When a memory is created or edited:
 
 1. Backend enqueues `media.tasks.extract_media_exif_task` to queue `media`.
-2. Worker extracts EXIF from all attached files (not only primary file).
-3. Candidate metadata is stored and exposed via API.
-4. Uploader confirms or rejects extracted metadata.
+2. Backend enqueues `media.tasks.detect_media_faces_task` to queue `media`.
+3. Worker extracts EXIF from all attached files (not only primary file).
+4. Worker detects faces, stores normalized bounding boxes, and generates face thumbnails.
+5. Uploader confirms or rejects extracted EXIF metadata.
+6. Family members confirm each detected face by linking it to a `PersonProfile`.
 
-Status lifecycle:
+EXIF status lifecycle:
 
 - `NOT_STARTED`
 - `QUEUED`
@@ -80,6 +82,20 @@ Relevant API actions:
 
 - `GET /api/media/{id}/exif-status/`
 - `POST /api/media/{id}/exif-confirm/`
+
+Face detection status lifecycle:
+
+- `NOT_STARTED`
+- `QUEUED`
+- `PROCESSING`
+- `COMPLETED`
+- `NOT_AVAILABLE`
+- `FAILED`
+
+Relevant API actions:
+
+- `GET /api/media/{id}/face-detection-status/`
+- `POST /api/genealogy/tags/` (manual face confirmation by linking profile)
 
 ## API Documentation
 
@@ -100,6 +116,12 @@ Important Redis/Celery variables:
 - `CELERY_TASK_SOFT_TIME_LIMIT`
 - `CELERY_RESULT_EXPIRES`
 - `CELERY_VISIBILITY_TIMEOUT`
+
+Important storage URL variables (MinIO/S3):
+
+- `AWS_USE_PRESIGNED_URLS` (default: `True`)
+- `AWS_PRESIGNED_URL_EXPIRE` (default: `900` seconds)
+- `AWS_S3_PRESIGNED_ENDPOINT_URL` (public endpoint used in signed links, e.g. `http://localhost:9000`)
 
 ## VAPID Keys (Push Notifications)
 

@@ -177,10 +177,10 @@ const UploadModal: React.FC<UploadModalProps> = ({
           )}
           <div className="rounded-2xl border border-sky-200/80 bg-sky-50/70 dark:border-sky-900/40 dark:bg-sky-950/20 px-4 py-3">
             <p className="text-[11px] font-bold uppercase tracking-wider text-sky-700 dark:text-sky-300">
-              Photo EXIF workflow
+              Photo AI workflow
             </p>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              For photos, date taken and GPS are extracted in the background after upload. The uploader can review and confirm before applying these values.
+              For photos, EXIF and face detection run in the background after upload. The uploader confirms EXIF, and family members can manually confirm each detected face before linking a profile.
             </p>
           </div>
           <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 transition-opacity ${isUploading ? 'opacity-30 pointer-events-none' : ''}`}>

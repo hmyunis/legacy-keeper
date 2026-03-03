@@ -75,6 +75,8 @@ class MediaTag(TimeStampedModel):
     # Store Face Coordinates: {x: 0.1, y: 0.2, w: 0.1, h: 0.1} (Normalized 0-1)
     # If null, it's just a general tag (person is in the photo, location unknown)
     face_coordinates = models.JSONField(null=True, blank=True)
+    detected_face_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    tagged_file_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
     
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
 

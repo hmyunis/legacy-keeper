@@ -4,6 +4,7 @@ import type {
   ApiMembership, 
   ApiMediaTag,
   CreateMediaTagRequest,
+  UpdateMediaTagRequest,
   InviteMemberRequest,
   JoinVaultRequest,
   UpdateMemberRoleRequest,
@@ -67,6 +68,10 @@ const mapApiTagToMediaTag = (tag: ApiMediaTag): MediaTag => ({
   personId: String(tag.person),
   personName: tag.personName,
   faceCoordinates: tag.faceCoordinates || null,
+  detectedFaceId:
+    String((tag as any).detectedFaceId ?? (tag as any).detected_face_id ?? '').trim() || undefined,
+  taggedFileId:
+    String((tag as any).taggedFileId ?? (tag as any).tagged_file_id ?? '').trim() || undefined,
 });
 
 const unwrapList = <T,>(payload: T[] | PaginatedApiResponse<T> | null | undefined): T[] => {
@@ -326,6 +331,11 @@ export const mediaTagsApi = {
 
   createTag: async (data: CreateMediaTagRequest): Promise<MediaTag> => {
     const response = await axiosClient.post<ApiMediaTag>(TAGS_ENDPOINT, data);
+    return mapApiTagToMediaTag(response.data);
+  },
+
+  updateTag: async (tagId: string, data: UpdateMediaTagRequest): Promise<MediaTag> => {
+    const response = await axiosClient.patch<ApiMediaTag>(`${TAGS_ENDPOINT}${tagId}/`, data);
     return mapApiTagToMediaTag(response.data);
   },
 

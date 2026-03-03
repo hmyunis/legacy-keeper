@@ -29,6 +29,15 @@ export enum MediaExifStatus {
   FAILED = 'FAILED',
 }
 
+export enum MediaFaceDetectionStatus {
+  NOT_STARTED = 'NOT_STARTED',
+  QUEUED = 'QUEUED',
+  PROCESSING = 'PROCESSING',
+  COMPLETED = 'COMPLETED',
+  NOT_AVAILABLE = 'NOT_AVAILABLE',
+  FAILED = 'FAILED',
+}
+
 export enum MediaType {
   PHOTO = 'PHOTO',
   DOCUMENT = 'DOCUMENT',
@@ -92,12 +101,21 @@ export interface FamilyMember extends User {
   lastActive?: string;
 }
 
+export interface FaceBoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface DetectedFace {
   id: string;
+  fileId: string;
   personId?: string;
   name?: string;
   confidence: number;
-  thumbnailUrl: string;
+  thumbnailUrl?: string;
+  boundingBox: FaceBoundingBox;
 }
 
 export type MediaFileType = 'PHOTO' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
@@ -140,6 +158,9 @@ export interface MediaItem {
   exifError?: string;
   exifProcessedAt?: string;
   exifConfirmedAt?: string;
+  faceDetectionStatus: MediaFaceDetectionStatus;
+  faceDetectionError?: string;
+  faceDetectionProcessedAt?: string;
   location?: string;
   metadata?: Record<string, unknown>;
   files: MediaFile[];
@@ -174,6 +195,8 @@ export interface MediaTag {
   personId: string;
   personName: string;
   faceCoordinates?: Record<string, number> | null;
+  detectedFaceId?: string;
+  taggedFileId?: string;
 }
 
 export interface MediaExifCandidate {
@@ -199,6 +222,17 @@ export interface MediaExifWorkflowStatus {
   candidate?: MediaExifCandidate;
   candidates?: MediaExifCandidate[];
   selectedFileId?: string;
+  warnings?: string[];
+}
+
+export interface MediaFaceDetectionWorkflowStatus {
+  mediaId: string;
+  status: MediaFaceDetectionStatus;
+  error?: string;
+  taskId?: string;
+  processedAt?: string;
+  faceCount: number;
+  faces: DetectedFace[];
   warnings?: string[];
 }
 

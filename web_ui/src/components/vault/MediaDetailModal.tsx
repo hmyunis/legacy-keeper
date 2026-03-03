@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Calendar, Plus, Trash2, Share2, Heart, MapPin, Download, Loader2, FileText, Music2, Film, Pencil, Save, Lock, Users, CheckCircle2 } from 'lucide-react';
-import { MediaExifStatus, MediaItem, PersonProfile } from '../../types';
+import { MediaExifStatus, MediaFaceDetectionStatus, MediaItem, PersonProfile } from '../../types';
 import { useProfiles } from '../../hooks/useProfiles';
 import { useAuthStore } from '../../stores/authStore';
 import { hasPermission } from '@/config/permissions';
-import { useCreateMediaTag, useDeleteMediaTag, useMediaTags, useDownloadMedia } from '../../hooks/useMediaTags';
-import { useConfirmMediaExif, useMediaExifStatus } from '../../hooks/useMedia';
+import { useCreateMediaTag, useDeleteMediaTag, useMediaTags, useDownloadMedia, useUpdateMediaTag } from '../../hooks/useMediaTags';
+import { useConfirmMediaExif, useMediaExifStatus, useMediaFaceDetectionStatus } from '../../hooks/useMedia';
 import { toast } from 'sonner';
 import DatePicker from '../DatePicker';
 import type { UpdateMediaMetadataPayload } from '../../services/mediaApi';
+import PresignedImage from '../ui/PresignedImage';
+import { useSignedUrlRecovery } from '../../hooks/useSignedUrlRecovery';
 
 interface MediaDetailModalProps {
   media: MediaItem;
@@ -40,7 +42,22 @@ interface EditDraft {
   dateTaken?: Date;
 }
 
+interface NormalizedRectangle {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface ManualAnnotation {
+  tagId: string;
+  personId: string;
+  personName: string;
+  coordinates: NormalizedRectangle;
+}
+
 const MAX_MEMORY_FILES = 10;
+const MIN_MANUAL_BOX_SIZE = 0.015;
 const EXIF_STATUS_LABELS: Record<MediaExifStatus, string> = {
   [MediaExifStatus.NOT_STARTED]: 'Not started',
   [MediaExifStatus.QUEUED]: 'Queued',
@@ -50,6 +67,46 @@ const EXIF_STATUS_LABELS: Record<MediaExifStatus, string> = {
   [MediaExifStatus.REJECTED]: 'Rejected',
   [MediaExifStatus.NOT_AVAILABLE]: 'No EXIF found',
   [MediaExifStatus.FAILED]: 'Failed',
+};
+const FACE_STATUS_LABELS: Record<MediaFaceDetectionStatus, string> = {
+  [MediaFaceDetectionStatus.NOT_STARTED]: 'Not started',
+  [MediaFaceDetectionStatus.QUEUED]: 'Queued',
+  [MediaFaceDetectionStatus.PROCESSING]: 'Processing',
+  [MediaFaceDetectionStatus.COMPLETED]: 'Completed',
+  [MediaFaceDetectionStatus.NOT_AVAILABLE]: 'No faces detected',
+  [MediaFaceDetectionStatus.FAILED]: 'Failed',
+};
+
+const toFaceCoordinatesPayload = (face: NonNullable<MediaItem['detectedFaces']>[number]) => ({
+  x: face.boundingBox.x,
+  y: face.boundingBox.y,
+  w: face.boundingBox.width,
+  h: face.boundingBox.height,
+});
+
+const clampNormalizedValue = (value: number) => Math.max(0, Math.min(1, value));
+
+const normalizeFaceCoordinates = (value?: Record<string, number> | null): NormalizedRectangle | null => {
+  if (!value || typeof value !== 'object') return null;
+  const width = Number(value.w ?? value.width);
+  const height = Number(value.h ?? value.height);
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+    return null;
+  }
+  if (width <= 0 || height <= 0) return null;
+  const clampedX = clampNormalizedValue(x);
+  const clampedY = clampNormalizedValue(y);
+  const clampedWidth = Math.max(0, Math.min(clampNormalizedValue(width), 1 - clampedX));
+  const clampedHeight = Math.max(0, Math.min(clampNormalizedValue(height), 1 - clampedY));
+  if (clampedWidth <= 0 || clampedHeight <= 0) return null;
+  return {
+    x: clampedX,
+    y: clampedY,
+    w: clampedWidth,
+    h: clampedHeight,
+  };
 };
 
 const toEditDraft = (media: MediaItem): EditDraft => {
@@ -92,6 +149,14 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   const [pendingNewFiles, setPendingNewFiles] = useState<File[]>([]);
   const [selectedExifCandidateFileId, setSelectedExifCandidateFileId] = useState<string>('');
   const [exifDecision, setExifDecision] = useState({ applyDateTaken: true, applyGps: true });
+  const [isManualDrawMode, setIsManualDrawMode] = useState(false);
+  const [manualDrawStartPoint, setManualDrawStartPoint] = useState<{ x: number; y: number } | null>(null);
+  const [draftManualRectangle, setDraftManualRectangle] = useState<NormalizedRectangle | null>(null);
+  const [pendingManualAnnotation, setPendingManualAnnotation] = useState<{
+    coordinates: NormalizedRectangle;
+    fileId: string;
+    tagId?: string;
+  } | null>(null);
   const editFileInputRef = useRef<HTMLInputElement>(null);
   const { currentUser } = useAuthStore();
 
@@ -103,14 +168,20 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
 
   const { data: mediaTags } = useMediaTags(media.id);
   const createMediaTagMutation = useCreateMediaTag();
+  const updateMediaTagMutation = useUpdateMediaTag();
   const deleteMediaTagMutation = useDeleteMediaTag();
   const downloadMediaMutation = useDownloadMedia();
+  const recoverSignedUrls = useSignedUrlRecovery();
   const confirmMediaExifMutation = useConfirmMediaExif();
   const { data: exifStatusData, isFetching: isFetchingExifStatus } = useMediaExifStatus(media.id, {
     enabled:
       media.type === 'PHOTO' ||
       (media.exifStatus !== MediaExifStatus.NOT_STARTED && media.exifStatus !== MediaExifStatus.NOT_AVAILABLE),
     poll: shouldPollExif,
+  });
+  const { data: faceStatusData, isFetching: isFetchingFaceStatus } = useMediaFaceDetectionStatus(media.id, {
+    enabled: media.type === 'PHOTO',
+    poll: true,
   });
 
   const canEdit = currentUser ? hasPermission(currentUser.role, 'EDIT_MEDIA') : false;
@@ -148,6 +219,13 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   const exifIsInProgress =
     effectiveExifStatus === MediaExifStatus.QUEUED || effectiveExifStatus === MediaExifStatus.PROCESSING;
   const exifWarnings = exifStatusData?.warnings || [];
+  const effectiveFaceStatus =
+    faceStatusData?.status || media.faceDetectionStatus || MediaFaceDetectionStatus.NOT_STARTED;
+  const effectiveFaceError = (faceStatusData?.error || media.faceDetectionError || '').trim();
+  const faceWarnings = faceStatusData?.warnings || [];
+  const isFaceDetectionInProgress =
+    effectiveFaceStatus === MediaFaceDetectionStatus.QUEUED ||
+    effectiveFaceStatus === MediaFaceDetectionStatus.PROCESSING;
   const exifSourceName = useMemo(() => {
     const metadata = media.metadata && typeof media.metadata === 'object' ? media.metadata : {};
     const exifSource = (metadata as Record<string, unknown>).exifSource;
@@ -198,7 +276,16 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     setPendingRemovedFileIds(new Set());
     setPendingNewFiles([]);
     setSelectedExifCandidateFileId('');
+    setIsManualDrawMode(false);
+    setManualDrawStartPoint(null);
+    setDraftManualRectangle(null);
+    setPendingManualAnnotation(null);
   }, [media.id, media.detectedFaces]);
+
+  useEffect(() => {
+    if (!faceStatusData?.faces) return;
+    setLocalFaces(faceStatusData.faces);
+  }, [faceStatusData?.faces, media.id]);
 
   useEffect(() => {
     if (!exifCandidates.length) {
@@ -250,6 +337,59 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     }
     return candidateFiles.find((file) => file.isPrimary) || candidateFiles[0];
   }, [activeExistingFiles, activeFileId, isEditMode, memoryFiles]);
+
+  const activeFileFaces = useMemo(() => {
+    if (!activeFile || activeFile.fileType !== 'PHOTO') return [];
+    return (localFaces || [])
+      .filter((face) => {
+        if (face.fileId) {
+          return face.fileId === activeFile.id;
+        }
+        return Boolean(activeFile.isPrimary);
+      })
+      .sort((first, second) => {
+        const yDelta = first.boundingBox.y - second.boundingBox.y;
+        if (Math.abs(yDelta) > 0.0001) return yDelta;
+        return first.boundingBox.x - second.boundingBox.x;
+      });
+  }, [activeFile, localFaces]);
+
+  const manualAnnotations = useMemo<ManualAnnotation[]>(() => {
+    if (!activeFile || activeFile.fileType !== 'PHOTO') return [];
+    return (mediaTags || [])
+      .map((tag) => {
+        const detectedFaceId = String(tag.detectedFaceId || '').trim();
+        if (detectedFaceId) return null;
+        const normalizedCoordinates = normalizeFaceCoordinates(tag.faceCoordinates || null);
+        if (!normalizedCoordinates) return null;
+        const taggedFileId = String(tag.taggedFileId || '').trim();
+        if (taggedFileId) {
+          if (taggedFileId !== activeFile.id) return null;
+        } else if (!activeFile.isPrimary) {
+          return null;
+        }
+        return {
+          tagId: tag.id,
+          personId: tag.personId,
+          personName: tag.personName,
+          coordinates: normalizedCoordinates,
+        };
+      })
+      .filter((tag): tag is ManualAnnotation => Boolean(tag))
+      .sort((first, second) => {
+        const yDelta = first.coordinates.y - second.coordinates.y;
+        if (Math.abs(yDelta) > 0.0001) return yDelta;
+        return first.coordinates.x - second.coordinates.x;
+      });
+  }, [activeFile, mediaTags]);
+
+  const pendingManualLinkedPersonId = useMemo(() => {
+    if (!pendingManualAnnotation?.tagId) return '';
+    const matchedAnnotation = manualAnnotations.find((annotation) => annotation.tagId === pendingManualAnnotation.tagId);
+    return matchedAnnotation?.personId || '';
+  }, [manualAnnotations, pendingManualAnnotation]);
+
+  const isManualAnnotationSaving = createMediaTagMutation.isPending || updateMediaTagMutation.isPending;
 
   useEffect(() => {
     const candidateFiles = isEditMode ? activeExistingFiles : memoryFiles;
@@ -311,6 +451,25 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     const next = activeExistingFiles.find((file) => file.isPrimary) || activeExistingFiles[0];
     setActiveFileId(next?.id || null);
   }, [activeExistingFiles, activeFileId, isEditMode]);
+
+  useEffect(() => {
+    setManualDrawStartPoint(null);
+    setDraftManualRectangle(null);
+    setPendingManualAnnotation((current) => {
+      if (!current) return null;
+      if (!activeFile || activeFile.fileType !== 'PHOTO') return null;
+      return current.fileId === activeFile.id ? current : null;
+    });
+    if (!activeFile || activeFile.fileType !== 'PHOTO') {
+      setIsManualDrawMode(false);
+    }
+  }, [activeFile?.fileType, activeFile?.id]);
+
+  useEffect(() => {
+    if (!pendingManualAnnotation?.tagId) return;
+    if (manualAnnotations.some((annotation) => annotation.tagId === pendingManualAnnotation.tagId)) return;
+    setPendingManualAnnotation(null);
+  }, [manualAnnotations, pendingManualAnnotation]);
 
 
   const handleDownload = () => {
@@ -378,22 +537,145 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     }
   };
 
-  const linkProfileToFace = (faceId: string, profile: PersonProfile) => {
-    if (!canEdit) return;
+  const buildRectangleFromPoints = (
+    start: { x: number; y: number },
+    end: { x: number; y: number }
+  ): NormalizedRectangle => {
+    const left = clampNormalizedValue(Math.min(start.x, end.x));
+    const top = clampNormalizedValue(Math.min(start.y, end.y));
+    const right = clampNormalizedValue(Math.max(start.x, end.x));
+    const bottom = clampNormalizedValue(Math.max(start.y, end.y));
+    return {
+      x: left,
+      y: top,
+      w: Math.max(0, right - left),
+      h: Math.max(0, bottom - top),
+    };
+  };
 
-    if (linkedPersonIds.has(profile.id)) {
-      setLocalFaces((prev) =>
-        prev.map((face) => (face.id === faceId ? { ...face, personId: profile.id, name: profile.fullName } : face))
-      );
-      setTaggingFaceId(null);
-      toast.info('Relative already linked to this media');
+  const getRelativePoint = (event: React.MouseEvent<HTMLDivElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return null;
+    return {
+      x: clampNormalizedValue((event.clientX - bounds.left) / bounds.width),
+      y: clampNormalizedValue((event.clientY - bounds.top) / bounds.height),
+    };
+  };
+
+  const handlePhotoOverlayMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!canEdit || !isManualDrawMode) return;
+    if (!activeFile || activeFile.fileType !== 'PHOTO') return;
+    if (pendingManualAnnotation) return;
+    if (isManualAnnotationSaving) return;
+    if (event.button !== 0) return;
+
+    const point = getRelativePoint(event);
+    if (!point) return;
+    event.preventDefault();
+    setTaggingFaceId(null);
+    setManualDrawStartPoint(point);
+    setDraftManualRectangle({ x: point.x, y: point.y, w: 0, h: 0 });
+  };
+
+  const handlePhotoOverlayMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!manualDrawStartPoint) return;
+    const point = getRelativePoint(event);
+    if (!point) return;
+    setDraftManualRectangle(buildRectangleFromPoints(manualDrawStartPoint, point));
+  };
+
+  const handlePhotoOverlayMouseUp = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!manualDrawStartPoint || !activeFile || activeFile.fileType !== 'PHOTO') return;
+    const point = getRelativePoint(event);
+    if (!point) {
+      setManualDrawStartPoint(null);
+      setDraftManualRectangle(null);
       return;
     }
+    const finalizedRectangle = buildRectangleFromPoints(manualDrawStartPoint, point);
+    setManualDrawStartPoint(null);
+    setDraftManualRectangle(null);
+    setIsManualDrawMode(false);
+
+    if (finalizedRectangle.w < MIN_MANUAL_BOX_SIZE || finalizedRectangle.h < MIN_MANUAL_BOX_SIZE) {
+      toast.error('Selection is too small. Draw a larger box to tag a person.');
+      return;
+    }
+    setPendingManualAnnotation({
+      coordinates: finalizedRectangle,
+      fileId: activeFile.id,
+    });
+  };
+
+  const handlePhotoOverlayMouseLeave = () => {
+    if (!manualDrawStartPoint) return;
+    setManualDrawStartPoint(null);
+    setDraftManualRectangle(null);
+  };
+
+  const startManualAnnotation = () => {
+    if (!canEdit || !activeFile || activeFile.fileType !== 'PHOTO') return;
+    setPendingManualAnnotation(null);
+    setTaggingFaceId(null);
+    setIsManualDrawMode((current) => !current);
+  };
+
+  const beginManualAnnotationEdit = (annotation: ManualAnnotation) => {
+    if (!canEdit || !activeFile || activeFile.fileType !== 'PHOTO') return;
+    setIsManualDrawMode(false);
+    setTaggingFaceId(null);
+    setPendingManualAnnotation({
+      coordinates: annotation.coordinates,
+      fileId: activeFile.id,
+      tagId: annotation.tagId,
+    });
+  };
+
+  const cancelPendingManualAnnotation = () => {
+    setPendingManualAnnotation(null);
+    setManualDrawStartPoint(null);
+    setDraftManualRectangle(null);
+  };
+
+  const linkProfileToManualAnnotation = (profile: PersonProfile) => {
+    if (!canEdit || !pendingManualAnnotation) return;
+    const payload = {
+      mediaId: media.id,
+      personId: profile.id,
+      faceCoordinates: pendingManualAnnotation.coordinates,
+      taggedFileId: pendingManualAnnotation.fileId,
+    };
+    const onSuccess = () => {
+      setPendingManualAnnotation(null);
+    };
+
+    if (pendingManualAnnotation.tagId) {
+      updateMediaTagMutation.mutate(
+        {
+          tagId: pendingManualAnnotation.tagId,
+          ...payload,
+        },
+        { onSuccess },
+      );
+      return;
+    }
+
+    createMediaTagMutation.mutate(payload, { onSuccess });
+  };
+
+  const linkProfileToFace = (faceId: string, profile: PersonProfile) => {
+    if (!canEdit) return;
+    setPendingManualAnnotation(null);
+    setIsManualDrawMode(false);
+    const targetFace = localFaces.find((face) => face.id === faceId);
+    if (!targetFace) return;
 
     createMediaTagMutation.mutate(
       {
         mediaId: media.id,
         personId: profile.id,
+        detectedFaceId: targetFace.id,
+        faceCoordinates: toFaceCoordinatesPayload(targetFace),
       },
       {
         onSuccess: () => {
@@ -403,6 +685,41 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
           setTaggingFaceId(null);
         },
       }
+    );
+  };
+
+  const unlinkDetectedFace = (faceId: string) => {
+    if (!canEdit || !mediaTags) return;
+    const matchingTag = mediaTags.find((tag) => String(tag.detectedFaceId || '').trim() === faceId);
+    if (!matchingTag) {
+      toast.error('No linked tag found for this detected face.');
+      return;
+    }
+
+    deleteMediaTagMutation.mutate(
+      { tagId: matchingTag.id, mediaId: media.id },
+      {
+        onSuccess: () => {
+          setLocalFaces((prev) =>
+            prev.map((face) =>
+              face.id === faceId ? { ...face, personId: undefined, name: undefined } : face
+            )
+          );
+          setTaggingFaceId(null);
+        },
+      },
+    );
+  };
+
+  const unlinkManualAnnotationByTagId = (tagId: string) => {
+    if (!canEdit) return;
+    deleteMediaTagMutation.mutate(
+      { tagId, mediaId: media.id },
+      {
+        onSuccess: () => {
+          setPendingManualAnnotation((current) => (current?.tagId === tagId ? null : current));
+        },
+      },
     );
   };
 
@@ -528,12 +845,209 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     );
   };
 
+  const handleRecoverSignedImage = async () => {
+    const refreshedMedia = await recoverSignedUrls(media.id);
+    if (refreshedMedia) {
+      onSyncMedia?.(refreshedMedia);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-110 flex items-center justify-center p-4 backdrop-blur-xl bg-slate-950/60 animate-in fade-in duration-300">
       <div className="bg-white dark:bg-slate-900 w-full max-w-6xl h-[90vh] rounded-[3rem] shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row animate-in zoom-in-95 duration-500">
         <div className="flex-1 bg-slate-50 dark:bg-slate-950 relative overflow-hidden flex items-center justify-center group p-4 border-r border-slate-100 dark:border-slate-800">
           {activeFile?.fileType === 'PHOTO' && (
-            <img src={activeFile.fileUrl} className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-lg" alt={activeFile.originalName} />
+            <div className="relative inline-block max-w-full select-none">
+              <PresignedImage
+                src={activeFile.fileUrl}
+                className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-lg"
+                alt={activeFile.originalName}
+                draggable={false}
+                onRecover={handleRecoverSignedImage}
+              />
+              <div
+                className={`absolute inset-0 ${canEdit && isManualDrawMode ? 'cursor-crosshair' : 'cursor-default'}`}
+                onMouseDown={handlePhotoOverlayMouseDown}
+                onMouseMove={handlePhotoOverlayMouseMove}
+                onMouseUp={handlePhotoOverlayMouseUp}
+                onMouseLeave={handlePhotoOverlayMouseLeave}
+              >
+                {activeFileFaces.map((face, index) => (
+                  <div
+                    key={`box-${face.id}`}
+                    className="absolute"
+                    style={{
+                      left: `${face.boundingBox.x * 100}%`,
+                      top: `${face.boundingBox.y * 100}%`,
+                      width: `${face.boundingBox.width * 100}%`,
+                      height: `${face.boundingBox.height * 100}%`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => canEdit && setTaggingFaceId(face.id)}
+                      className={`relative h-full w-full rounded-md border-2 transition-colors ${
+                        face.personId
+                          ? 'border-emerald-500 bg-emerald-500/10'
+                          : 'border-amber-400 bg-amber-400/10 hover:border-primary'
+                      }`}
+                      title={face.name ? `Confirmed: ${face.name}` : 'Detected face - click to confirm person'}
+                    >
+                      <span className="absolute -top-5 left-0 rounded bg-slate-900/85 text-white text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 whitespace-nowrap">
+                        {face.name ? face.name : `Face ${index + 1}`}
+                      </span>
+                    </button>
+                    {canEdit && face.personId && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          unlinkDetectedFace(face.id);
+                        }}
+                        disabled={deleteMediaTagMutation.isPending}
+                        className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600 disabled:opacity-60"
+                        title="Unlink this detected face"
+                      >
+                        <X size={10} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                {manualAnnotations.map((annotation, index) => (
+                  <div
+                    key={`manual-${annotation.tagId}`}
+                    className="absolute"
+                    style={{
+                      left: `${annotation.coordinates.x * 100}%`,
+                      top: `${annotation.coordinates.y * 100}%`,
+                      width: `${annotation.coordinates.w * 100}%`,
+                      height: `${annotation.coordinates.h * 100}%`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => beginManualAnnotationEdit(annotation)}
+                      disabled={!canEdit}
+                      className={`relative h-full w-full rounded-md border-2 border-sky-400 bg-sky-500/10 transition-colors ${
+                        canEdit ? 'hover:border-sky-500' : ''
+                      }`}
+                      title={canEdit ? `Manual tag: ${annotation.personName} (click to relink)` : `Manual tag: ${annotation.personName}`}
+                    >
+                      <span className="absolute -top-5 left-0 rounded bg-sky-900/85 text-white text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 whitespace-nowrap">
+                        {annotation.personName || `Manual ${index + 1}`}
+                      </span>
+                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          unlinkManualAnnotationByTagId(annotation.tagId);
+                        }}
+                        disabled={deleteMediaTagMutation.isPending}
+                        className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600 disabled:opacity-60"
+                        title="Unlink this manual annotation"
+                      >
+                        <X size={10} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                {draftManualRectangle && (
+                  <div
+                    className="absolute rounded-md border-2 border-sky-500 border-dashed bg-sky-500/10"
+                    style={{
+                      left: `${draftManualRectangle.x * 100}%`,
+                      top: `${draftManualRectangle.y * 100}%`,
+                      width: `${draftManualRectangle.w * 100}%`,
+                      height: `${draftManualRectangle.h * 100}%`,
+                    }}
+                  />
+                )}
+              </div>
+
+              {canEdit && (
+                <div className="absolute left-3 bottom-3 rounded-xl border border-white/60 bg-white/90 dark:bg-slate-900/90 dark:border-slate-700 px-2 py-2 shadow-lg backdrop-blur-sm">
+                  <button
+                    type="button"
+                    onClick={startManualAnnotation}
+                    disabled={isManualAnnotationSaving}
+                    className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-60 ${
+                      isManualDrawMode
+                        ? 'bg-sky-600 text-white'
+                        : 'bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900'
+                    }`}
+                  >
+                    {isManualDrawMode ? 'Cancel Drawing' : 'Draw Tag Box'}
+                  </button>
+                  <p className="mt-1 text-[9px] text-slate-500 dark:text-slate-300">
+                    Draw anywhere on the photo to manually tag a person.
+                  </p>
+                </div>
+              )}
+
+              {canEdit && pendingManualAnnotation && (
+                <div className="absolute left-3 top-3 z-30 w-58 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 p-2.5 shadow-2xl backdrop-blur-sm">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300">
+                    {pendingManualAnnotation.tagId ? 'Relink Selected Box' : 'Link Selected Box'}
+                  </p>
+                  <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                    Select a profile to confirm this manual annotation.
+                  </p>
+                  <div className="mt-2 max-h-40 overflow-y-auto no-scrollbar space-y-1">
+                    {profiles.length === 0 && (
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 px-1">No profiles available yet.</p>
+                    )}
+                    {profiles.map((profile) => (
+                      <button
+                        key={`manual-link-${profile.id}`}
+                        type="button"
+                        onClick={() => linkProfileToManualAnnotation(profile)}
+                        disabled={isManualAnnotationSaving}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
+                          pendingManualLinkedPersonId === profile.id
+                            ? 'bg-sky-50 dark:bg-sky-900/25 border border-sky-200 dark:border-sky-700'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800 border border-transparent'
+                        }`}
+                      >
+                        <PresignedImage
+                          src={profile.photoUrl}
+                          className="w-5 h-5 rounded-full object-cover"
+                          alt=""
+                          onRecover={handleRecoverSignedImage}
+                        />
+                        <span className="text-[10px] font-bold text-slate-700 dark:text-slate-200 truncate">
+                          {profile.fullName}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    {pendingManualAnnotation.tagId && (
+                      <button
+                        type="button"
+                        onClick={() => unlinkManualAnnotationByTagId(pendingManualAnnotation.tagId!)}
+                        disabled={deleteMediaTagMutation.isPending}
+                        className="px-2.5 py-1 rounded-lg border border-rose-200 dark:border-rose-800 text-[9px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-300 disabled:opacity-60"
+                      >
+                        Unlink
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={cancelPendingManualAnnotation}
+                      className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-[9px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           {activeFile?.fileType === 'VIDEO' && (
             <video
@@ -833,7 +1347,12 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                       : 'border-slate-200 dark:border-slate-700'
                                   }`}>
                                     {previewUrl ? (
-                                      <img src={previewUrl} alt={candidate.originalName} className="h-full w-full object-cover" />
+                                      <PresignedImage
+                                        src={previewUrl}
+                                        alt={candidate.originalName}
+                                        className="h-full w-full object-cover"
+                                        onRecover={handleRecoverSignedImage}
+                                      />
                                     ) : fileType === 'VIDEO' ? (
                                       <Film size={14} className="text-primary" />
                                     ) : fileType === 'AUDIO' ? (
@@ -957,6 +1476,52 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               </div>
             )}
 
+            {media.type === 'PHOTO' && (
+              <div className="space-y-2 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/30 p-3">
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  Face Detection
+                </h3>
+                <p className="text-[11px] text-slate-600 dark:text-slate-300">
+                  Status: <span className="font-semibold">{FACE_STATUS_LABELS[effectiveFaceStatus]}</span>
+                </p>
+                {isFaceDetectionInProgress && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Detecting faces in the background. You can keep using the app while this finishes.
+                  </p>
+                )}
+                {effectiveFaceError && (
+                  <p className="text-[11px] text-rose-600 dark:text-rose-300">{effectiveFaceError}</p>
+                )}
+                {faceWarnings.length > 0 && (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                    Some files were skipped during face detection.
+                  </p>
+                )}
+                {!isFaceDetectionInProgress && activeFile?.fileType === 'PHOTO' && activeFileFaces.length === 0 && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    No detected faces for the currently selected file.
+                  </p>
+                )}
+                {!isFaceDetectionInProgress && isFetchingFaceStatus && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Refreshing face detection status...
+                  </p>
+                )}
+                {activeFile?.fileType === 'PHOTO' && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Manual annotations on this file: <span className="font-semibold">{manualAnnotations.length}</span>
+                  </p>
+                )}
+                {canEdit && activeFile?.fileType === 'PHOTO' && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {isManualDrawMode
+                      ? 'Draw mode is active. Drag over the photo to create a manual tag box.'
+                      : 'Use Draw Tag Box on the preview to annotate areas beyond detected faces.'}
+                  </p>
+                )}
+              </div>
+            )}
+
             {memoryFiles.length > 0 && (
               <div className="space-y-4">
                 <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
@@ -986,7 +1551,12 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                       >
                         <div className="h-14 w-14 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden">
                           {file.fileType === 'PHOTO' && (
-                            <img src={file.fileUrl} alt={file.originalName} className="h-full w-full object-cover" />
+                            <PresignedImage
+                              src={file.fileUrl}
+                              alt={file.originalName}
+                              className="h-full w-full object-cover"
+                              onRecover={handleRecoverSignedImage}
+                            />
                           )}
                           {file.fileType === 'VIDEO' && <Film size={18} className="text-primary" />}
                           {file.fileType === 'AUDIO' && <Music2 size={18} className="text-primary" />}
@@ -1094,7 +1664,12 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
 
             {localFaces.length > 0 && (
               <div className="space-y-4">
-                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">Tagged Figures ({localFaces.length})</h3>
+                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  Detected Faces ({localFaces.length})
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  AI suggestions require manual confirmation before a face is linked to a person profile.
+                </p>
                 <div className="grid grid-cols-4 gap-4">
                   {localFaces.map((face) => (
                     <div key={face.id} className="relative group/face">
@@ -1102,14 +1677,43 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                         onClick={() => canEdit && setTaggingFaceId(taggingFaceId === face.id ? null : face.id)}
                         className={`w-full aspect-square rounded-2xl overflow-hidden border-2 transition-all ${face.personId ? 'border-primary shadow-md' : 'border-slate-200 dark:border-slate-800'}`}
                       >
-                        <img src={face.thumbnailUrl} className="w-full h-full object-cover" alt="Face" />
+                        {face.thumbnailUrl ? (
+                          <PresignedImage
+                            src={face.thumbnailUrl}
+                            className="w-full h-full object-cover"
+                            alt="Face"
+                            onRecover={handleRecoverSignedImage}
+                          />
+                        ) : (
+                          <span className="h-full w-full flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                            Face
+                          </span>
+                        )}
                       </button>
-                      {face.name && <p className="text-[8px] font-bold text-center mt-1 truncate uppercase text-slate-500">{face.name.split(' ')[0]}</p>}
+                      <p className="text-[8px] font-bold text-center mt-1 truncate uppercase text-slate-500">
+                        {face.name ? face.name.split(' ')[0] : 'Needs confirmation'}
+                      </p>
                       {taggingFaceId === face.id && canEdit && (
                         <div className="absolute top-full left-0 right-0 z-50 mt-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-2 min-w-50 animate-in slide-in-from-top-2">
+                          {face.personId && (
+                            <button
+                              type="button"
+                              onClick={() => unlinkDetectedFace(face.id)}
+                              disabled={deleteMediaTagMutation.isPending}
+                              className="w-full flex items-center gap-2 p-1.5 mb-1 rounded-lg text-left transition-colors text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20 disabled:opacity-60"
+                            >
+                              <X size={12} />
+                              <span className="text-[10px] font-bold truncate">Unlink this face</span>
+                            </button>
+                          )}
                           {profiles?.map((profile) => (
                             <button key={profile.id} onClick={() => linkProfileToFace(face.id, profile)} className="w-full flex items-center gap-2 p-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg text-left transition-colors">
-                              <img src={profile.photoUrl} className="w-5 h-5 rounded-full object-cover" alt="" />
+                              <PresignedImage
+                                src={profile.photoUrl}
+                                className="w-5 h-5 rounded-full object-cover"
+                                alt=""
+                                onRecover={handleRecoverSignedImage}
+                              />
                               <span className="text-[10px] font-bold text-slate-700 dark:text-slate-200 truncate">{profile.fullName}</span>
                             </button>
                           ))}
@@ -1150,7 +1754,12 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                   ) : (
                     availableProfiles.map((profile) => (
                       <button key={profile.id} onClick={() => linkProfileToMedia(profile)} className="w-full flex items-center gap-2 p-2 hover:bg-white dark:hover:bg-slate-700 rounded-lg text-left transition-colors">
-                        <img src={profile.photoUrl} className="w-5 h-5 rounded-full object-cover" alt="" />
+                        <PresignedImage
+                          src={profile.photoUrl}
+                          className="w-5 h-5 rounded-full object-cover"
+                          alt=""
+                          onRecover={handleRecoverSignedImage}
+                        />
                         <span className="text-[10px] font-bold text-slate-700 dark:text-slate-200 truncate">{profile.fullName}</span>
                       </button>
                     ))

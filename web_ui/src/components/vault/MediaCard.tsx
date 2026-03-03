@@ -1,7 +1,9 @@
 
 import React from 'react';
 import { Heart, Maximize2, Calendar, MapPin, Check, FileText, Music2, Film, Loader2, AlertTriangle, Clock3 } from 'lucide-react';
-import { MediaExifStatus, MediaItem } from '../../types';
+import { MediaExifStatus, MediaFaceDetectionStatus, MediaItem } from '../../types';
+import PresignedImage from '../ui/PresignedImage';
+import { useSignedUrlRecovery } from '../../hooks/useSignedUrlRecovery';
 
 interface MediaCardProps {
   item: MediaItem;
@@ -22,6 +24,7 @@ const MediaCard: React.FC<MediaCardProps> = ({
   onSelect, 
   onToggleFavorite 
 }) => {
+  const recoverSignedUrls = useSignedUrlRecovery();
   const primaryFile = item.files.find((file) => file.isPrimary) || item.files[0];
   const fileType = primaryFile?.fileType || 'PHOTO';
 
@@ -52,6 +55,23 @@ const MediaCard: React.FC<MediaCardProps> = ({
     }
     return null;
   })();
+  const faceBadge = (() => {
+    if (item.faceDetectionStatus === MediaFaceDetectionStatus.QUEUED || item.faceDetectionStatus === MediaFaceDetectionStatus.PROCESSING) {
+      return {
+        icon: <Loader2 size={11} className="animate-spin" />,
+        label: 'Faces processing',
+        className: 'bg-indigo-500/90 border border-indigo-400/80 text-white backdrop-blur-md',
+      };
+    }
+    if (item.faceDetectionStatus === MediaFaceDetectionStatus.FAILED) {
+      return {
+        icon: <AlertTriangle size={11} />,
+        label: 'Face detect failed',
+        className: 'bg-rose-500/90 border border-rose-400/80 text-white backdrop-blur-md',
+      };
+    }
+    return null;
+  })();
 
   return (
     <div 
@@ -71,7 +91,12 @@ const MediaCard: React.FC<MediaCardProps> = ({
       )}
       <div className="relative aspect-4/3 overflow-hidden">
         {fileType === 'PHOTO' && (
-          <img src={item.thumbnailUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt={item.title} />
+          <PresignedImage
+            src={item.thumbnailUrl}
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000"
+            alt={item.title}
+            onRecover={() => recoverSignedUrls(item.id)}
+          />
         )}
         {fileType === 'VIDEO' && primaryFile?.fileUrl && (
           <video src={primaryFile.fileUrl} className="w-full h-full object-cover" muted />
@@ -104,6 +129,12 @@ const MediaCard: React.FC<MediaCardProps> = ({
           <div className={`absolute bottom-4 left-4 z-20 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 ${exifBadge.className}`}>
             {exifBadge.icon}
             {exifBadge.label}
+          </div>
+        )}
+        {!exifBadge && faceBadge && !isSelectionMode && (
+          <div className={`absolute bottom-4 left-4 z-20 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 ${faceBadge.className}`}>
+            {faceBadge.icon}
+            {faceBadge.label}
           </div>
         )}
 

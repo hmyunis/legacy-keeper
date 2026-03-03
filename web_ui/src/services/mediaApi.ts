@@ -5,9 +5,18 @@ import type {
     ApiLinkedRelative,
     ApiMediaFilterSummary,
     ApiMediaExifStatusResponse,
+    ApiMediaFaceDetectionStatusResponse,
+    ApiDetectedFace,
     PaginatedApiResponse,
 } from '../types/api.types';
-import { MediaItem, MediaStatus, MediaExifStatus, MediaExifWorkflowStatus } from '../types';
+import {
+    MediaItem,
+    MediaStatus,
+    MediaExifStatus,
+    MediaExifWorkflowStatus,
+    MediaFaceDetectionStatus,
+    MediaFaceDetectionWorkflowStatus,
+} from '../types';
 import { MediaType } from '../types';
 import { appEnv } from './env';
 
@@ -65,6 +74,15 @@ const normalizeExifStatus = (value?: string | null): MediaExifStatus => {
         return normalized as MediaExifStatus;
     }
     return MediaExifStatus.NOT_STARTED;
+};
+
+const normalizeFaceDetectionStatus = (value?: string | null): MediaFaceDetectionStatus => {
+    const normalized = String(value || '').trim().toUpperCase();
+    const validStatuses = Object.values(MediaFaceDetectionStatus);
+    if (validStatuses.includes(normalized as MediaFaceDetectionStatus)) {
+        return normalized as MediaFaceDetectionStatus;
+    }
+    return MediaFaceDetectionStatus.NOT_STARTED;
 };
 
 const parseLinkedRelatives = (item: ApiMediaItem): MediaItem['linkedRelatives'] => {
@@ -151,6 +169,68 @@ const mapApiFiles = (item: ApiMediaItem): MediaItem['files'] => {
     ];
 };
 
+const parseDetectedFace = (
+    entry: ApiDetectedFace | Record<string, unknown>,
+): NonNullable<MediaItem['detectedFaces']>[number] | null => {
+    if (!entry || typeof entry !== 'object') return null;
+
+    const id = String((entry as any).id || '').trim();
+    const fileId = String((entry as any).fileId ?? (entry as any).file_id ?? '').trim();
+    if (!id || !fileId) return null;
+
+    const rawBoundingBox = (entry as any).boundingBox ?? (entry as any).bounding_box;
+    if (!rawBoundingBox || typeof rawBoundingBox !== 'object') return null;
+
+    const x = Number((rawBoundingBox as any).x);
+    const y = Number((rawBoundingBox as any).y);
+    const width = Number((rawBoundingBox as any).width);
+    const height = Number((rawBoundingBox as any).height);
+    const isFiniteBox =
+        Number.isFinite(x) &&
+        Number.isFinite(y) &&
+        Number.isFinite(width) &&
+        Number.isFinite(height) &&
+        x >= 0 &&
+        y >= 0 &&
+        width > 0 &&
+        height > 0 &&
+        x + width <= 1.000001 &&
+        y + height <= 1.000001;
+    if (!isFiniteBox) return null;
+
+    const confidenceRaw = Number((entry as any).confidence ?? 0);
+    const confidence = Number.isFinite(confidenceRaw)
+        ? Math.max(0, Math.min(1, confidenceRaw))
+        : 0;
+
+    const personId = String((entry as any).personId ?? (entry as any).person_id ?? '').trim();
+    const name = String((entry as any).name ?? '').trim();
+    const thumbnailUrl = toAbsoluteUrl(
+        String((entry as any).thumbnailUrl ?? (entry as any).thumbnail_url ?? '').trim(),
+    );
+
+    return {
+        id,
+        fileId,
+        confidence,
+        thumbnailUrl: thumbnailUrl || undefined,
+        boundingBox: { x, y, width, height },
+        personId: personId || undefined,
+        name: name || undefined,
+    };
+};
+
+const parseDetectedFaces = (item: ApiMediaItem | Record<string, unknown>): MediaItem['detectedFaces'] => {
+    const rawFaces = Array.isArray((item as any).detectedFaces)
+        ? ((item as any).detectedFaces as ApiDetectedFace[])
+        : Array.isArray((item as any).detected_faces)
+            ? ((item as any).detected_faces as ApiDetectedFace[])
+            : [];
+    return rawFaces
+        .map((entry) => parseDetectedFace(entry))
+        .filter(Boolean) as MediaItem['detectedFaces'];
+};
+
 const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => {
     const files = mapApiFiles(item);
     const primaryFile = files.find((file) => file.isPrimary) || files[0];
@@ -178,9 +258,20 @@ const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => {
         exifError: String(item.exifError || '').trim() || undefined,
         exifProcessedAt: item.exifProcessedAt || undefined,
         exifConfirmedAt: item.exifConfirmedAt || undefined,
+        faceDetectionStatus: normalizeFaceDetectionStatus(
+            (item as any).faceDetectionStatus ?? (item as any).face_detection_status,
+        ),
+        faceDetectionError: String(
+            (item as any).faceDetectionError ?? (item as any).face_detection_error ?? '',
+        ).trim() || undefined,
+        faceDetectionProcessedAt:
+            (item as any).faceDetectionProcessedAt ??
+            (item as any).face_detection_processed_at ??
+            undefined,
         location: parseMetadataLocation(item.metadata),
         metadata: (item.metadata && typeof item.metadata === 'object' ? item.metadata : {}) as Record<string, unknown>,
         files,
+        detectedFaces: parseDetectedFaces(item),
     };
 };
 
@@ -467,6 +558,39 @@ export const mediaApi = {
             candidates: parsedCandidates,
             selectedFileId:
                 String(payload.selectedFileId ?? payload.selected_file_id ?? '').trim() || fallbackCandidate?.fileId,
+            warnings: Array.isArray(payload.warnings)
+                ? payload.warnings.map((warning: unknown) => String(warning).trim()).filter(Boolean)
+                : undefined,
+        };
+    },
+
+    getFaceDetectionStatus: async (mediaId: string): Promise<MediaFaceDetectionWorkflowStatus> => {
+        const response = await axiosClient.get<ApiMediaFaceDetectionStatusResponse | Record<string, unknown>>(
+            `${MEDIA_ENDPOINT}${mediaId}/face-detection-status/`,
+        );
+        const payload: any = response.data || {};
+        const faces = Array.isArray(payload.faces)
+            ? payload.faces
+                .map((entry: unknown) => parseDetectedFace(entry as ApiDetectedFace))
+                .filter(Boolean)
+            : [];
+
+        const faceCountRaw = Number(payload.faceCount ?? payload.face_count);
+        const faceCount = Number.isFinite(faceCountRaw) ? faceCountRaw : faces.length;
+
+        return {
+            mediaId: String(payload.mediaId ?? payload.media_id ?? mediaId),
+            status: normalizeFaceDetectionStatus(payload.status),
+            error: String(payload.error || '').trim() || undefined,
+            taskId: String(payload.taskId ?? payload.task_id ?? '').trim() || undefined,
+            processedAt:
+                typeof payload.processedAt === 'string'
+                    ? payload.processedAt
+                    : typeof payload.processed_at === 'string'
+                        ? payload.processed_at
+                        : undefined,
+            faceCount,
+            faces,
             warnings: Array.isArray(payload.warnings)
                 ? payload.warnings.map((warning: unknown) => String(warning).trim()).filter(Boolean)
                 : undefined,

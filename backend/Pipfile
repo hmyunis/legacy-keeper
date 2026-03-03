@@ -23,6 +23,7 @@ boto3 = "*"
 google-auth = "*"
 django-filter = "*"
 pywebpush = "*"
+opencv-python-headless = "*"
 
 [dev-packages]
 

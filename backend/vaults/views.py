@@ -24,6 +24,7 @@ from .serializers import (
 )
 from .permissions import IsVaultAdmin
 from core.services import EmailService
+from core.storage_urls import build_storage_file_url
 from django.conf import settings
 from media.models import MediaItem
 from genealogy.models import MediaTag
@@ -72,9 +73,7 @@ class FamilyVaultViewSet(viewsets.ModelViewSet):
     def _absolute_media_url(self, item):
         if not item.file:
             return None
-        request = self.request
-        url = item.file.url
-        return request.build_absolute_uri(url) if request else url
+        return build_storage_file_url(item.file, request=self.request)
 
     def _normalize_metadata_tags(self, raw_tags):
         if isinstance(raw_tags, str):
@@ -627,7 +626,7 @@ class MembershipViewSet(viewsets.GenericViewSet):
                     "id": str(member.user_id),
                     "full_name": member.user.full_name,
                     "email": member.user.email,
-                    "avatar": member.user.avatar.url if member.user.avatar else None,
+                    "avatar": build_storage_file_url(member.user.avatar, request=request),
                 },
                 "role": member.role,
                 "created_at": member.created_at,
@@ -811,7 +810,7 @@ class MembershipViewSet(viewsets.GenericViewSet):
                     "id": str(membership.user_id),
                     "full_name": membership.user.full_name,
                     "email": membership.user.email,
-                    "avatar": membership.user.avatar.url if membership.user.avatar else None,
+                    "avatar": build_storage_file_url(membership.user.avatar, request=request),
                 },
                 "role": membership.role,
                 "created_at": membership.created_at,

@@ -125,6 +125,7 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_RESULT_EXPIRES = config('CELERY_RESULT_EXPIRES', default=86400, cast=int)
 CELERY_TASK_ROUTES = {
     'media.tasks.extract_media_exif_task': {'queue': 'media'},
+    'media.tasks.detect_media_faces_task': {'queue': 'media'},
 }
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     'visibility_timeout': config('CELERY_VISIBILITY_TIMEOUT', default=3600, cast=int),
@@ -196,10 +197,13 @@ if USE_S3:
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='legacykeeper')
     AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='us-east-1')
     AWS_S3_ENDPOINT_URL = config('AWS_S3_ENDPOINT_URL', default='')
+    AWS_S3_PRESIGNED_ENDPOINT_URL = config('AWS_S3_PRESIGNED_ENDPOINT_URL', default='')
     AWS_S3_CUSTOM_DOMAIN = config('AWS_S3_CUSTOM_DOMAIN', default='')
     AWS_S3_ADDRESSING_STYLE = config('AWS_S3_ADDRESSING_STYLE', default='path')
     AWS_S3_SIGNATURE_VERSION = config('AWS_S3_SIGNATURE_VERSION', default='s3v4')
     AWS_S3_URL_PROTOCOL = config('AWS_S3_URL_PROTOCOL', default='http:')
+    AWS_USE_PRESIGNED_URLS = config('AWS_USE_PRESIGNED_URLS', default=True, cast=bool)
+    AWS_PRESIGNED_URL_EXPIRE = config('AWS_PRESIGNED_URL_EXPIRE', default=900, cast=int)
     AWS_QUERYSTRING_AUTH = config('AWS_QUERYSTRING_AUTH', default=False, cast=bool)
     AWS_S3_FILE_OVERWRITE = config('AWS_S3_FILE_OVERWRITE', default=False, cast=bool)
     AWS_S3_OBJECT_PARAMETERS = {

@@ -102,8 +102,12 @@ export interface ApiMediaItem {
   exifError?: string;
   exifProcessedAt?: string | null;
   exifConfirmedAt?: string | null;
+  faceDetectionStatus?: string;
+  faceDetectionError?: string;
+  faceDetectionProcessedAt?: string | null;
   metadata?: Record<string, unknown> | null;
   files?: ApiMediaFile[];
+  detectedFaces?: ApiDetectedFace[] | null;
 }
 
 export interface ApiMediaExifCandidate {
@@ -135,6 +139,45 @@ export interface ApiMediaExifStatusResponse {
   candidates?: ApiMediaExifCandidate[] | null;
   selectedFileId?: string | null;
   selected_file_id?: string | null;
+  warnings?: string[] | null;
+}
+
+export interface ApiDetectedFace {
+  id?: string;
+  fileId?: string;
+  file_id?: string;
+  confidence?: number;
+  thumbnailUrl?: string | null;
+  thumbnail_url?: string | null;
+  boundingBox?: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+  } | null;
+  bounding_box?: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+  } | null;
+  personId?: string | null;
+  person_id?: string | null;
+  name?: string | null;
+}
+
+export interface ApiMediaFaceDetectionStatusResponse {
+  mediaId?: string;
+  media_id?: string;
+  status?: string;
+  error?: string;
+  taskId?: string;
+  task_id?: string;
+  processedAt?: string | null;
+  processed_at?: string | null;
+  faceCount?: number;
+  face_count?: number;
+  faces?: ApiDetectedFace[] | null;
   warnings?: string[] | null;
 }
 
@@ -214,6 +257,10 @@ export interface ApiMediaTag {
   person: string;
   personName: string;
   faceCoordinates?: Record<string, number> | null;
+  detectedFaceId?: string;
+  detected_face_id?: string;
+  taggedFileId?: string;
+  tagged_file_id?: string;
   createdBy?: string;
 }
 
@@ -354,6 +401,15 @@ export interface CreateMediaTagRequest {
   mediaItem: string;
   person: string;
   faceCoordinates?: Record<string, number> | null;
+  detectedFaceId?: string;
+  taggedFileId?: string;
+}
+
+export interface UpdateMediaTagRequest {
+  person?: string;
+  faceCoordinates?: Record<string, number> | null;
+  detectedFaceId?: string;
+  taggedFileId?: string;
 }
 
 export interface InviteMemberRequest {

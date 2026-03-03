@@ -29,12 +29,15 @@ docker compose up --build
 
 UI is available at `http://localhost:5173`.
 
-## EXIF UX Behavior
+## AI UX Behavior
 
 For photo memories:
 
-- EXIF extraction runs in backend via Redis + Celery.
-- UI shows background status and uploader confirmation actions.
+- EXIF extraction and face detection run in backend via Redis + Celery.
+- UI shows background status for both workflows.
+- EXIF still requires uploader confirmation before applying extracted date/GPS.
+- Face detection shows bounding boxes on the photo and face thumbnails in the detail panel.
+- Each detected face must be manually confirmed by linking a person profile (human-in-the-loop).
 - Multi-file EXIF candidates are shown with per-file selection and thumbnail/asset preview.
 - Polling is scoped:
   - active right after create/edit events
