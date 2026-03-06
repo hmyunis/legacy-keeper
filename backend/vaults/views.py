@@ -1,11 +1,12 @@
 from collections import defaultdict
+import hashlib
 import uuid
 
 from rest_framework import viewsets, permissions, status, decorators, exceptions
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
-from django.db.models import Q, Sum, Value, BigIntegerField, F
+from django.db.models import Q, Sum, Value, BigIntegerField, F, Prefetch
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -26,7 +27,7 @@ from .permissions import IsVaultAdmin
 from core.services import EmailService
 from core.storage_urls import build_storage_file_url
 from django.conf import settings
-from media.models import MediaItem
+from media.models import MediaAttachment, MediaItem
 from genealogy.models import MediaTag
 from users.serializers import serialize_user_payload
 
@@ -96,23 +97,44 @@ class FamilyVaultViewSet(viewsets.ModelViewSet):
                 'content_hash',
                 'created_at',
             )
+            .prefetch_related(
+                Prefetch(
+                    'attachments',
+                    queryset=MediaAttachment.objects.only(
+                        'id',
+                        'media_item_id',
+                        'file',
+                        'content_hash',
+                        'created_at',
+                    ).order_by('created_at', 'id'),
+                )
+            )
             .order_by('created_at', 'id')
         )
 
-        for item in media_items:
-            if item.content_hash:
-                continue
-            computed_hash = item.ensure_content_hash(persist=True)
-            if computed_hash:
-                item.content_hash = computed_hash
-
         grouped = defaultdict(list)
         for item in media_items:
-            if not item.content_hash:
+            primary_hash = item.content_hash or item.ensure_content_hash(persist=True)
+            if primary_hash:
+                item.content_hash = primary_hash
+
+            component_hashes = [primary_hash] if primary_hash else []
+            for attachment in item.attachments.all():
+                attachment_hash = attachment.content_hash or attachment.ensure_content_hash(persist=True)
+                if attachment_hash:
+                    attachment.content_hash = attachment_hash
+                    component_hashes.append(attachment_hash)
+
+            normalized_hashes = sorted([token for token in component_hashes if token])
+            if not normalized_hashes:
                 continue
-            if selected_hashes and item.content_hash not in selected_hashes:
+
+            signature_source = '|'.join(normalized_hashes)
+            group_hash = hashlib.sha256(signature_source.encode('utf-8')).hexdigest()
+            if selected_hashes and group_hash not in selected_hashes:
                 continue
-            grouped[item.content_hash].append(item)
+
+            grouped[group_hash].append(item)
 
         duplicate_groups = []
         for content_hash, items in grouped.items():

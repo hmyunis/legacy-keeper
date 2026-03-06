@@ -74,6 +74,7 @@ const FACE_DETECTION_RUNNING_STATUSES = new Set<MediaFaceDetectionStatus>([
   MediaFaceDetectionStatus.PROCESSING,
 ]);
 const EXIF_POLL_WINDOW_MS = 120000;
+const EXIF_STATUS_TOAST_DURATION_MS = 5000;
 
 const isExifRunning = (status?: MediaExifStatus) => Boolean(status && EXIF_RUNNING_STATUSES.has(status));
 const isFaceDetectionRunning = (status?: MediaFaceDetectionStatus) =>
@@ -386,7 +387,12 @@ const Vault: React.FC<{
   }, [allMedia]);
 
   useEffect(() => {
-    setSearchQuery(initialSearch);
+    setSearchQuery((current) => {
+      const currentTrimmed = current.trim();
+      const incomingTrimmed = initialSearch.trim();
+      if (currentTrimmed === incomingTrimmed) return current;
+      return initialSearch;
+    });
   }, [initialSearch]);
 
   useEffect(() => {
@@ -475,18 +481,31 @@ const Vault: React.FC<{
       }
 
       if (currentStatus === MediaExifStatus.CONFIRMED) {
-        toast.success(`EXIF metadata applied for "${item.title}".`, { id: toastId });
+        toast.success(`EXIF metadata applied for "${item.title}".`, {
+          id: toastId,
+          duration: EXIF_STATUS_TOAST_DURATION_MS,
+        });
       } else if (currentStatus === MediaExifStatus.FAILED) {
         toast.error(`EXIF extraction failed for "${item.title}".`, {
           id: toastId,
+          duration: EXIF_STATUS_TOAST_DURATION_MS,
           description: item.exifError || 'Please retry by editing and re-saving the memory.',
         });
       } else if (currentStatus === MediaExifStatus.AWAITING_CONFIRMATION) {
-        toast.info(`EXIF ready for "${item.title}". Confirm to apply extracted date/GPS.`, { id: toastId });
+        toast.info(`EXIF ready for "${item.title}". Confirm to apply extracted date/GPS.`, {
+          id: toastId,
+          duration: EXIF_STATUS_TOAST_DURATION_MS,
+        });
       } else if (currentStatus === MediaExifStatus.NOT_AVAILABLE) {
-        toast.info(`No EXIF date/GPS found for "${item.title}".`, { id: toastId });
+        toast.info(`No EXIF date/GPS found for "${item.title}".`, {
+          id: toastId,
+          duration: EXIF_STATUS_TOAST_DURATION_MS,
+        });
       } else if (currentStatus === MediaExifStatus.REJECTED) {
-        toast.info(`Extracted EXIF was rejected for "${item.title}".`, { id: toastId });
+        toast.info(`Extracted EXIF was rejected for "${item.title}".`, {
+          id: toastId,
+          duration: EXIF_STATUS_TOAST_DURATION_MS,
+        });
       } else {
         toast.dismiss(toastId);
       }
@@ -972,7 +991,7 @@ const Vault: React.FC<{
               setSearchQuery(nextValue);
             }}
             placeholder={t.vault.searchPlaceholder}
-            className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl py-2.5 pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary/20 dark:text-slate-200"
+            className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-slate-200"
           />
         </div>
 

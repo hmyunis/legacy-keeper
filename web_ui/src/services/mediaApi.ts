@@ -323,6 +323,11 @@ export interface ConfirmExifPayload {
     candidateFileId?: string;
 }
 
+export interface RotateMediaFilePayload {
+    fileId?: string;
+    degrees: number;
+}
+
 export interface MediaQueryParams {
     page?: number;
     pageSize?: number;
@@ -603,6 +608,14 @@ export const mediaApi = {
             applyDateTaken: payload.applyDateTaken ?? true,
             applyGps: payload.applyGps ?? true,
             candidateFileId: payload.candidateFileId || undefined,
+        });
+        return mapApiMediaToMediaItem(response.data);
+    },
+
+    rotateMediaFile: async (mediaId: string, payload: RotateMediaFilePayload): Promise<MediaItem> => {
+        const response = await axiosClient.post<ApiMediaItem>(`${MEDIA_ENDPOINT}${mediaId}/rotate/`, {
+            fileId: payload.fileId || undefined,
+            degrees: payload.degrees,
         });
         return mapApiMediaToMediaItem(response.data);
     },

@@ -2,7 +2,7 @@ export const vault = {
   title: "Family Vault",
   subtitle: "memories found in records",
   scanning: "Scanning records...",
-  searchPlaceholder: "Search keywords, dates, or tags...",
+  searchPlaceholder: "Try: wedding from 1950, photos before 1980...",
   actions: {
     select: "Select",
     cancel: "Cancel",

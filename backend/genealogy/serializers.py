@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.db import transaction
+from django.db import IntegrityError
 from core.storage_urls import build_storage_file_url
 from .models import PersonProfile, Relationship, MediaTag
 
@@ -43,6 +44,7 @@ class MediaTagSerializer(serializers.ModelSerializer):
             'created_by',
         )
         read_only_fields = ('created_by',)
+        validators = []
 
     def _normalize_face_coordinates(self, raw_value):
         if raw_value in (None, ''):
@@ -165,7 +167,10 @@ class MediaTagSerializer(serializers.ModelSerializer):
 
                     existing_face_tag.person = person
                     existing_face_tag.face_coordinates = defaults.get('face_coordinates')
+                    existing_face_tag.detected_face_id = defaults.get('detected_face_id', '')
+                    existing_face_tag.tagged_file_id = defaults.get('tagged_file_id', '')
                     update_fields = ['person', 'face_coordinates']
+                    update_fields.extend(['detected_face_id', 'tagged_file_id'])
                     if created_by is not None:
                         existing_face_tag.created_by = created_by
                         update_fields.append('created_by')
@@ -175,9 +180,39 @@ class MediaTagSerializer(serializers.ModelSerializer):
             if created_by is not None:
                 defaults['created_by'] = created_by
 
-            media_tag, _ = MediaTag.objects.update_or_create(
-                media_item=media_item,
-                person=person,
-                defaults=defaults,
-            )
-            return media_tag
+            try:
+                media_tag, _ = MediaTag.objects.update_or_create(
+                    media_item=media_item,
+                    person=person,
+                    defaults=defaults,
+                )
+                return media_tag
+            except IntegrityError:
+                # Handle race conditions by treating duplicate create as an idempotent update.
+                media_tag = MediaTag.objects.filter(media_item=media_item, person=person).first()
+                if not media_tag:
+                    raise
+                media_tag.face_coordinates = defaults.get('face_coordinates')
+                media_tag.detected_face_id = defaults.get('detected_face_id', '')
+                media_tag.tagged_file_id = defaults.get('tagged_file_id', '')
+                update_fields = ['face_coordinates', 'detected_face_id', 'tagged_file_id']
+                if created_by is not None:
+                    media_tag.created_by = created_by
+                    update_fields.append('created_by')
+                media_tag.save(update_fields=update_fields)
+                return media_tag
+
+    def update(self, instance, validated_data):
+        created_by = validated_data.pop('created_by', instance.created_by)
+        upsert_payload = {
+            'media_item': instance.media_item,
+            'person': validated_data.get('person', instance.person),
+            'face_coordinates': validated_data.get('face_coordinates', instance.face_coordinates),
+            'detected_face_id': validated_data.get('detected_face_id', instance.detected_face_id),
+            'tagged_file_id': validated_data.get('tagged_file_id', instance.tagged_file_id),
+            'created_by': created_by,
+        }
+        media_tag = self.create(upsert_payload)
+        if media_tag.pk != instance.pk:
+            instance.delete()
+        return media_tag

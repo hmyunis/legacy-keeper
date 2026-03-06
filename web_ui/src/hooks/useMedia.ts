@@ -5,6 +5,7 @@ import {
   type UpdateMediaMetadataPayload,
   type MediaQueryParams,
   type ConfirmExifPayload,
+  type RotateMediaFilePayload,
 } from '../services/mediaApi';
 import { toast } from 'sonner';
 import { useAuthStore } from '../stores/authStore';
@@ -290,6 +291,26 @@ export const useUpdateMediaMetadata = () => {
     },
     onError: (error) => {
       toast.error('Failed to update media', {
+        description: getApiErrorMessage(error, 'Please try again.'),
+      });
+    },
+  });
+};
+
+export const useRotateMediaFile = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ mediaId, payload }: { mediaId: string; payload: RotateMediaFilePayload }) =>
+      mediaApi.rotateMediaFile(mediaId, payload),
+    onSuccess: (updatedMedia) => {
+      syncUpdatedMediaInCaches(queryClient, updatedMedia);
+      queryClient.invalidateQueries({ queryKey: ['mediaExifStatus', updatedMedia.id] });
+      queryClient.invalidateQueries({ queryKey: ['mediaFaceDetectionStatus', updatedMedia.id] });
+      toast.success('Rotation saved');
+    },
+    onError: (error) => {
+      toast.error('Failed to save rotation', {
         description: getApiErrorMessage(error, 'Please try again.'),
       });
     },

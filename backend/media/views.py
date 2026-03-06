@@ -1,12 +1,13 @@
 from collections import Counter
 from datetime import datetime, time
+from io import BytesIO
 import json
 import mimetypes
 from pathlib import Path
 
 from django.db import transaction
 from django.core.files.base import ContentFile
-from django.db.models import Count, Exists, Max, Min, OuterRef, Q
+from django.db.models import Count, Exists, Max, Min, OuterRef, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -15,10 +16,12 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from django.shortcuts import get_object_or_404
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .models import MediaAttachment, MediaFavorite, MediaItem
 from .serializers import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, MediaItemSerializer, resolve_attachment_file_type
 from .file_processing import process_uploaded_file_for_storage
+from .natural_language_search import parse_natural_language_query
 from .services import AIProcessingService
 from core.storage_urls import build_storage_path_url
 from vaults.models import FamilyVault, Membership
@@ -29,6 +32,8 @@ class MediaItemViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsVaultMember]
     filter_backends = ()
     parser_classes = (MultiPartParser, FormParser, JSONParser) # Includes JSON actions like favorite toggle
+    USER_UPLOAD_QUOTA_BYTES = 10 * 1024 * 1024 * 1024
+    USER_UPLOAD_QUOTA_LABEL = '10 GB'
 
     def _get_vault_id(self):
         return self.kwargs.get('vault_pk') or self.request.query_params.get('vault')
@@ -82,15 +87,86 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             return False
         return None
 
+    def _apply_search_keyword_terms(self, queryset, terms):
+        for term in terms:
+            token = str(term).strip()
+            if not token:
+                continue
+            query = (
+                Q(title__icontains=token)
+                | Q(description__icontains=token)
+                | Q(metadata__icontains=token)
+                | Q(tags__person__full_name__icontains=token)
+            )
+            queryset = queryset.filter(query)
+        return queryset
+
+    def _apply_date_bounds(self, queryset, start_date=None, end_date=None):
+        if start_date:
+            start_dt = self._to_aware_datetime(start_date, end=False)
+            queryset = queryset.filter(
+                Q(date_taken__gte=start_dt) | Q(date_taken__isnull=True, created_at__gte=start_dt)
+            )
+        if end_date:
+            end_dt = self._to_aware_datetime(end_date, end=True)
+            queryset = queryset.filter(
+                Q(date_taken__lte=end_dt) | Q(date_taken__isnull=True, created_at__lte=end_dt)
+            )
+        return queryset
+
     def _apply_media_filters(self, queryset):
         search = (self.request.query_params.get('search') or '').strip()
+        parsed_search = parse_natural_language_query(search) if search else None
+
         if search:
-            queryset = queryset.filter(
-                Q(title__icontains=search)
-                | Q(description__icontains=search)
-                | Q(metadata__icontains=search)
-                | Q(tags__person__full_name__icontains=search)
+            has_structured_terms = bool(
+                parsed_search
+                and (
+                    parsed_search.media_types
+                    or parsed_search.people_terms
+                    or parsed_search.tag_terms
+                    or parsed_search.location_terms
+                    or parsed_search.date_from
+                    or parsed_search.date_to
+                )
             )
+            keyword_terms = parsed_search.keyword_terms if parsed_search else ()
+            if keyword_terms:
+                queryset = self._apply_search_keyword_terms(queryset, keyword_terms)
+            elif not has_structured_terms:
+                queryset = queryset.filter(
+                    Q(title__icontains=search)
+                    | Q(description__icontains=search)
+                    | Q(metadata__icontains=search)
+                    | Q(tags__person__full_name__icontains=search)
+                )
+
+            if parsed_search:
+                if parsed_search.media_types:
+                    queryset = queryset.filter(media_type__in=parsed_search.media_types)
+
+                for person_term in parsed_search.people_terms:
+                    queryset = queryset.filter(tags__person__full_name__icontains=person_term)
+
+                for tag_term in parsed_search.tag_terms:
+                    normalized_tag = str(tag_term).strip()
+                    if not normalized_tag:
+                        continue
+                    queryset = queryset.filter(
+                        Q(metadata__tags__contains=[normalized_tag])
+                        | Q(metadata__icontains=f'"{normalized_tag}"')
+                    )
+
+                for location_term in parsed_search.location_terms:
+                    normalized_location = str(location_term).strip()
+                    if normalized_location:
+                        queryset = queryset.filter(metadata__location__icontains=normalized_location)
+
+                queryset = self._apply_date_bounds(
+                    queryset,
+                    start_date=parsed_search.date_from,
+                    end_date=parsed_search.date_to,
+                )
 
         media_types = self._parse_csv_param('mediaType', 'media_type')
         if media_types:
@@ -128,28 +204,19 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         era = (self.request.query_params.get('era') or '').strip()
         start_year, end_year = self._parse_era(era)
         if start_year and end_year:
-            queryset = queryset.filter(
-                Q(date_taken__year__gte=start_year, date_taken__year__lte=end_year)
-                | Q(date_taken__isnull=True, created_at__year__gte=start_year, created_at__year__lte=end_year)
+            queryset = self._apply_date_bounds(
+                queryset,
+                start_date=parse_date(f'{start_year}-01-01'),
+                end_date=parse_date(f'{end_year}-12-31'),
             )
 
         start_date = parse_date(
             (self.request.query_params.get('dateFrom') or self.request.query_params.get('startDate') or '').strip()
         )
-        if start_date:
-            start_dt = self._to_aware_datetime(start_date, end=False)
-            queryset = queryset.filter(
-                Q(date_taken__gte=start_dt) | Q(date_taken__isnull=True, created_at__gte=start_dt)
-            )
-
         end_date = parse_date(
             (self.request.query_params.get('dateTo') or self.request.query_params.get('endDate') or '').strip()
         )
-        if end_date:
-            end_dt = self._to_aware_datetime(end_date, end=True)
-            queryset = queryset.filter(
-                Q(date_taken__lte=end_dt) | Q(date_taken__isnull=True, created_at__lte=end_dt)
-            )
+        queryset = self._apply_date_bounds(queryset, start_date=start_date, end_date=end_date)
 
         return queryset
 
@@ -244,8 +311,48 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                     {'files': [f'"{uploaded_file.name}" is too large. Each file must be <= {MAX_UPLOAD_MB} MB.']}
                 )
 
+    def _lock_quota_user(self, user):
+        if not user or not getattr(user, 'pk', None):
+            return
+        user.__class__.objects.select_for_update().filter(pk=user.pk).exists()
+
+    def _current_uploaded_bytes(self, user):
+        if not user or not getattr(user, 'pk', None):
+            return 0
+        aggregate = MediaItem.objects.filter(uploader=user).aggregate(total=Sum('file_size'))
+        return int(aggregate.get('total') or 0)
+
+    def _enforce_user_upload_quota(self, user, additional_bytes=0):
+        if not user or not getattr(user, 'pk', None):
+            return
+        try:
+            normalized_additional = max(int(additional_bytes or 0), 0)
+        except (TypeError, ValueError):
+            normalized_additional = 0
+
+        projected_total = self._current_uploaded_bytes(user) + normalized_additional
+        if projected_total > self.USER_UPLOAD_QUOTA_BYTES:
+            raise ValidationError(
+                {
+                    'files': [
+                        (
+                            f'Upload limit reached. Each user can store up to {self.USER_UPLOAD_QUOTA_LABEL}. '
+                            'Delete older media before uploading more.'
+                        )
+                    ]
+                }
+            )
+
     def _create_media_item(self, serializer, vault):
-        media_item = serializer.save(uploader=self.request.user, vault=vault)
+        with transaction.atomic():
+            self._lock_quota_user(self.request.user)
+            primary_file = serializer.validated_data.get('file')
+            self._enforce_user_upload_quota(
+                self.request.user,
+                additional_bytes=self._safe_file_size(primary_file),
+            )
+            media_item = serializer.save(uploader=self.request.user, vault=vault)
+            self._enforce_user_upload_quota(self.request.user)
         AIProcessingService().enqueue_media_processing(media_item)
         media_item.refresh_from_db()
         return media_item
@@ -552,6 +659,128 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         except (FileNotFoundError, OSError, ValueError):
             return 0
 
+    def _resolve_rotation_degrees(self, request):
+        raw_degrees = request.data.get('degrees')
+        direction = str(request.data.get('direction') or '').strip().lower()
+
+        if raw_degrees in (None, ''):
+            if direction == 'left':
+                return -90
+            if direction == 'right':
+                return 90
+            raise ValidationError({'degrees': ['Rotation must be provided.']})
+
+        try:
+            degrees = int(raw_degrees)
+        except (TypeError, ValueError):
+            raise ValidationError({'degrees': ['Rotation must be a valid integer.']})
+
+        if degrees % 90 != 0:
+            raise ValidationError({'degrees': ['Rotation must be in 90-degree increments.']})
+
+        normalized = ((degrees + 180) % 360) - 180
+        if normalized == 0:
+            raise ValidationError({'degrees': ['Rotation must not be zero.']})
+        return normalized
+
+    def _resolve_rotation_target(self, media_item, request):
+        raw_file_id = request.data.get('file_id', request.data.get('fileId'))
+        normalized_file_id = str(raw_file_id or '').strip()
+        primary_file_id = f'primary-{media_item.id}'
+        fallback_file_id = f'fallback-{media_item.id}'
+
+        if normalized_file_id in ('', primary_file_id, fallback_file_id):
+            if media_item.media_type != MediaItem.MediaType.PHOTO:
+                raise ValidationError({'fileId': ['The selected file is not a photo.']})
+            if not media_item.file:
+                raise ValidationError({'fileId': ['Primary file is missing.']})
+            return ('primary', media_item, normalized_file_id or primary_file_id)
+
+        attachment = MediaAttachment.objects.filter(
+            media_item=media_item,
+            id=normalized_file_id,
+        ).first()
+        if not attachment:
+            raise ValidationError({'fileId': ['Selected file was not found.']})
+        if attachment.file_type != MediaAttachment.FileType.PHOTO:
+            raise ValidationError({'fileId': ['The selected file is not a photo.']})
+        if not attachment.file:
+            raise ValidationError({'fileId': ['Selected attachment file is missing.']})
+        return ('attachment', attachment, normalized_file_id)
+
+    def _rotate_image_file_content(self, source_file, degrees):
+        source_name = Path(str(getattr(source_file, 'name', '') or 'memory-file.jpg')).name
+        suffix = Path(source_name).suffix.lower()
+        format_by_suffix = {
+            '.jpg': 'JPEG',
+            '.jpeg': 'JPEG',
+            '.png': 'PNG',
+            '.webp': 'WEBP',
+            '.tif': 'TIFF',
+            '.tiff': 'TIFF',
+            '.bmp': 'BMP',
+        }
+
+        if hasattr(source_file, 'open'):
+            source_file.open('rb')
+
+        try:
+            with Image.open(source_file) as opened_image:
+                output_format = format_by_suffix.get(suffix) or str(opened_image.format or 'JPEG').upper()
+                if output_format == 'JPG':
+                    output_format = 'JPEG'
+
+                normalized_image = ImageOps.exif_transpose(opened_image)
+                rotated_image = normalized_image.rotate(-degrees, expand=True)
+
+                save_kwargs = {}
+                exif_bytes = None
+                try:
+                    exif_payload = opened_image.getexif()
+                    if exif_payload:
+                        exif_payload[274] = 1
+                        exif_bytes = exif_payload.tobytes()
+                except Exception:
+                    exif_bytes = None
+
+                if output_format == 'JPEG':
+                    if rotated_image.mode not in ('RGB', 'L'):
+                        rotated_image = rotated_image.convert('RGB')
+                    save_kwargs.update({'quality': 92, 'optimize': True})
+                elif output_format == 'PNG':
+                    save_kwargs.update({'optimize': True})
+                elif output_format == 'WEBP':
+                    save_kwargs.update({'quality': 92, 'method': 6})
+
+                if exif_bytes and output_format in {'JPEG', 'WEBP', 'TIFF'}:
+                    save_kwargs['exif'] = exif_bytes
+
+                output_buffer = BytesIO()
+                rotated_image.save(output_buffer, format=output_format, **save_kwargs)
+                output_buffer.seek(0)
+
+                output_suffix = suffix or f'.{output_format.lower()}'
+                output_stem = Path(source_name).stem or 'memory-file'
+                output_name = f'{output_stem}{output_suffix}'
+                return ContentFile(output_buffer.read(), name=output_name)
+        except UnidentifiedImageError:
+            raise ValidationError({'fileId': ['Selected file is not a valid image.']})
+        except OSError:
+            raise ValidationError({'fileId': ['Unable to rotate this image format.']})
+        finally:
+            if hasattr(source_file, 'close'):
+                try:
+                    source_file.close()
+                except Exception:
+                    pass
+
+    def _recalculate_media_total_size(self, media_item):
+        remaining_attachments = list(MediaAttachment.objects.filter(media_item=media_item))
+        total_size = self._safe_file_size(media_item.file) + sum(
+            self._safe_file_size(attachment.file) for attachment in remaining_attachments
+        )
+        return int(total_size)
+
     def _extract_update_payload(self, request):
         excluded_keys = {'remove_file_ids', 'removeFileIds', 'new_files', 'newFiles', 'files'}
         source = request.data
@@ -697,6 +926,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
     def _update_media_item(self, request, partial=False):
         media_item = self.get_object()
         self._enforce_edit_permissions(media_item)
+        quota_user = media_item.uploader
 
         remove_file_ids = self._parse_remove_file_ids(request)
         raw_new_files = self._parse_new_files(request)
@@ -710,7 +940,9 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         updated_media = serializer.instance
         if has_file_mutations:
             with transaction.atomic():
+                self._lock_quota_user(quota_user)
                 updated_media = self._apply_file_mutations(updated_media, remove_file_ids, new_files)
+                self._enforce_user_upload_quota(quota_user)
 
         # EXIF/face processing is only needed when media files change.
         should_enqueue_processing = has_file_mutations
@@ -970,6 +1202,46 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         output = self.get_serializer(media_item)
         return Response(output.data, status=status.HTTP_200_OK)
 
+    @decorators.action(detail=True, methods=['post'], url_path='rotate')
+    def rotate(self, request, pk=None):
+        media_item = self.get_object()
+        self._enforce_edit_permissions(media_item)
+        degrees = self._resolve_rotation_degrees(request)
+        target_kind, target_obj, rotated_file_id = self._resolve_rotation_target(media_item, request)
+        quota_user = media_item.uploader
+
+        with transaction.atomic():
+            self._lock_quota_user(quota_user)
+            if target_kind == 'primary':
+                rotated_content = self._rotate_image_file_content(media_item.file, degrees)
+                media_item.file = rotated_content
+                media_item.content_hash = ''
+                media_item.file_size = self._recalculate_media_total_size(media_item)
+                media_item.save(update_fields=['file', 'file_size', 'content_hash'])
+            else:
+                rotated_content = self._rotate_image_file_content(target_obj.file, degrees)
+                target_obj.file = rotated_content
+                target_obj.save(update_fields=['file', 'file_size'])
+                media_item.file_size = self._recalculate_media_total_size(media_item)
+                media_item.save(update_fields=['file_size'])
+
+            from genealogy.models import MediaTag
+
+            MediaTag.objects.filter(media_item=media_item).update(
+                face_coordinates=None,
+                detected_face_id='',
+                tagged_file_id='',
+            )
+            self._enforce_user_upload_quota(quota_user)
+
+        AIProcessingService().enqueue_face_detection_only(media_item)
+        media_item.refresh_from_db()
+        output = self.get_serializer(media_item)
+        payload = dict(output.data)
+        payload['rotated_file_id'] = rotated_file_id
+        payload['applied_rotation'] = degrees
+        return Response(payload, status=status.HTTP_200_OK)
+
     @decorators.action(detail=False, methods=['get'], url_path='filters')
     def filters(self, request, *args, **kwargs):
         queryset = self.get_queryset()
@@ -1114,6 +1386,9 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         with transaction.atomic():
+            self._lock_quota_user(request.user)
+            projected_upload_size = sum(self._safe_file_size(file_obj) for file_obj in processed_uploaded_files)
+            self._enforce_user_upload_quota(request.user, additional_bytes=projected_upload_size)
             media_item = serializer.save(uploader=request.user, vault=vault)
             total_size = int(primary_file.size or 0)
 
@@ -1135,6 +1410,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             if media_item.file_size != total_size:
                 media_item.file_size = total_size
                 media_item.save(update_fields=['file_size'])
+            self._enforce_user_upload_quota(request.user)
 
         AIProcessingService().enqueue_media_processing(media_item)
         media_item.refresh_from_db()

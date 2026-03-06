@@ -106,9 +106,16 @@ const UploadModal: React.FC<UploadModalProps> = ({
         </div>
         <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto no-scrollbar">
           {!isUploading ? (
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
               className="w-full border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-3xl p-4 flex flex-col items-center justify-center text-center space-y-4 hover:border-primary bg-slate-50/50 dark:bg-slate-950/20 group cursor-pointer relative overflow-hidden"
             >
               <input
@@ -160,7 +167,7 @@ const UploadModal: React.FC<UploadModalProps> = ({
                   </div>
                 )}
               </div>
-            </button>
+            </div>
           ) : (
             <div className="space-y-4 py-10">
               <div className="flex items-center justify-between">

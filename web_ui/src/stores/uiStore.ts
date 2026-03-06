@@ -31,9 +31,34 @@ export const hexToRgb = (hex: string) => {
     '59, 130, 246';
 };
 
+const clampChannel = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
+
+const parseHexColor = (hex: string) => {
+  const normalized = String(hex || '').trim();
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(normalized);
+  if (!result) return { r: 59, g: 130, b: 246 };
+  return {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16),
+  };
+};
+
+const toHexColor = (r: number, g: number, b: number) =>
+  `#${[r, g, b].map((channel) => clampChannel(channel).toString(16).padStart(2, '0')).join('')}`;
+
+const darkenHex = (hex: string, amount = 0.22) => {
+  const color = parseHexColor(hex);
+  const ratio = Math.max(0, Math.min(1, 1 - amount));
+  return toHexColor(color.r * ratio, color.g * ratio, color.b * ratio);
+};
+
 export const applyPrimaryColor = (color: string) => {
+  const strongerColor = darkenHex(color, 0.22);
   document.documentElement.style.setProperty('--color-primary', color);
   document.documentElement.style.setProperty('--color-primary-rgb', hexToRgb(color));
+  document.documentElement.style.setProperty('--color-primary-strong', strongerColor);
+  document.documentElement.style.setProperty('--color-primary-strong-rgb', hexToRgb(strongerColor));
 };
 
 export const useUIStore = create<UIState>()(

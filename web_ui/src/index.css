@@ -3,6 +3,9 @@
 
 :root {
   --color-primary: #2563eb;
+  --color-primary-rgb: 37, 99, 235;
+  --color-primary-strong: #1d4ed8;
+  --color-primary-strong-rgb: 29, 78, 216;
   --color-primary-foreground: #ffffff;
 }
 
@@ -25,6 +28,15 @@ body {
 
 .ring-primary {
   --tw-ring-color: var(--color-primary);
+}
+
+/* Make Tailwind focus utilities follow a darker variant of the active primary color. */
+.focus\:ring-primary\/20:focus {
+  --tw-ring-color: rgba(var(--color-primary-strong-rgb, 29, 78, 216), 0.28) !important;
+}
+
+.focus\:border-primary:focus {
+  border-color: var(--color-primary-strong) !important;
 }
 
 .timeline-gradient {

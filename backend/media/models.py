@@ -8,6 +8,58 @@ import hashlib
 from django.core.files.uploadedfile import UploadedFile
 from pathlib import Path
 
+
+def compute_storage_file_hash(file_field):
+    if not file_field:
+        return ''
+
+    digest = hashlib.sha256()
+    file_obj = None
+    opened_for_hash = False
+    initial_position = None
+
+    try:
+        file_obj = getattr(file_field, 'file', file_field)
+
+        if hasattr(file_obj, 'tell'):
+            initial_position = file_obj.tell()
+
+        if getattr(file_obj, 'closed', False) and hasattr(file_field, 'open'):
+            file_field.open('rb')
+            opened_for_hash = True
+            file_obj = getattr(file_field, 'file', file_field)
+
+        if hasattr(file_obj, 'seek'):
+            file_obj.seek(0)
+
+        if hasattr(file_obj, 'chunks'):
+            for chunk in file_obj.chunks():
+                if chunk:
+                    digest.update(chunk)
+        else:
+            while True:
+                chunk = file_obj.read(8192)
+                if not chunk:
+                    break
+                digest.update(chunk)
+
+        return digest.hexdigest()
+    except Exception:
+        return ''
+    finally:
+        if hasattr(file_obj, 'seek'):
+            try:
+                # Rewind uploads so Django can continue using the file after hashing.
+                file_obj.seek(initial_position or 0)
+            except Exception:
+                pass
+        if opened_for_hash and not isinstance(file_obj, UploadedFile):
+            try:
+                file_field.close()
+            except Exception:
+                pass
+
+
 class MediaItem(TimeStampedModel):
     class MediaType(models.TextChoices):
         PHOTO = 'PHOTO', _('Photo')
@@ -90,54 +142,7 @@ class MediaItem(TimeStampedModel):
     face_detection_processed_at = models.DateTimeField(null=True, blank=True)
 
     def _calculate_content_hash(self):
-        if not self.file:
-            return ''
-
-        digest = hashlib.sha256()
-        file_obj = None
-        opened_for_hash = False
-        initial_position = None
-
-        try:
-            file_obj = getattr(self.file, 'file', self.file)
-
-            if hasattr(file_obj, 'tell'):
-                initial_position = file_obj.tell()
-
-            if getattr(file_obj, 'closed', False) and hasattr(self.file, 'open'):
-                self.file.open('rb')
-                opened_for_hash = True
-                file_obj = getattr(self.file, 'file', self.file)
-
-            if hasattr(file_obj, 'seek'):
-                file_obj.seek(0)
-
-            if hasattr(file_obj, 'chunks'):
-                for chunk in file_obj.chunks():
-                    if chunk:
-                        digest.update(chunk)
-            else:
-                while True:
-                    chunk = file_obj.read(8192)
-                    if not chunk:
-                        break
-                    digest.update(chunk)
-
-            return digest.hexdigest()
-        except Exception:
-            return ''
-        finally:
-            if hasattr(file_obj, 'seek'):
-                try:
-                    # Rewind uploads so Django can store them after hashing.
-                    file_obj.seek(initial_position or 0)
-                except Exception:
-                    pass
-            if opened_for_hash and not isinstance(file_obj, UploadedFile):
-                try:
-                    self.file.close()
-                except Exception:
-                    pass
+        return compute_storage_file_hash(self.file)
 
     def ensure_content_hash(self, persist=False):
         if self.content_hash:
@@ -203,6 +208,7 @@ class MediaAttachment(TimeStampedModel):
     )
     file = models.FileField(upload_to=get_upload_path)
     file_size = models.BigIntegerField(editable=False, default=0)
+    content_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
     mime_type = models.CharField(max_length=120, blank=True, default='')
     file_type = models.CharField(max_length=20, choices=FileType.choices, default=FileType.DOCUMENT)
     original_name = models.CharField(max_length=255, blank=True, default='')
@@ -210,11 +216,43 @@ class MediaAttachment(TimeStampedModel):
     class Meta:
         ordering = ('created_at', 'id')
 
+    def _calculate_content_hash(self):
+        return compute_storage_file_hash(self.file)
+
+    def ensure_content_hash(self, persist=False):
+        if self.content_hash:
+            return self.content_hash
+
+        computed_hash = self._calculate_content_hash()
+        if not computed_hash:
+            return ''
+
+        self.content_hash = computed_hash
+        if persist and self.pk:
+            type(self).objects.filter(pk=self.pk).update(content_hash=computed_hash)
+        return computed_hash
+
     def save(self, *args, **kwargs):
+        update_fields = kwargs.get('update_fields')
+        normalized_update_fields = set(update_fields) if update_fields is not None else None
+
         if self.file:
             self.file_size = self.file.size
             if not self.original_name:
                 self.original_name = Path(self.file.name).name
+            should_refresh_hash = (
+                not self.content_hash
+                or normalized_update_fields is None
+                or 'file' in normalized_update_fields
+            )
+            if should_refresh_hash:
+                self.content_hash = self._calculate_content_hash()
+
+            if normalized_update_fields is not None:
+                normalized_update_fields.update({'file_size', 'original_name'})
+                if should_refresh_hash:
+                    normalized_update_fields.add('content_hash')
+                kwargs['update_fields'] = list(normalized_update_fields)
         super().save(*args, **kwargs)
 
     def __str__(self):

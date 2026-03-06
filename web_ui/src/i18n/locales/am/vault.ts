@@ -2,7 +2,7 @@ export const vault = {
   title: "የቤተሰብ ማከማቻ",
   subtitle: "ትውስታዎች በመዝገብ ውስጥ ተገኝተዋል",
   scanning: "መዝገቦችን በመመርመር ላይ...",
-  searchPlaceholder: "ቁልፍ ቃላትን፣ ቀኖችን ወይም መለዮችን ይፈልጉ...",
+  searchPlaceholder: "ምሳሌ፦ wedding from 1950, photos before 1980...",
   actions: {
     select: "ምረጥ",
     cancel: "ሰርዝ",
