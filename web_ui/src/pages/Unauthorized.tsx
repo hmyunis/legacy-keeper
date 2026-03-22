@@ -4,9 +4,11 @@ import { ShieldAlert } from 'lucide-react';
 import { useVaults } from '../hooks/useVaults';
 import { useAuthStore } from '../stores/authStore';
 import { UserRole } from '../types';
+import { useTranslation } from '../i18n/LanguageContext';
 
 const Unauthorized: React.FC = () => {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const search = useSearch({ strict: false }) as { from?: string };
   const { data: vaults } = useVaults();
   const { activeVaultId, setActiveVault, updateUser } = useAuthStore();
@@ -66,13 +68,13 @@ const Unauthorized: React.FC = () => {
             <ShieldAlert size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">Access Restricted</h1>
+            <h1 className="text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">{t.common.unauthorized.title}</h1>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
-              You are signed in, but your role does not allow access to this page.
+              {t.common.unauthorized.description}
             </p>
             {attemptedPath && (
               <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
-                Attempted route: <span className="font-mono">{attemptedPath}</span>
+                {t.common.unauthorized.attemptedRoute}: <span className="font-mono">{attemptedPath}</span>
               </p>
             )}
           </div>
@@ -97,7 +99,7 @@ const Unauthorized: React.FC = () => {
                 onClick={switchVaultAndRetry}
                 className="inline-flex items-center justify-center rounded-2xl border border-primary/40 bg-primary/5 text-primary px-5 py-3 text-xs font-black uppercase tracking-widest hover:bg-primary/10 transition-colors"
               >
-                Switch Vault & Retry
+                {t.common.unauthorized.switchVaultAndRetry}
               </button>
             </div>
           )}
@@ -106,13 +108,13 @@ const Unauthorized: React.FC = () => {
             onClick={() => navigate({ to: '/' })}
             className="inline-flex items-center justify-center rounded-2xl bg-primary text-white px-5 py-3 text-xs font-black uppercase tracking-widest hover:opacity-90 transition-opacity"
           >
-            Go To Dashboard
+            {t.common.unauthorized.goToDashboard}
           </button>
           <Link
             to="/help"
             className="inline-flex items-center justify-center rounded-2xl border border-slate-300 dark:border-slate-700 px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
-            Open Help Center
+            {t.common.unauthorized.openHelpCenter}
           </Link>
         </div>
       </div>

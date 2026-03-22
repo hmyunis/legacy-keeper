@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { RotateCcw, Check, FileText, Video, Camera } from 'lucide-react';
 import { MediaType } from '../../types';
 import DatePicker from '../DatePicker';
+import { useTranslation } from '../../i18n/LanguageContext';
 
 interface CheckboxProps {
   label: string;
@@ -112,6 +113,7 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
   onEndDateChange,
   onClear,
 }) => {
+  const { t } = useTranslation();
   const resolvedTypeOptions: TypeFilterOption[] = typeOptions.length
     ? typeOptions
     : (Object.values(MediaType) as MediaType[]).map((value) => ({ value, count: 0 }));
@@ -131,7 +133,7 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
     <div className="bg-white/80 dark:bg-slate-900/50 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-[2rem] p-6 sm:p-8 animate-in fade-in slide-in-from-top-4 duration-300 shadow-sm overflow-hidden">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-8 sm:gap-12">
         <div className="space-y-4">
-          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">People</h3>
+          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.vault.filters.people}</h3>
           <div className="grid grid-cols-2 sm:grid-cols-1 gap-3">
             {isLoadingOptions && !peopleOptions.length ? (
               <FilterSkeletonRows rows={5} />
@@ -148,14 +150,14 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
             )}
             {!isLoadingOptions && !peopleOptions.length && (
               <p className="text-[10px] text-slate-400">
-                No people tags found
+                {t.vault.filters.noPeople}
               </p>
             )}
           </div>
         </div>
 
         <div className="space-y-4 md:border-l lg:border-none xl:border-l dark:border-slate-800 sm:pl-10 lg:pl-0 xl:pl-10 xl:col-span-2">
-          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tags</h3>
+          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.vault.filters.tags}</h3>
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(10rem,1fr))]">
             {isLoadingOptions && !tagOptions.length ? (
               <FilterSkeletonRows rows={5} />
@@ -172,19 +174,25 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
             )}
             {!isLoadingOptions && !tagOptions.length && (
               <p className="text-[10px] text-slate-400">
-                No tags found
+                {t.vault.filters.noTags}
               </p>
             )}
           </div>
         </div>
 
         <div className="space-y-4 md:border-l lg:border-none xl:border-l dark:border-slate-800 sm:pl-10 lg:pl-0 xl:pl-10">
-          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Media Type</h3>
+          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.vault.filters.mediaType}</h3>
           <div className="grid grid-cols-1 gap-3">
             {resolvedTypeOptions.map((option) => (
               <Checkbox
                 key={option.value}
-                label={mediaTypeConfig[option.value].label}
+                label={
+                  option.value === MediaType.PHOTO
+                    ? t.vault.mediaTypes.photos
+                    : option.value === MediaType.DOCUMENT
+                      ? t.vault.mediaTypes.documents
+                      : t.vault.mediaTypes.videos
+                }
                 count={option.count}
                 icon={mediaTypeConfig[option.value].icon}
                 checked={selectedTypes.includes(option.value)}
@@ -195,7 +203,7 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
         </div>
 
         <div className="space-y-4 lg:border-l dark:border-slate-800 lg:pl-10">
-          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Locations</h3>
+          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.vault.filters.locations}</h3>
           <div className="grid grid-cols-2 sm:grid-cols-1 gap-3">
             {isLoadingOptions && !locationOptions.length ? (
               <FilterSkeletonRows rows={5} />
@@ -212,30 +220,30 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
             )}
             {!isLoadingOptions && !locationOptions.length && (
               <p className="text-[10px] text-slate-400">
-                No locations found
+                {t.vault.filters.noLocations}
               </p>
             )}
           </div>
         </div>
 
         <div className="space-y-4 xl:border-l dark:border-slate-800 xl:pl-10 lg:col-span-2 xl:col-span-1">
-          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Date Range</h3>
+          <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.vault.filters.dateRange}</h3>
           <div className="space-y-3">
             <div className="space-y-1">
-              <span className="text-[9px] font-bold text-slate-400 uppercase">From</span>
+              <span className="text-[9px] font-bold text-slate-400 uppercase">{t.vault.filters.from}</span>
               <DatePicker
                 date={startDate}
                 onChange={onStartDateChange}
-                placeholder="Start date"
+                placeholder={t.vault.filters.startDate}
                 className="scale-90 origin-left"
               />
             </div>
             <div className="space-y-1">
-              <span className="text-[9px] font-bold text-slate-400 uppercase">To</span>
+              <span className="text-[9px] font-bold text-slate-400 uppercase">{t.vault.filters.to}</span>
               <DatePicker
                 date={endDate}
                 onChange={onEndDateChange}
-                placeholder="End date"
+                placeholder={t.vault.filters.endDate}
                 className="scale-90 origin-left"
               />
             </div>
@@ -244,7 +252,7 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
 
         <div className="space-y-6 lg:border-l dark:border-slate-800 lg:pl-10 flex flex-col justify-between">
           <div className="space-y-4">
-            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Era</h3>
+            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.vault.filters.era}</h3>
             <div className="flex flex-wrap gap-2">
               {isLoadingOptions && !eraOptions.length ? (
                 <div className="w-full">
@@ -267,7 +275,7 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
               )}
               {!isLoadingOptions && !eraOptions.length && (
                 <p className="text-[10px] text-slate-400">
-                  No eras found
+                  {t.vault.filters.noEras}
                 </p>
               )}
             </div>
@@ -277,7 +285,7 @@ const VaultFilters: React.FC<VaultFiltersProps> = ({
             onClick={onClear}
             className="w-full py-4 bg-transparent border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 rounded-2xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2 hover:text-primary"
           >
-            <RotateCcw size={14} /> Reset Filters
+            <RotateCcw size={14} /> {t.vault.filters.clear}
           </button>
         </div>
       </div>

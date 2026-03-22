@@ -6,9 +6,33 @@ from .models import MediaAttachment, MediaItem
 
 MAX_UPLOAD_MB = 20
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+IMAGE_EXTENSIONS = {
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.gif',
+    '.bmp',
+    '.tif',
+    '.tiff',
+    '.avif',
+    '.heic',
+    '.heif',
+}
+VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.mpeg', '.mpg'}
+AUDIO_EXTENSIONS = {'.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac'}
 
 
-def resolve_attachment_file_type(mime_type):
+def _file_extension(file_name):
+    token = str(file_name or '').strip().lower()
+    if not token:
+        return ''
+    if '.' not in token:
+        return ''
+    return f'.{token.split(".")[-1]}'
+
+
+def resolve_attachment_file_type(mime_type, file_name=None, fallback_file_type=None):
     normalized = str(mime_type or '').lower()
     if normalized.startswith('image/'):
         return MediaAttachment.FileType.PHOTO
@@ -16,12 +40,26 @@ def resolve_attachment_file_type(mime_type):
         return MediaAttachment.FileType.VIDEO
     if normalized.startswith('audio/'):
         return MediaAttachment.FileType.AUDIO
+
+    extension = _file_extension(file_name)
+    if extension in IMAGE_EXTENSIONS:
+        return MediaAttachment.FileType.PHOTO
+    if extension in VIDEO_EXTENSIONS:
+        return MediaAttachment.FileType.VIDEO
+    if extension in AUDIO_EXTENSIONS:
+        return MediaAttachment.FileType.AUDIO
+
+    normalized_fallback = str(fallback_file_type or '').strip().upper()
+    valid_types = {choice[0] for choice in MediaAttachment.FileType.choices}
+    if normalized_fallback in valid_types:
+        return normalized_fallback
     return MediaAttachment.FileType.DOCUMENT
 
 
 class MediaAttachmentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     is_primary = serializers.SerializerMethodField()
+    file_type = serializers.SerializerMethodField()
 
     class Meta:
         model = MediaAttachment
@@ -43,6 +81,13 @@ class MediaAttachmentSerializer(serializers.ModelSerializer):
 
     def get_is_primary(self, _obj):
         return False
+
+    def get_file_type(self, obj):
+        return resolve_attachment_file_type(
+            obj.mime_type,
+            file_name=obj.original_name or getattr(obj.file, 'name', ''),
+            fallback_file_type=obj.file_type,
+        )
 
 class MediaItemSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
@@ -67,6 +112,9 @@ class MediaItemSerializer(serializers.ModelSerializer):
             'face_detection_status',
             'face_detection_error',
             'face_detection_processed_at',
+            'restoration_status',
+            'restoration_error',
+            'restoration_processed_at',
             'created_at',
             'metadata',
             'files',
@@ -86,6 +134,9 @@ class MediaItemSerializer(serializers.ModelSerializer):
             'face_detection_status',
             'face_detection_error',
             'face_detection_processed_at',
+            'restoration_status',
+            'restoration_error',
+            'restoration_processed_at',
             'created_at',
         )
 
@@ -125,7 +176,17 @@ class MediaItemSerializer(serializers.ModelSerializer):
                     'file_url': build_storage_file_url(obj.file, request=request),
                     'file_size': int(obj.file.size or 0),
                     'mime_type': mime_type,
-                    'file_type': resolve_attachment_file_type(mime_type),
+                    'file_type': resolve_attachment_file_type(
+                        mime_type,
+                        file_name=original_name,
+                        fallback_file_type=(
+                            MediaAttachment.FileType.PHOTO
+                            if obj.media_type == MediaItem.MediaType.PHOTO
+                            else MediaAttachment.FileType.VIDEO
+                            if obj.media_type == MediaItem.MediaType.VIDEO
+                            else MediaAttachment.FileType.DOCUMENT
+                        ),
+                    ),
                     'original_name': original_name,
                     'is_primary': True,
                     'created_at': obj.created_at,

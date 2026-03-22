@@ -1,5 +1,5 @@
-import logging
 import hashlib
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from .exif import extract_exif_payload
 from .models import MediaAttachment, MediaItem
-from .vision import detect_faces
+from .vision import detect_faces, restore_legacy_photo
 
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,42 @@ def _safe_delete_storage_file(path: str):
             default_storage.delete(token)
     except Exception:
         logger.warning('Failed to delete stale face thumbnail "%s".', token, exc_info=True)
+
+
+def _normalize_restoration_options(raw_options: Any) -> dict[str, bool]:
+    normalized = raw_options if isinstance(raw_options, dict) else {}
+    apply_colorize = bool(normalized.get('colorize', True))
+    apply_denoise = bool(normalized.get('denoise', True))
+    return {
+        'colorize': apply_colorize,
+        'denoise': apply_denoise,
+    }
+
+
+def _normalize_result_path(raw_value: Any) -> str:
+    return str(raw_value or '').strip().lstrip('/')
+
+
+def _normalize_restoration_results(raw_payload: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw_payload, dict):
+        return {}
+
+    raw_results = raw_payload.get('results')
+    if not isinstance(raw_results, dict):
+        return {}
+
+    normalized_results = {}
+    for raw_file_id, raw_entry in raw_results.items():
+        file_id = str(raw_file_id or '').strip()
+        if not file_id or not isinstance(raw_entry, dict):
+            continue
+        restored_path = _normalize_result_path(
+            raw_entry.get('restored_path') or raw_entry.get('restoredPath')
+        )
+        if not restored_path:
+            continue
+        normalized_results[file_id] = dict(raw_entry)
+    return normalized_results
 
 
 def _cleanup_face_thumbnails(payload: Any):
@@ -330,3 +366,143 @@ def detect_media_faces_task(self, media_item_id: str):
         face_detection_processed_at=now,
     )
     return {'status': 'completed', 'reason': 'faces-detected'}
+
+
+@shared_task(bind=True)
+def restore_media_photo_task(self, media_item_id: str, file_id: str, options: dict | None = None):
+    task_id = str(getattr(self.request, 'id', '') or '')
+    media_item = MediaItem.objects.filter(pk=media_item_id).first()
+    if not media_item:
+        return {'status': 'skipped', 'reason': 'media-not-found'}
+
+    if not _is_current_task(str(media_item_id), task_id, task_field='restoration_task_id'):
+        return {'status': 'skipped', 'reason': 'stale-task'}
+
+    if media_item.media_type != MediaItem.MediaType.PHOTO:
+        MediaItem.objects.filter(pk=media_item_id, restoration_task_id=task_id).update(
+            restoration_status=MediaItem.RestorationStatus.NOT_AVAILABLE,
+            restoration_error='Media restoration is available only for photo items.',
+            restoration_processed_at=timezone.now(),
+            restoration_task_id='',
+        )
+        return {'status': 'completed', 'reason': 'not-a-photo'}
+
+    normalized_file_id = str(file_id or '').strip()
+    if not normalized_file_id:
+        normalized_file_id = f'primary-{media_item.id}'
+    normalized_options = _normalize_restoration_options(options)
+    if not normalized_options['colorize'] and not normalized_options['denoise']:
+        MediaItem.objects.filter(pk=media_item_id, restoration_task_id=task_id).update(
+            restoration_status=MediaItem.RestorationStatus.FAILED,
+            restoration_error='Select at least one restoration tool (colorize or denoise).',
+            restoration_processed_at=timezone.now(),
+            restoration_task_id='',
+        )
+        return {'status': 'failed', 'reason': 'no-tools-selected'}
+
+    MediaItem.objects.filter(pk=media_item_id, restoration_task_id=task_id).update(
+        restoration_status=MediaItem.RestorationStatus.PROCESSING,
+        restoration_error='',
+    )
+
+    selected_source = next(
+        (
+            source
+            for source in _iter_media_files(media_item)
+            if str(source.get('file_id') or '').strip() == normalized_file_id
+        ),
+        None,
+    )
+    if not selected_source:
+        MediaItem.objects.filter(pk=media_item_id, restoration_task_id=task_id).update(
+            restoration_status=MediaItem.RestorationStatus.FAILED,
+            restoration_error='Selected file was not found for this memory item.',
+            restoration_processed_at=timezone.now(),
+            restoration_task_id='',
+        )
+        return {'status': 'failed', 'reason': 'file-not-found'}
+
+    generated_path = ''
+    try:
+        restoration_payload = restore_legacy_photo(
+            selected_source['file_obj'],
+            apply_colorize=normalized_options['colorize'],
+            apply_denoise=normalized_options['denoise'],
+        )
+        if not _is_current_task(str(media_item_id), task_id, task_field='restoration_task_id'):
+            return {'status': 'skipped', 'reason': 'stale-task'}
+
+        restored_bytes = restoration_payload.get('image_bytes')
+        if not isinstance(restored_bytes, (bytes, bytearray)) or not restored_bytes:
+            raise RuntimeError('Restoration output is empty.')
+
+        source_name = str(selected_source.get('original_name') or 'memory-file').strip() or 'memory-file'
+        source_stem = Path(source_name).stem or 'memory-file'
+        target_file_name = f'{source_stem}-restored.jpg'
+        generated_path = default_storage.save(
+            f'restored-media/{media_item_id}/{task_id}/{target_file_name}',
+            ContentFile(bytes(restored_bytes)),
+        )
+        if not _is_current_task(str(media_item_id), task_id, task_field='restoration_task_id'):
+            _safe_delete_storage_file(generated_path)
+            return {'status': 'skipped', 'reason': 'stale-task'}
+
+        current_payload = (
+            MediaItem.objects.filter(pk=media_item_id).values_list('restoration_data', flat=True).first()
+        )
+        next_payload = dict(current_payload) if isinstance(current_payload, dict) else {}
+        results_by_file_id = _normalize_restoration_results(next_payload)
+        previous_entry = results_by_file_id.get(normalized_file_id)
+        previous_path = _normalize_result_path(
+            (previous_entry or {}).get('restored_path') or (previous_entry or {}).get('restoredPath')
+        )
+        if previous_path and previous_path != _normalize_result_path(generated_path):
+            _safe_delete_storage_file(previous_path)
+
+        warnings = restoration_payload.get('warnings')
+        normalized_warnings = (
+            [str(item).strip() for item in warnings if str(item).strip()]
+            if isinstance(warnings, list)
+            else []
+        )
+        now = timezone.now()
+        results_by_file_id[normalized_file_id] = {
+            'file_id': normalized_file_id,
+            'original_name': str(selected_source.get('original_name') or 'Memory file'),
+            'is_primary': bool(selected_source.get('is_primary')),
+            'restored_path': generated_path,
+            'task_id': task_id,
+            'processed_at': now.isoformat(),
+            'width': int(restoration_payload.get('width') or 0),
+            'height': int(restoration_payload.get('height') or 0),
+            'detected_black_and_white': bool(restoration_payload.get('detected_black_and_white')),
+            'requested_options': normalized_options,
+            'applied_options': restoration_payload.get('applied')
+            if isinstance(restoration_payload.get('applied'), dict)
+            else normalized_options,
+            'warnings': normalized_warnings,
+        }
+        next_payload['results'] = results_by_file_id
+        next_payload['last_result_file_id'] = normalized_file_id
+        next_payload['last_processed_at'] = now.isoformat()
+        next_payload['last_task_id'] = task_id
+
+        MediaItem.objects.filter(pk=media_item_id, restoration_task_id=task_id).update(
+            restoration_status=MediaItem.RestorationStatus.COMPLETED,
+            restoration_error='',
+            restoration_data=next_payload,
+            restoration_processed_at=now,
+        )
+        return {'status': 'completed', 'reason': 'restoration-ready'}
+    except Exception as exc:
+        logger.exception('Media restoration failed for media item %s file %s', media_item_id, normalized_file_id)
+        if generated_path:
+            _safe_delete_storage_file(generated_path)
+        if _is_current_task(str(media_item_id), task_id, task_field='restoration_task_id'):
+            MediaItem.objects.filter(pk=media_item_id, restoration_task_id=task_id).update(
+                restoration_status=MediaItem.RestorationStatus.FAILED,
+                restoration_error=f'Media restoration failed: {exc}',
+                restoration_processed_at=timezone.now(),
+                restoration_task_id='',
+            )
+        return {'status': 'failed', 'reason': 'restoration-error'}

@@ -6,6 +6,8 @@ import type {
     ApiMediaFilterSummary,
     ApiMediaExifStatusResponse,
     ApiMediaFaceDetectionStatusResponse,
+    ApiMediaRestorationStatusResponse,
+    ApiMediaRestorationResult,
     ApiDetectedFace,
     PaginatedApiResponse,
 } from '../types/api.types';
@@ -16,6 +18,9 @@ import {
     MediaExifWorkflowStatus,
     MediaFaceDetectionStatus,
     MediaFaceDetectionWorkflowStatus,
+    MediaRestorationStatus,
+    MediaRestorationWorkflowStatus,
+    MediaRestorationResult,
 } from '../types';
 import { MediaType } from '../types';
 import { appEnv } from './env';
@@ -32,10 +37,38 @@ const toAbsoluteUrl = (value?: string | null): string | null => {
     }
 };
 
+const extractFileExtension = (value?: string | null): string => {
+    const token = String(value || '').trim().toLowerCase();
+    if (!token) return '';
+    const sanitized = token.split('?')[0].split('#')[0];
+    const lastDot = sanitized.lastIndexOf('.');
+    if (lastDot < 0 || lastDot === sanitized.length - 1) return '';
+    return sanitized.slice(lastDot);
+};
+
+const IMAGE_EXTENSIONS = new Set([
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.gif',
+    '.bmp',
+    '.tif',
+    '.tiff',
+    '.avif',
+    '.heic',
+    '.heif',
+]);
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.mpeg', '.mpg']);
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac']);
+
 const resolveMediaType = (file: File): MediaType => {
     const mime = file.type.toLowerCase();
     if (mime.startsWith('image/')) return MediaType.PHOTO;
     if (mime.startsWith('video/')) return MediaType.VIDEO;
+    const extension = extractFileExtension(file.name);
+    if (IMAGE_EXTENSIONS.has(extension)) return MediaType.PHOTO;
+    if (VIDEO_EXTENSIONS.has(extension)) return MediaType.VIDEO;
     return MediaType.DOCUMENT;
 };
 
@@ -85,6 +118,15 @@ const normalizeFaceDetectionStatus = (value?: string | null): MediaFaceDetection
     return MediaFaceDetectionStatus.NOT_STARTED;
 };
 
+const normalizeRestorationStatus = (value?: string | null): MediaRestorationStatus => {
+    const normalized = String(value || '').trim().toUpperCase();
+    const validStatuses = Object.values(MediaRestorationStatus);
+    if (validStatuses.includes(normalized as MediaRestorationStatus)) {
+        return normalized as MediaRestorationStatus;
+    }
+    return MediaRestorationStatus.NOT_STARTED;
+};
+
 const parseLinkedRelatives = (item: ApiMediaItem): MediaItem['linkedRelatives'] => {
     const rawRelatives = (Array.isArray(item.linkedRelatives) ? item.linkedRelatives : (item as any).linked_relatives) || [];
     if (!Array.isArray(rawRelatives)) return [];
@@ -113,11 +155,17 @@ const parseLinkedRelatives = (item: ApiMediaItem): MediaItem['linkedRelatives'] 
 const resolveFileTypeFromMime = (
     mimeType?: string,
     fallbackMediaType?: MediaType,
+    fileName?: string,
 ): 'PHOTO' | 'VIDEO' | 'AUDIO' | 'DOCUMENT' => {
     const mime = String(mimeType || '').toLowerCase();
     if (mime.startsWith('image/')) return 'PHOTO';
     if (mime.startsWith('video/')) return 'VIDEO';
     if (mime.startsWith('audio/')) return 'AUDIO';
+
+    const extension = extractFileExtension(fileName);
+    if (IMAGE_EXTENSIONS.has(extension)) return 'PHOTO';
+    if (VIDEO_EXTENSIONS.has(extension)) return 'VIDEO';
+    if (AUDIO_EXTENSIONS.has(extension)) return 'AUDIO';
 
     if (fallbackMediaType === MediaType.PHOTO) return 'PHOTO';
     if (fallbackMediaType === MediaType.VIDEO) return 'VIDEO';
@@ -132,18 +180,27 @@ const mapApiFiles = (item: ApiMediaItem): MediaItem['files'] => {
                 const fileUrl = toAbsoluteUrl(entry.fileUrl);
                 if (!fileUrl) return null;
                 const normalizedFileType = String(entry.fileType || '').toUpperCase();
+                const inferredFileType = resolveFileTypeFromMime(
+                    entry.mimeType,
+                    item.mediaType,
+                    entry.originalName || entry.fileUrl || undefined,
+                );
+                const resolvedFileType =
+                    normalizedFileType === 'PHOTO' ||
+                    normalizedFileType === 'VIDEO' ||
+                    normalizedFileType === 'AUDIO'
+                        ? (normalizedFileType as 'PHOTO' | 'VIDEO' | 'AUDIO')
+                        : normalizedFileType === 'DOCUMENT' && inferredFileType !== 'DOCUMENT'
+                            ? inferredFileType
+                            : normalizedFileType === 'DOCUMENT'
+                                ? 'DOCUMENT'
+                                : inferredFileType;
                 return {
                     id: String(entry.id || fileUrl),
                     fileUrl,
                     fileSize: Number(entry.fileSize || 0),
                     mimeType: entry.mimeType || undefined,
-                    fileType:
-                        normalizedFileType === 'PHOTO' ||
-                        normalizedFileType === 'VIDEO' ||
-                        normalizedFileType === 'AUDIO' ||
-                        normalizedFileType === 'DOCUMENT'
-                            ? (normalizedFileType as 'PHOTO' | 'VIDEO' | 'AUDIO' | 'DOCUMENT')
-                            : resolveFileTypeFromMime(entry.mimeType, item.mediaType),
+                    fileType: resolvedFileType,
                     originalName: String(entry.originalName || 'Attachment'),
                     isPrimary: Boolean(entry.isPrimary),
                     createdAt: entry.createdAt || undefined,
@@ -161,7 +218,7 @@ const mapApiFiles = (item: ApiMediaItem): MediaItem['files'] => {
             fileUrl: fallbackUrl,
             fileSize: 0,
             mimeType: undefined,
-            fileType: resolveFileTypeFromMime(undefined, item.mediaType),
+            fileType: resolveFileTypeFromMime(undefined, item.mediaType, item.title || fallbackUrl),
             originalName: item.title || 'Memory file',
             isPrimary: true,
             createdAt: item.createdAt,
@@ -231,10 +288,76 @@ const parseDetectedFaces = (item: ApiMediaItem | Record<string, unknown>): Media
         .filter(Boolean) as MediaItem['detectedFaces'];
 };
 
+const parseRestorationOptions = (
+    options?: Record<string, unknown> | null,
+    defaults: { colorize: boolean; denoise: boolean } = { colorize: true, denoise: true },
+): { colorize: boolean; denoise: boolean } => ({
+    colorize: Boolean((options as any)?.colorize ?? defaults.colorize),
+    denoise: Boolean((options as any)?.denoise ?? defaults.denoise),
+});
+
+const parseRestorationResult = (
+    entry: ApiMediaRestorationResult | Record<string, unknown> | null | undefined,
+): MediaRestorationResult | null => {
+    if (!entry || typeof entry !== 'object') return null;
+
+    const fileId = String((entry as any).fileId ?? (entry as any).file_id ?? '').trim();
+    if (!fileId) return null;
+
+    const restoredPath = String((entry as any).restoredPath ?? (entry as any).restored_path ?? '').trim();
+    const restoredUrl = toAbsoluteUrl(String((entry as any).restoredUrl ?? (entry as any).restored_url ?? '').trim());
+    const warnings = Array.isArray((entry as any).warnings)
+        ? (entry as any).warnings.map((warning: unknown) => String(warning).trim()).filter(Boolean)
+        : [];
+
+    return {
+        fileId,
+        originalName: String((entry as any).originalName ?? (entry as any).original_name ?? 'Memory file').trim() || 'Memory file',
+        isPrimary: Boolean((entry as any).isPrimary ?? (entry as any).is_primary),
+        restoredPath: restoredPath || undefined,
+        restoredUrl: restoredUrl || undefined,
+        processedAt:
+            typeof (entry as any).processedAt === 'string'
+                ? (entry as any).processedAt
+                : typeof (entry as any).processed_at === 'string'
+                    ? (entry as any).processed_at
+                    : undefined,
+        taskId: String((entry as any).taskId ?? (entry as any).task_id ?? '').trim() || undefined,
+        width: Number.isFinite(Number((entry as any).width)) ? Number((entry as any).width) : undefined,
+        height: Number.isFinite(Number((entry as any).height)) ? Number((entry as any).height) : undefined,
+        detectedBlackAndWhite: Boolean(
+            (entry as any).detectedBlackAndWhite ?? (entry as any).detected_black_and_white,
+        ),
+        requestedOptions: parseRestorationOptions(
+            ((entry as any).requestedOptions ??
+                (entry as any).requested_options ??
+                null) as Record<string, unknown> | null,
+        ),
+        appliedOptions: parseRestorationOptions(
+            ((entry as any).appliedOptions ??
+                (entry as any).applied_options ??
+                null) as Record<string, unknown> | null,
+            { colorize: false, denoise: false },
+        ),
+        warnings: warnings.length ? warnings : undefined,
+    };
+};
+
 const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => {
     const files = mapApiFiles(item);
     const primaryFile = files.find((file) => file.isPrimary) || files[0];
     const thumbnailFile = files.find((file) => file.fileType === 'PHOTO') || primaryFile;
+    const inferredPrimaryMediaType =
+        primaryFile?.fileType === 'PHOTO'
+            ? MediaType.PHOTO
+            : primaryFile?.fileType === 'VIDEO'
+                ? MediaType.VIDEO
+                : MediaType.DOCUMENT;
+    const resolvedMediaType =
+        item.mediaType === MediaType.DOCUMENT &&
+        inferredPrimaryMediaType === MediaType.PHOTO
+            ? MediaType.PHOTO
+            : item.mediaType;
 
     return {
         id: String(item.id),
@@ -244,7 +367,7 @@ const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => {
         uploaderAvatar: toAbsoluteUrl(String(item.uploaderAvatar ?? (item as any).uploader_avatar ?? '').trim()) || undefined,
         linkedRelatives: parseLinkedRelatives(item),
         isFavorite: Boolean(item.isFavorite),
-        type: item.mediaType,
+        type: resolvedMediaType,
         visibility: normalizeVisibility((item as any).visibility),
         title: item.title || 'Untitled memory',
         description: item.description || '',
@@ -267,6 +390,16 @@ const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => {
         faceDetectionProcessedAt:
             (item as any).faceDetectionProcessedAt ??
             (item as any).face_detection_processed_at ??
+            undefined,
+        restorationStatus: normalizeRestorationStatus(
+            (item as any).restorationStatus ?? (item as any).restoration_status,
+        ),
+        restorationError: String(
+            (item as any).restorationError ?? (item as any).restoration_error ?? '',
+        ).trim() || undefined,
+        restorationProcessedAt:
+            (item as any).restorationProcessedAt ??
+            (item as any).restoration_processed_at ??
             undefined,
         location: parseMetadataLocation(item.metadata),
         metadata: (item.metadata && typeof item.metadata === 'object' ? item.metadata : {}) as Record<string, unknown>,
@@ -326,6 +459,12 @@ export interface ConfirmExifPayload {
 export interface RotateMediaFilePayload {
     fileId?: string;
     degrees: number;
+}
+
+export interface RestoreMediaFilePayload {
+    fileId?: string;
+    colorize?: boolean;
+    denoise?: boolean;
 }
 
 export interface MediaQueryParams {
@@ -600,6 +739,75 @@ export const mediaApi = {
                 ? payload.warnings.map((warning: unknown) => String(warning).trim()).filter(Boolean)
                 : undefined,
         };
+    },
+
+    getRestorationStatus: async (
+        mediaId: string,
+        fileId?: string,
+    ): Promise<MediaRestorationWorkflowStatus> => {
+        const response = await axiosClient.get<ApiMediaRestorationStatusResponse | Record<string, unknown>>(
+            `${MEDIA_ENDPOINT}${mediaId}/restoration-status/`,
+            {
+                params: fileId ? { fileId } : undefined,
+            },
+        );
+        const payload: any = response.data || {};
+        const parsedResult = parseRestorationResult(
+            payload.result && typeof payload.result === 'object'
+                ? (payload.result as ApiMediaRestorationResult)
+                : undefined,
+        );
+        const parsedResults = Array.isArray(payload.results)
+            ? payload.results
+                .map((entry: unknown) => parseRestorationResult(entry as ApiMediaRestorationResult))
+                .filter(Boolean)
+            : [];
+        const warnings = Array.isArray(payload.warnings)
+            ? payload.warnings.map((warning: unknown) => String(warning).trim()).filter(Boolean)
+            : parsedResult?.warnings;
+
+        return {
+            mediaId: String(payload.mediaId ?? payload.media_id ?? mediaId),
+            status: normalizeRestorationStatus(payload.status),
+            error: String(payload.error || '').trim() || undefined,
+            taskId: String(payload.taskId ?? payload.task_id ?? '').trim() || undefined,
+            processedAt:
+                typeof payload.processedAt === 'string'
+                    ? payload.processedAt
+                    : typeof payload.processed_at === 'string'
+                        ? payload.processed_at
+                        : undefined,
+            selectedFileId:
+                String(payload.selectedFileId ?? payload.selected_file_id ?? fileId ?? '').trim() ||
+                parsedResult?.fileId,
+            requestedOptions: parseRestorationOptions(
+                (payload.requestedOptions ?? payload.requested_options ?? null) as
+                    | Record<string, unknown>
+                    | null,
+            ),
+            result: parsedResult || undefined,
+            results: parsedResults as MediaRestorationResult[],
+            warnings: warnings && warnings.length ? warnings : undefined,
+        };
+    },
+
+    restoreMediaFile: async (
+        mediaId: string,
+        payload: RestoreMediaFilePayload,
+    ): Promise<MediaRestorationWorkflowStatus> => {
+        const response = await axiosClient.post<ApiMediaRestorationStatusResponse | Record<string, unknown>>(
+            `${MEDIA_ENDPOINT}${mediaId}/restore/`,
+            {
+                fileId: payload.fileId || undefined,
+                colorize: payload.colorize ?? true,
+                denoise: payload.denoise ?? true,
+            },
+        );
+        const normalized = response.data || {};
+        const requestedFileId =
+            String((normalized as any).selectedFileId ?? (normalized as any).selected_file_id ?? payload.fileId ?? '').trim() ||
+            payload.fileId;
+        return mediaApi.getRestorationStatus(mediaId, requestedFileId);
     },
 
     confirmExif: async (mediaId: string, payload: ConfirmExifPayload): Promise<MediaItem> => {

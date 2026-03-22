@@ -12,10 +12,18 @@ class MediaItemAdmin(admin.ModelAdmin):
         'ai_status',
         'exif_status',
         'face_detection_status',
+        'restoration_status',
         'created_at',
     )
     search_fields = ('title', 'description', 'uploader__email', 'uploader__full_name')
-    list_filter = ('media_type', 'ai_status', 'exif_status', 'face_detection_status', 'created_at')
+    list_filter = (
+        'media_type',
+        'ai_status',
+        'exif_status',
+        'face_detection_status',
+        'restoration_status',
+        'created_at',
+    )
 
 
 @admin.register(MediaFavorite)

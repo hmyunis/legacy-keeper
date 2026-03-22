@@ -50,7 +50,7 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-5. Start Redis + Celery worker (required for EXIF + face detection background processing):
+5. Start Redis + Celery worker (required for EXIF, face detection, and restoration background processing):
 
 ```bash
 redis-server
@@ -67,6 +67,12 @@ When a memory is created or edited:
 4. Worker detects faces, stores normalized bounding boxes, and generates face thumbnails.
 5. Uploader confirms or rejects extracted EXIF metadata.
 6. Family members confirm each detected face by linking it to a `PersonProfile`.
+
+When restoration is triggered for a photo:
+
+1. Backend enqueues `media.tasks.restore_media_photo_task` to queue `media`.
+2. Worker applies denoise and/or colorize operations on the selected photo file.
+3. Restored output is persisted and returned via restoration status endpoint.
 
 EXIF status lifecycle:
 
@@ -97,6 +103,20 @@ Relevant API actions:
 - `GET /api/media/{id}/face-detection-status/`
 - `POST /api/genealogy/tags/` (manual face confirmation by linking profile)
 
+Restoration status lifecycle:
+
+- `NOT_STARTED`
+- `QUEUED`
+- `PROCESSING`
+- `COMPLETED`
+- `NOT_AVAILABLE`
+- `FAILED`
+
+Relevant API actions:
+
+- `POST /api/media/{id}/restore/`
+- `GET /api/media/{id}/restoration-status/`
+
 ## API Documentation
 
 - Swagger: `http://127.0.0.1:8000/api/docs/`
@@ -122,6 +142,21 @@ Important storage URL variables (MinIO/S3):
 - `AWS_USE_PRESIGNED_URLS` (default: `True`)
 - `AWS_PRESIGNED_URL_EXPIRE` (default: `900` seconds)
 - `AWS_S3_PRESIGNED_ENDPOINT_URL` (public endpoint used in signed links, e.g. `http://localhost:9000`)
+
+Media restoration model variables:
+
+- `MEDIA_RESTORATION_MODEL_DIR` (default: `<backend>/models/colorization`)
+- `MEDIA_RESTORATION_AUTO_DOWNLOAD` (default: `True`)
+
+Note: on first high-quality colorization run, backend may download model files and cache them in `MEDIA_RESTORATION_MODEL_DIR`.
+
+To verify readiness, ensure these files exist in `MEDIA_RESTORATION_MODEL_DIR`:
+
+- `colorization_deploy_v2.prototxt`
+- `colorization_release_v2.caffemodel`
+- `pts_in_hull.npy`
+
+For Docker, place the files in `/app/models/colorization` inside the `media_worker` container. If your runtime has no outbound internet, download the files manually.
 
 ## VAPID Keys (Push Notifications)
 

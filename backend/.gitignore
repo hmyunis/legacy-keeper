@@ -2,6 +2,9 @@
 db.sqlite3
 .env
 /media/uploads/
+/media/face-thumbnails/
+/media/restored-media/
+/models/colorization/
 .idea/
 .vscode/
 Desktop.ini

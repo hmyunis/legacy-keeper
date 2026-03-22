@@ -1,12 +1,12 @@
 export const helpCenter = {
   header: {
     badge: "Knowledge Base",
-    title: "How can we assist your legacy?",
-    subtitle: "Search our comprehensive guides for managing your family vault, mapping lineage, and securing historical data."
+    title: "Help Center",
+    subtitle: "Find step-by-step guides for uploads, AI review, restoration, member access, timeline views, and vault settings."
   },
   searchPlaceholder: "Search keywords, modules, or features...",
   actions: {
-    learn: "Learn Procedure",
+    learn: "View Guide",
     clear: "Clear Search",
     gotIt: "Got it"
   },
@@ -15,80 +15,150 @@ export const helpCenter = {
     subtitle: "Try using broader keywords or explore our module categories above."
   },
   modal: {
-    overview: "Overview",
-    procedure: "Step-by-Step Procedure",
-    proTip: "Archivist Pro-Tip",
-    proTipContent: "Always include \"The Story\" when preserving media. It adds context that AI cannot detect, ensuring your heritage remains meaningful for generations."
+    overview: "Summary",
+    procedure: "How to do it",
+    proTip: "Quick Tip",
+    proTipContent: "For photo uploads, review EXIF and face detection results before relying on timeline date or person links."
   },
   categories: {
     vault: "Vault Preservation",
     lineage: "Lineage Mapping",
     members: "Member Governance",
     security: "System Security",
-    timeline: "Chronological Navigation"
+    timeline: "Chronological Navigation",
+    settings: "Vault Settings"
   },
   articles: {
     upload: {
-      title: "Uploading Archival Media",
-      content: "The Vault is the core of your legacy. Learn how to securely upload and categorize artifacts.",
+      title: "Upload Memories",
+      content: "Create a memory with up to 10 files, choose a primary file, and set visibility and story details.",
       steps: [
-        "Navigate to the Vault module from the sidebar.",
-        "Click \"Preserve Memory\" to open the upload portal.",
-        "Drag and drop files or select them from your device.",
-        "Add a title, date, and \"The Story\" to provide historical context.",
-        "Click Preserve to initialize archival storage."
+        "Open the Vault page from the sidebar.",
+        "Click \"Preserve Memory\" (Admin/Contributor only).",
+        "Add up to 10 files and choose the primary file.",
+        "Fill in title, date, location, tags, story, and privacy (Private or Family).",
+        "Click Preserve. Photo EXIF and face detection start in the background."
+      ]
+    },
+    search: {
+      title: "Search, Filters, and Favorites",
+      content: "Use search and filters to quickly find specific memories, then save key items as favorites.",
+      steps: [
+        "Use the Vault search bar for keywords or natural phrases (for example: wedding 1950).",
+        "Open Filters to narrow by people, tags, media type, location, era, or date range.",
+        "Switch between grid/list view and change sort order.",
+        "Use \"All Items\" and \"Favorites\" tabs to focus your view.",
+        "Click \"Reset Filters\" or clear search to return to the full library."
       ]
     },
     ai: {
-      title: "AI Deep Scan & Tagging",
-      content: "Leverage our AI engine to automatically identify faces and detect locations.",
+      title: "EXIF and Face Review",
+      content: "Photo AI runs after upload: EXIF extraction and face detection both require human review.",
       steps: [
-        "Open any media item from your vault.",
-        "Click the \"AI Deep Scan\" button.",
-        "Once complete, click the detected face thumbnails.",
-        "Select a family member from your lineage to link the biometric data.",
-        "Tags are automatically generated to improve vault searchability."
+        "Open a photo in the detail modal.",
+        "Watch EXIF and face badges until processing is complete.",
+        "If \"EXIF needs review\" appears, the uploader can Accept or Reject the extracted data.",
+        "For unknown faces, click a face thumbnail and link it to a relative profile.",
+        "Use \"Draw Tag\" to manually box a person when needed."
+      ]
+    },
+    restoration: {
+      title: "Restore Old Photos",
+      content: "Run photo restoration with denoise and colorize options, then compare before/after output.",
+      steps: [
+        "Open a photo and go to the Restoration panel.",
+        "Choose one or both tools: Denoise and Colorize.",
+        "Click \"Restore Photo\" and wait for queued/processing status to finish.",
+        "Review warnings if shown and compare original vs restored preview.",
+        "Download or continue editing once restoration is completed."
       ]
     },
     tree: {
-      title: "Building the Family Tree",
-      content: "Visualize generations and connect branches of your family history.",
+      title: "Build and Maintain Family Tree",
+      content: "Create profiles, define relationships, and keep lineage context connected to vault media.",
       steps: [
-        "Access the Family Tree module.",
-        "Click \"Add Relative\" to create a new profile for an ancestor or descendant.",
-        "Fill in their birth details and a brief biography.",
-        "Use the \"Link Kin\" tool to establish Parent, Adoptive Parent, Spouse, or Sibling relationships.",
-        "Adjust zoom controls to see your entire lineage at once."
+        "Open Family Tree and add profiles with name, dates, birthplace, bio, and portrait.",
+        "Use \"Link Kin\" to create Parent, Adoptive Parent, Spouse, or Sibling links.",
+        "Click a person node to edit profile details.",
+        "Use zoom controls to navigate large trees.",
+        "Review the \"Mapped Relationships\" list to verify and remove incorrect links."
       ]
     },
     invite: {
-      title: "Inviting Family Members",
-      content: "Collaborate with your relatives by inviting them to the vault.",
+      title: "Invite and Manage Members",
+      content: "Admins can invite by email, assign roles, and manage active or pending membership.",
       steps: [
-        "Go to the Members page (Admin only).",
-        "Click \"Invite Member\" and enter their archival email.",
-        "Select a Role: Administrator, Contributor, or Viewer.",
-        "Once they accept, their status will move from Pending to Active."
+        "Go to Members (Admin only).",
+        "Click \"Invite Member\" and send an invite as Contributor or Viewer.",
+        "Use search and role filters to find members quickly.",
+        "Update role for pending/active entries when needed.",
+        "Revoke pending invites or remove members from the table actions."
+      ]
+    },
+    shareLinks: {
+      title: "Shareable Invite Links",
+      content: "Generate reusable join links with role and expiry controls for easier onboarding.",
+      steps: [
+        "In Members, open the \"Shareable Invite Links\" section.",
+        "Select a role and expiry date, then click \"Generate Shareable Link\".",
+        "Copy and share the generated link.",
+        "Track joined count and status (Active, Expired, Revoked).",
+        "Revoke or delete links when they are no longer needed."
       ]
     },
     audit: {
-      title: "Understanding Audit Logs",
-      content: "Monitor all interactions within your vault for total accountability.",
+      title: "Audit Logs and Export",
+      content: "Admins can trace access and management events, then export filtered logs to spreadsheet.",
       steps: [
-        "The System Registry maintains a verifiable ledger of every action.",
-        "Filter logs by Category (Uploads, Access, Management) to find specific events.",
-        "Search for actors or resources to track modifications.",
-        "Download a full Audit Record for offline verification."
+        "Open Audit Logs (Admin only).",
+        "Filter by category and timeframe; use search for actor/action/resource.",
+        "Sort columns and paginate through historical records.",
+        "Click Refresh to sync latest entries.",
+        "Use \"Download Audit\" to export current filtered data."
       ]
     },
     timeline: {
-      title: "Exploring the Timeline",
-      content: "Browse your family history through a linear chronological path.",
+      title: "Use Timeline View",
+      content: "Navigate memories by decade and sort order, then open cards for detailed context.",
       steps: [
-        "The Timeline automatically sorts media by \"Date Taken\".",
-        "Use the Era filters (e.g., 1950s) to jump to specific decades.",
-        "Scroll through \"The Harrington Chronicle\" to see how your legacy evolved.",
-        "Each card provides a snapshot of the story, location, and people involved."
+        "Open Timeline from the sidebar.",
+        "Choose order: Newest First or Oldest First.",
+        "Use decade chips or \"All Eras\" to scope results.",
+        "Open a timeline card to inspect media details and linked people.",
+        "Use the progress indicator at the bottom to see active date range coverage."
+      ]
+    },
+    notifications: {
+      title: "Notification Preferences",
+      content: "Control in-app and push delivery channels plus event-level alert preferences.",
+      steps: [
+        "Go to Settings > Archival Alerts.",
+        "Toggle in-app notifications and browser push (when VAPID is available).",
+        "Choose event types: uploads, comments, tree updates, security alerts, member joins.",
+        "Use \"Test Push\" to verify delivery.",
+        "Use the bell menu in the header to mark read, dismiss, or clear notifications."
+      ]
+    },
+    vaultPrefs: {
+      title: "Vault Policies and Health",
+      content: "Admins can tune vault defaults and run duplicate-file cleanup safely.",
+      steps: [
+        "Open Settings > Vault Prefs.",
+        "Set Family Name, Storage Quality, and default Privacy baseline.",
+        "Adjust the Delete Safety Window for contributor edits/deletes.",
+        "Open Archival Health analysis and review duplicate groups.",
+        "Run Safe Preview before cleanup, then clean selected groups when ready."
+      ]
+    },
+    ownership: {
+      title: "Transfer Ownership and Leave Vault",
+      content: "Use ownership transfer before leaving when you are the current vault owner/admin.",
+      steps: [
+        "In Vault Prefs, choose an active contributor as transfer target.",
+        "Confirm transfer with your current admin password.",
+        "After transfer, your role becomes Contributor.",
+        "Admins cannot leave directly until ownership is transferred.",
+        "Use \"Leave Vault\" only when you are ready to lose current vault access."
       ]
     }
   }

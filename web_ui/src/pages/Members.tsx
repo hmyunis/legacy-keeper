@@ -133,28 +133,28 @@ const Members: React.FC = () => {
         document.body.removeChild(textarea);
       }
       setCopiedKey(key);
-      toast.success('Copied link to clipboard');
+      toast.success(t.members.feedback.copiedLink);
       setTimeout(() => setCopiedKey((prev) => (prev === key ? null : prev)), 1500);
     } catch {
-      toast.error('Unable to copy link', { description: 'Please copy it manually.' });
+      toast.error(t.members.feedback.copyFailed, { description: t.members.feedback.copyManually });
     }
   };
 
   const handleGenerateShareableLink = (event: React.FormEvent) => {
     event.preventDefault();
     if (!shareableExpiry) {
-      toast.error('Please select an expiry date');
+      toast.error(t.members.feedback.selectExpiryDate);
       return;
     }
 
     const expiresAtDate = new Date(shareableExpiry);
     expiresAtDate.setHours(23, 59, 59, 999);
     if (Number.isNaN(expiresAtDate.getTime())) {
-      toast.error('Invalid expiry date');
+      toast.error(t.members.feedback.invalidExpiryDate);
       return;
     }
     if (expiresAtDate.getTime() <= Date.now()) {
-      toast.error('Expiry must be in the future');
+      toast.error(t.members.feedback.expiryMustBeFuture);
       return;
     }
 
@@ -443,11 +443,11 @@ const Members: React.FC = () => {
 	                          }
 	                        >
 	                          <SelectTrigger className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border uppercase bg-transparent ${getRoleBadge(m.role)}`}>
-	                            <SelectValue placeholder="Role" />
+	                            <SelectValue placeholder={t.members.role.placeholder} />
 	                          </SelectTrigger>
 	                          <SelectContent>
-	                            <SelectItem value={UserRole.CONTRIBUTOR}>CONTRIBUTOR</SelectItem>
-	                            <SelectItem value={UserRole.VIEWER}>VIEWER</SelectItem>
+	                            <SelectItem value={UserRole.CONTRIBUTOR}>{t.members.role.contributor}</SelectItem>
+	                            <SelectItem value={UserRole.VIEWER}>{t.members.role.viewer}</SelectItem>
 	                          </SelectContent>
 	                        </Select>
 	                      </div>
@@ -471,7 +471,7 @@ const Members: React.FC = () => {
                               <Trash2 size={16} />
                             </button>
                           </TooltipTrigger>
-                          <TooltipContent>{m.status === MemberStatus.PENDING ? 'Revoke invite' : 'Remove member'}</TooltipContent>
+                          <TooltipContent>{m.status === MemberStatus.PENDING ? t.members.shareable.tooltips.revokeInvite : t.members.shareable.tooltips.removeMember}</TooltipContent>
                         </Tooltip>
                       </div>
                     </td>
@@ -479,7 +479,7 @@ const Members: React.FC = () => {
                 ))}
                 {!isLoading && allMembers.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-8 py-20 text-center text-slate-400 uppercase text-[10px] font-bold tracking-widest">No matching members found</td>
+                    <td colSpan={5} className="px-8 py-20 text-center text-slate-400 uppercase text-[10px] font-bold tracking-widest">{t.members.shareable.noMatchingMembers}</td>
                   </tr>
                 )}
               </tbody>
@@ -492,10 +492,10 @@ const Members: React.FC = () => {
         <div className="p-6 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40">
           <div className="flex items-center gap-2 mb-2">
             <Link2 size={16} className="text-primary" />
-            <h2 className="text-sm font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Shareable Invite Links</h2>
+            <h2 className="text-sm font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">{t.members.shareable.title}</h2>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Generate reusable links with role and expiry. Recipients will follow the same join flow.
+            {t.members.shareable.subtitle}
           </p>
         </div>
 
@@ -503,17 +503,17 @@ const Members: React.FC = () => {
 	          <form onSubmit={handleGenerateShareableLink} className="grid grid-cols-1 md:grid-cols-4 gap-3">
 	            <Select value={shareableRole} onValueChange={(value) => setShareableRole(value as UserRole)} className="w-full">
 	              <SelectTrigger className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl py-2.5 px-3 text-xs font-bold uppercase focus:outline-none focus:ring-2 focus:ring-primary/20">
-	                <SelectValue placeholder="Select role" />
+	                <SelectValue placeholder={t.members.role.selectRole} />
 	              </SelectTrigger>
 	              <SelectContent>
-	                <SelectItem value={UserRole.CONTRIBUTOR}>CONTRIBUTOR</SelectItem>
-	                <SelectItem value={UserRole.VIEWER}>VIEWER</SelectItem>
+	                <SelectItem value={UserRole.CONTRIBUTOR}>{t.members.role.contributor}</SelectItem>
+	                <SelectItem value={UserRole.VIEWER}>{t.members.role.viewer}</SelectItem>
 	              </SelectContent>
 	            </Select>
 	            <DatePicker
 	              date={shareableExpiry}
 	              onChange={setShareableExpiry}
-	              placeholder="Select expiry date"
+	              placeholder={t.members.shareable.selectExpiryDate}
 	              className="w-full"
 	            />
 	            <button
@@ -522,7 +522,7 @@ const Members: React.FC = () => {
               className="md:col-span-2 bg-primary text-white px-5 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:opacity-90 glow-primary active:scale-[0.99] transition-all disabled:opacity-50 uppercase tracking-widest"
             >
               <UserPlus size={14} />
-              {createShareableMutation.isPending ? 'Generating...' : 'Generate Shareable Link'}
+              {createShareableMutation.isPending ? t.members.shareable.generating : t.members.shareable.generate}
             </button>
           </form>
 
@@ -541,10 +541,10 @@ const Members: React.FC = () => {
                     className="inline-flex items-center gap-1 px-3 py-2 text-[10px] font-black uppercase tracking-widest border border-slate-300 dark:border-slate-600 rounded-lg text-slate-700 dark:text-slate-200 hover:border-primary transition-all"
                   >
                     <Copy size={12} />
-                    {copiedKey === `latest:${latestGeneratedLink}` ? 'Copied' : 'Copy'}
+                    {copiedKey === `latest:${latestGeneratedLink}` ? t.members.feedback.copied : t.members.feedback.copy}
                   </button>
                 </TooltipTrigger>
-                <TooltipContent>Copy link</TooltipContent>
+                <TooltipContent>{t.members.shareable.tooltips.copyLink}</TooltipContent>
               </Tooltip>
             </div>
           )}
@@ -555,12 +555,12 @@ const Members: React.FC = () => {
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-black uppercase text-slate-400 bg-slate-50/30 dark:bg-slate-950/20">
                 <th className="px-6 py-4 w-16">#</th>
-                <th className="px-6 py-4">Link</th>
-                <th className="px-6 py-4">Role</th>
-                <th className="px-6 py-4">Expires</th>
-                <th className="px-6 py-4">Joined</th>
-                <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4 text-right">Actions</th>
+                <th className="px-6 py-4">{t.members.shareable.table.link}</th>
+                <th className="px-6 py-4">{t.members.shareable.table.role}</th>
+                <th className="px-6 py-4">{t.members.shareable.table.expires}</th>
+                <th className="px-6 py-4">{t.members.shareable.table.joined}</th>
+                <th className="px-6 py-4">{t.members.shareable.table.status}</th>
+                <th className="px-6 py-4 text-right">{t.members.shareable.table.actions}</th>
               </tr>
             </thead>
             <tbody>
@@ -584,7 +584,7 @@ const Members: React.FC = () => {
                 </tr>
               ) : shareableLinks.length ? (
                 shareableLinks.map((link, idx) => {
-                  const statusLabel = link.isRevoked ? 'Revoked' : link.isExpired ? 'Expired' : 'Active';
+                  const statusLabel = link.isRevoked ? t.members.shareable.status.revoked : link.isExpired ? t.members.shareable.status.expired : t.members.shareable.status.active;
                   const statusClass = link.isRevoked
                     ? 'text-rose-600 dark:text-rose-400'
                     : link.isExpired
@@ -608,9 +608,9 @@ const Members: React.FC = () => {
                                 <Copy size={12} />
                               </button>
                             </TooltipTrigger>
-                            <TooltipContent>Copy link</TooltipContent>
+                            <TooltipContent>{t.members.shareable.tooltips.copyLink}</TooltipContent>
                           </Tooltip>
-                          {copiedKey === `row:${link.id}` && <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">Copied</span>}
+                          {copiedKey === `row:${link.id}` && <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">{t.members.feedback.copied}</span>}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-200">{link.role}</td>
@@ -632,7 +632,7 @@ const Members: React.FC = () => {
                                 <Ban size={14} />
                               </button>
                             </TooltipTrigger>
-                            <TooltipContent>{link.isRevoked ? 'Already revoked' : 'Revoke link'}</TooltipContent>
+                            <TooltipContent>{link.isRevoked ? t.members.shareable.tooltips.alreadyRevoked : t.members.shareable.tooltips.revokeLink}</TooltipContent>
                           </Tooltip>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -645,7 +645,7 @@ const Members: React.FC = () => {
                                 <Trash size={14} />
                               </button>
                             </TooltipTrigger>
-                            <TooltipContent>Delete link</TooltipContent>
+                            <TooltipContent>{t.members.shareable.tooltips.deleteLink}</TooltipContent>
                           </Tooltip>
                         </div>
                       </td>
@@ -655,7 +655,7 @@ const Members: React.FC = () => {
               ) : (
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-slate-400 uppercase text-[10px] font-bold tracking-widest">
-                    No shareable links generated yet
+                    {t.members.shareable.empty}
                   </td>
                 </tr>
               )}

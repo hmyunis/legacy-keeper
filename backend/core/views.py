@@ -13,11 +13,29 @@ HELP_ARTICLES = [
         "order": 10,
     },
     {
+        "id": "search",
+        "category_key": "vault",
+        "icon_key": "search",
+        "allowed_roles": [
+            Membership.Roles.ADMIN,
+            Membership.Roles.CONTRIBUTOR,
+            Membership.Roles.VIEWER,
+        ],
+        "order": 15,
+    },
+    {
         "id": "ai",
         "category_key": "vault",
         "icon_key": "sparkles",
         "allowed_roles": [Membership.Roles.ADMIN, Membership.Roles.CONTRIBUTOR],
         "order": 20,
+    },
+    {
+        "id": "restoration",
+        "category_key": "vault",
+        "icon_key": "refresh_cw",
+        "allowed_roles": [Membership.Roles.ADMIN, Membership.Roles.CONTRIBUTOR],
+        "order": 25,
     },
     {
         "id": "tree",
@@ -38,6 +56,13 @@ HELP_ARTICLES = [
         "order": 40,
     },
     {
+        "id": "shareLinks",
+        "category_key": "members",
+        "icon_key": "link_2",
+        "allowed_roles": [Membership.Roles.ADMIN],
+        "order": 45,
+    },
+    {
         "id": "audit",
         "category_key": "security",
         "icon_key": "shield_check",
@@ -54,6 +79,31 @@ HELP_ARTICLES = [
             Membership.Roles.VIEWER,
         ],
         "order": 60,
+    },
+    {
+        "id": "notifications",
+        "category_key": "settings",
+        "icon_key": "bell",
+        "allowed_roles": [
+            Membership.Roles.ADMIN,
+            Membership.Roles.CONTRIBUTOR,
+            Membership.Roles.VIEWER,
+        ],
+        "order": 70,
+    },
+    {
+        "id": "vaultPrefs",
+        "category_key": "settings",
+        "icon_key": "settings",
+        "allowed_roles": [Membership.Roles.ADMIN],
+        "order": 80,
+    },
+    {
+        "id": "ownership",
+        "category_key": "settings",
+        "icon_key": "shield_check",
+        "allowed_roles": [Membership.Roles.ADMIN],
+        "order": 90,
     },
 ]
 

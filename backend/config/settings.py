@@ -126,6 +126,7 @@ CELERY_RESULT_EXPIRES = config('CELERY_RESULT_EXPIRES', default=86400, cast=int)
 CELERY_TASK_ROUTES = {
     'media.tasks.extract_media_exif_task': {'queue': 'media'},
     'media.tasks.detect_media_faces_task': {'queue': 'media'},
+    'media.tasks.restore_media_photo_task': {'queue': 'media'},
 }
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     'visibility_timeout': config('CELERY_VISIBILITY_TIMEOUT', default=3600, cast=int),
@@ -240,3 +241,14 @@ else:
             'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
         },
     }
+
+# --- Media Restoration (Denoise + Colorize) ---
+MEDIA_RESTORATION_MODEL_DIR = config(
+    'MEDIA_RESTORATION_MODEL_DIR',
+    default=os.path.join(BASE_DIR, 'models', 'colorization'),
+)
+MEDIA_RESTORATION_AUTO_DOWNLOAD = config(
+    'MEDIA_RESTORATION_AUTO_DOWNLOAD',
+    default=True,
+    cast=bool,
+)

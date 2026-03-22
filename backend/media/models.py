@@ -94,6 +94,14 @@ class MediaItem(TimeStampedModel):
         NOT_AVAILABLE = 'NOT_AVAILABLE', _('Not Available')
         FAILED = 'FAILED', _('Failed')
 
+    class RestorationStatus(models.TextChoices):
+        NOT_STARTED = 'NOT_STARTED', _('Not Started')
+        QUEUED = 'QUEUED', _('Queued')
+        PROCESSING = 'PROCESSING', _('Processing')
+        COMPLETED = 'COMPLETED', _('Completed')
+        NOT_AVAILABLE = 'NOT_AVAILABLE', _('Not Available')
+        FAILED = 'FAILED', _('Failed')
+
     # Relationships
     vault = models.ForeignKey(FamilyVault, on_delete=models.CASCADE, related_name='media_items')
     uploader = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='uploaded_media')
@@ -140,6 +148,16 @@ class MediaItem(TimeStampedModel):
     face_detection_data = models.JSONField(default=dict, blank=True)
     face_detection_task_id = models.CharField(max_length=64, blank=True, default='')
     face_detection_processed_at = models.DateTimeField(null=True, blank=True)
+    restoration_status = models.CharField(
+        max_length=32,
+        choices=RestorationStatus.choices,
+        default=RestorationStatus.NOT_STARTED,
+        db_index=True,
+    )
+    restoration_error = models.TextField(blank=True, default='')
+    restoration_data = models.JSONField(default=dict, blank=True)
+    restoration_task_id = models.CharField(max_length=64, blank=True, default='')
+    restoration_processed_at = models.DateTimeField(null=True, blank=True)
 
     def _calculate_content_hash(self):
         return compute_storage_file_hash(self.file)

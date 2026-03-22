@@ -38,6 +38,15 @@ export enum MediaFaceDetectionStatus {
   FAILED = 'FAILED',
 }
 
+export enum MediaRestorationStatus {
+  NOT_STARTED = 'NOT_STARTED',
+  QUEUED = 'QUEUED',
+  PROCESSING = 'PROCESSING',
+  COMPLETED = 'COMPLETED',
+  NOT_AVAILABLE = 'NOT_AVAILABLE',
+  FAILED = 'FAILED',
+}
+
 export enum MediaType {
   PHOTO = 'PHOTO',
   DOCUMENT = 'DOCUMENT',
@@ -161,6 +170,9 @@ export interface MediaItem {
   faceDetectionStatus: MediaFaceDetectionStatus;
   faceDetectionError?: string;
   faceDetectionProcessedAt?: string;
+  restorationStatus: MediaRestorationStatus;
+  restorationError?: string;
+  restorationProcessedAt?: string;
   location?: string;
   metadata?: Record<string, unknown>;
   files: MediaFile[];
@@ -233,6 +245,44 @@ export interface MediaFaceDetectionWorkflowStatus {
   processedAt?: string;
   faceCount: number;
   faces: DetectedFace[];
+  warnings?: string[];
+}
+
+export interface MediaRestorationResult {
+  fileId: string;
+  originalName: string;
+  isPrimary: boolean;
+  restoredPath?: string;
+  restoredUrl?: string;
+  processedAt?: string;
+  taskId?: string;
+  width?: number;
+  height?: number;
+  detectedBlackAndWhite?: boolean;
+  requestedOptions?: {
+    colorize: boolean;
+    denoise: boolean;
+  };
+  appliedOptions?: {
+    colorize: boolean;
+    denoise: boolean;
+  };
+  warnings?: string[];
+}
+
+export interface MediaRestorationWorkflowStatus {
+  mediaId: string;
+  status: MediaRestorationStatus;
+  error?: string;
+  taskId?: string;
+  processedAt?: string;
+  selectedFileId?: string;
+  requestedOptions?: {
+    colorize: boolean;
+    denoise: boolean;
+  };
+  result?: MediaRestorationResult;
+  results: MediaRestorationResult[];
   warnings?: string[];
 }
 

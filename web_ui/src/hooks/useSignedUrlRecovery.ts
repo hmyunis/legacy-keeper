@@ -53,7 +53,8 @@ export const useSignedUrlRecovery = () => {
 
       refreshTasks.push(
         queryClient.invalidateQueries({ queryKey: ['mediaExifStatus', mediaId], refetchType: 'active' }),
-        queryClient.invalidateQueries({ queryKey: ['mediaFaceDetectionStatus', mediaId], refetchType: 'active' })
+        queryClient.invalidateQueries({ queryKey: ['mediaFaceDetectionStatus', mediaId], refetchType: 'active' }),
+        queryClient.invalidateQueries({ queryKey: ['mediaRestorationStatus', mediaId], refetchType: 'active' })
       );
       await Promise.allSettled(refreshTasks);
 

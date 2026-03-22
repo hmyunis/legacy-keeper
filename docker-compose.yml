@@ -72,6 +72,7 @@ services:
       - ./backend/.env.docker
     volumes:
       - backend_vapid:/data/vapid
+      - backend_models:/app/models
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,6 +97,8 @@ services:
     env_file:
       - ./backend/.env.docker
     command: celery -A config worker -l info -Q default,media
+    volumes:
+      - backend_models:/app/models
     depends_on:
       backend:
         condition: service_healthy
@@ -124,4 +127,5 @@ volumes:
   postgres_data:
   minio_data:
   backend_vapid:
+  backend_models:
   redis_data:

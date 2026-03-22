@@ -5,8 +5,9 @@ import json
 import mimetypes
 from pathlib import Path
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.db.models import Count, Exists, Max, Min, OuterRef, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -34,6 +35,27 @@ class MediaItemViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser, JSONParser) # Includes JSON actions like favorite toggle
     USER_UPLOAD_QUOTA_BYTES = 10 * 1024 * 1024 * 1024
     USER_UPLOAD_QUOTA_LABEL = '10 GB'
+    IMAGE_EXTENSIONS = {
+        '.jpg',
+        '.jpeg',
+        '.png',
+        '.webp',
+        '.gif',
+        '.bmp',
+        '.tif',
+        '.tiff',
+        '.avif',
+        '.heic',
+        '.heif',
+    }
+    VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.mpeg', '.mpg'}
+    AUDIO_EXTENSIONS = {'.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac'}
+
+    def _extract_file_extension(self, file_name):
+        token = str(file_name or '').strip().lower()
+        if not token:
+            return ''
+        return Path(token).suffix.lower()
 
     def _get_vault_id(self):
         return self.kwargs.get('vault_pk') or self.request.query_params.get('vault')
@@ -86,6 +108,19 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         if normalized in ('false', '0', 'no', 'off'):
             return False
         return None
+
+    def _supports_json_contains_lookup(self):
+        return bool(getattr(connection.features, 'supports_json_field_contains', False))
+
+    def _build_tag_lookup_query(self, tag_value):
+        normalized_tag = str(tag_value or '').strip()
+        if not normalized_tag:
+            return Q()
+
+        query = Q(metadata__icontains=f'"{normalized_tag}"')
+        if self._supports_json_contains_lookup():
+            query |= Q(metadata__tags__contains=[normalized_tag])
+        return query
 
     def _apply_search_keyword_terms(self, queryset, terms):
         for term in terms:
@@ -152,10 +187,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                     normalized_tag = str(tag_term).strip()
                     if not normalized_tag:
                         continue
-                    queryset = queryset.filter(
-                        Q(metadata__tags__contains=[normalized_tag])
-                        | Q(metadata__icontains=f'"{normalized_tag}"')
-                    )
+                    queryset = queryset.filter(self._build_tag_lookup_query(normalized_tag))
 
                 for location_term in parsed_search.location_terms:
                     normalized_location = str(location_term).strip()
@@ -188,8 +220,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                 if not normalized_tag:
                     continue
                 has_tag_condition = True
-                tags_query |= Q(metadata__tags__contains=[normalized_tag])
-                tags_query |= Q(metadata__icontains=f'"{normalized_tag}"')
+                tags_query |= self._build_tag_lookup_query(normalized_tag)
 
             if has_tag_condition:
                 queryset = queryset.filter(tags_query)
@@ -247,7 +278,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
 
         raise ValidationError({'metadata': ['Metadata must be valid JSON.']})
 
-    def _resolve_media_type(self, uploaded_file, requested_media_type=None):
+    def _resolve_media_type(self, uploaded_file, requested_media_type=None, original_file_name=None):
         valid_media_types = {choice[0] for choice in MediaItem.MediaType.choices}
         normalized_requested = str(requested_media_type or '').strip().upper()
         if normalized_requested in valid_media_types:
@@ -260,6 +291,13 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         if content_type.startswith('image/'):
             return MediaItem.MediaType.PHOTO
         if content_type.startswith('video/'):
+            return MediaItem.MediaType.VIDEO
+        extension = self._extract_file_extension(
+            str(original_file_name or '') or str(getattr(uploaded_file, 'name', '') or '')
+        )
+        if extension in self.IMAGE_EXTENSIONS:
+            return MediaItem.MediaType.PHOTO
+        if extension in self.VIDEO_EXTENSIONS:
             return MediaItem.MediaType.VIDEO
         return MediaItem.MediaType.DOCUMENT
 
@@ -568,6 +606,174 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             'warnings': payload.get('warnings') if isinstance(payload.get('warnings'), list) else [],
         }
 
+    def _normalize_restoration_options(self, request):
+        apply_colorize = self._parse_bool(request.data.get('colorize'))
+        apply_denoise = self._parse_bool(request.data.get('denoise'))
+
+        if apply_colorize is None:
+            apply_colorize = True
+        if apply_denoise is None:
+            apply_denoise = True
+
+        return {
+            'colorize': bool(apply_colorize),
+            'denoise': bool(apply_denoise),
+        }
+
+    def _normalize_restoration_result_entry(self, file_id, raw_entry):
+        if not isinstance(raw_entry, dict):
+            return None
+
+        normalized_file_id = str(file_id or raw_entry.get('file_id') or raw_entry.get('fileId') or '').strip()
+        if not normalized_file_id:
+            return None
+
+        restored_path = str(raw_entry.get('restored_path') or raw_entry.get('restoredPath') or '').strip()
+        if not restored_path:
+            return None
+
+        warnings = raw_entry.get('warnings')
+        normalized_warnings = (
+            [str(item).strip() for item in warnings if str(item).strip()]
+            if isinstance(warnings, list)
+            else []
+        )
+
+        requested_options = (
+            raw_entry.get('requested_options')
+            if isinstance(raw_entry.get('requested_options'), dict)
+            else raw_entry.get('requestedOptions')
+            if isinstance(raw_entry.get('requestedOptions'), dict)
+            else {}
+        )
+        applied_options = (
+            raw_entry.get('applied_options')
+            if isinstance(raw_entry.get('applied_options'), dict)
+            else raw_entry.get('appliedOptions')
+            if isinstance(raw_entry.get('appliedOptions'), dict)
+            else {}
+        )
+        try:
+            width = int(raw_entry.get('width') or 0)
+        except (TypeError, ValueError):
+            width = 0
+        try:
+            height = int(raw_entry.get('height') or 0)
+        except (TypeError, ValueError):
+            height = 0
+
+        return {
+            'file_id': normalized_file_id,
+            'original_name': str(raw_entry.get('original_name') or raw_entry.get('originalName') or 'Memory file'),
+            'is_primary': bool(raw_entry.get('is_primary', raw_entry.get('isPrimary', False))),
+            'restored_path': restored_path,
+            'restored_url': build_storage_path_url(restored_path, request=self.request),
+            'processed_at': raw_entry.get('processed_at') or raw_entry.get('processedAt'),
+            'task_id': str(raw_entry.get('task_id') or raw_entry.get('taskId') or ''),
+            'width': width,
+            'height': height,
+            'detected_black_and_white': bool(
+                raw_entry.get('detected_black_and_white', raw_entry.get('detectedBlackAndWhite', False))
+            ),
+            'requested_options': {
+                'colorize': bool(requested_options.get('colorize', True)),
+                'denoise': bool(requested_options.get('denoise', True)),
+            },
+            'applied_options': {
+                'colorize': bool(applied_options.get('colorize', False)),
+                'denoise': bool(applied_options.get('denoise', False)),
+            },
+            'warnings': normalized_warnings,
+        }
+
+    def _normalize_restoration_results(self, media_item):
+        payload = media_item.restoration_data if isinstance(media_item.restoration_data, dict) else {}
+        raw_results = payload.get('results') if isinstance(payload.get('results'), dict) else {}
+        normalized_results = {}
+        for file_id, raw_entry in raw_results.items():
+            normalized_entry = self._normalize_restoration_result_entry(file_id, raw_entry)
+            if not normalized_entry:
+                continue
+            normalized_results[normalized_entry['file_id']] = normalized_entry
+        return normalized_results
+
+    def _delete_restoration_output_paths(self, raw_payload):
+        if not isinstance(raw_payload, dict):
+            return
+        raw_results = raw_payload.get('results')
+        if not isinstance(raw_results, dict):
+            return
+
+        for raw_entry in raw_results.values():
+            if not isinstance(raw_entry, dict):
+                continue
+            restored_path = str(raw_entry.get('restored_path') or raw_entry.get('restoredPath') or '').strip()
+            if not restored_path:
+                continue
+            normalized_path = restored_path.lstrip('/')
+            try:
+                if default_storage.exists(normalized_path):
+                    default_storage.delete(normalized_path)
+            except Exception:
+                continue
+
+    def _reset_restoration_workflow(self, media_item, *, cleanup_existing_outputs=False):
+        if cleanup_existing_outputs:
+            self._delete_restoration_output_paths(
+                media_item.restoration_data if isinstance(media_item.restoration_data, dict) else {}
+            )
+
+        media_item.restoration_status = MediaItem.RestorationStatus.NOT_STARTED
+        media_item.restoration_error = ''
+        media_item.restoration_data = {}
+        media_item.restoration_task_id = ''
+        media_item.restoration_processed_at = None
+        media_item.save(
+            update_fields=[
+                'restoration_status',
+                'restoration_error',
+                'restoration_data',
+                'restoration_task_id',
+                'restoration_processed_at',
+            ]
+        )
+
+    def _serialize_restoration_status(self, media_item, requested_file_id=None):
+        payload = media_item.restoration_data if isinstance(media_item.restoration_data, dict) else {}
+        normalized_results = self._normalize_restoration_results(media_item)
+        selected_file_id = str(requested_file_id or '').strip()
+        if not selected_file_id:
+            selected_file_id = str(payload.get('last_result_file_id') or payload.get('lastResultFileId') or '').strip()
+        if not selected_file_id and normalized_results:
+            selected_file_id = next(iter(normalized_results.keys()))
+
+        result_entry = normalized_results.get(selected_file_id)
+        all_results = list(normalized_results.values())
+        all_results.sort(key=lambda entry: str(entry.get('processed_at') or ''), reverse=True)
+
+        requested_options = (
+            payload.get('last_request', {}).get('options')
+            if isinstance(payload.get('last_request'), dict)
+            else {}
+        )
+        warnings = result_entry.get('warnings') if result_entry else []
+
+        return {
+            'media_id': str(media_item.id),
+            'status': media_item.restoration_status,
+            'error': media_item.restoration_error or '',
+            'task_id': media_item.restoration_task_id or '',
+            'processed_at': media_item.restoration_processed_at,
+            'selected_file_id': selected_file_id,
+            'requested_options': {
+                'colorize': bool(requested_options.get('colorize', True)),
+                'denoise': bool(requested_options.get('denoise', True)),
+            },
+            'result': result_entry,
+            'results': all_results,
+            'warnings': warnings if isinstance(warnings, list) else [],
+        }
+
     def _resolve_ordering(self):
         sort_alias = (self.request.query_params.get('sort') or '').strip().lower()
         sort_to_ordering = {
@@ -628,7 +834,22 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         if content_type:
             return content_type
         file_name = str(getattr(uploaded_file, 'name', '') or '').strip().lower()
-        return str(mimetypes.guess_type(file_name)[0] or '')
+        guessed = str(mimetypes.guess_type(file_name)[0] or '').strip().lower()
+        if guessed:
+            return guessed
+
+        extension = self._extract_file_extension(file_name)
+        if extension in self.IMAGE_EXTENSIONS:
+            if extension == '.webp':
+                return 'image/webp'
+            if extension in {'.jpg', '.jpeg'}:
+                return 'image/jpeg'
+            return f'image/{extension.lstrip(".")}'
+        if extension in self.VIDEO_EXTENSIONS:
+            return 'video/mp4'
+        if extension in self.AUDIO_EXTENSIONS:
+            return 'audio/mpeg'
+        return ''
 
     def _clone_storage_file(self, source_file):
         if not source_file:
@@ -702,7 +923,12 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         ).first()
         if not attachment:
             raise ValidationError({'fileId': ['Selected file was not found.']})
-        if attachment.file_type != MediaAttachment.FileType.PHOTO:
+        resolved_attachment_type = resolve_attachment_file_type(
+            attachment.mime_type,
+            file_name=attachment.original_name or getattr(attachment.file, 'name', ''),
+            fallback_file_type=attachment.file_type,
+        )
+        if resolved_attachment_type != MediaAttachment.FileType.PHOTO:
             raise ValidationError({'fileId': ['The selected file is not a photo.']})
         if not attachment.file:
             raise ValidationError({'fileId': ['Selected attachment file is missing.']})
@@ -864,9 +1090,14 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                         continue
 
                     media_item.file = cloned_file
-                    if candidate_attachment.file_type == MediaAttachment.FileType.PHOTO:
+                    candidate_file_type = resolve_attachment_file_type(
+                        candidate_attachment.mime_type,
+                        file_name=candidate_attachment.original_name or getattr(candidate_attachment.file, 'name', ''),
+                        fallback_file_type=candidate_attachment.file_type,
+                    )
+                    if candidate_file_type == MediaAttachment.FileType.PHOTO:
                         media_item.media_type = MediaItem.MediaType.PHOTO
-                    elif candidate_attachment.file_type == MediaAttachment.FileType.VIDEO:
+                    elif candidate_file_type == MediaAttachment.FileType.VIDEO:
                         media_item.media_type = MediaItem.MediaType.VIDEO
                     else:
                         media_item.media_type = MediaItem.MediaType.DOCUMENT
@@ -883,14 +1114,20 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                 elif pending_new_files:
                     replacement = pending_new_files.pop(0)
                     media_item.file = replacement
-                    media_item.media_type = self._resolve_media_type(replacement)
+                    media_item.media_type = self._resolve_media_type(
+                        replacement,
+                        original_file_name=getattr(replacement, 'name', ''),
+                    )
                     next_metadata['primaryFileName'] = replacement.name
                 else:
                     raise ValidationError({'removeFileIds': ['At least one file must remain attached to this memory.']})
             elif pending_new_files:
                 replacement = pending_new_files.pop(0)
                 media_item.file = replacement
-                media_item.media_type = self._resolve_media_type(replacement)
+                media_item.media_type = self._resolve_media_type(
+                    replacement,
+                    original_file_name=getattr(replacement, 'name', ''),
+                )
                 next_metadata['primaryFileName'] = replacement.name
             else:
                 raise ValidationError({'removeFileIds': ['At least one file must remain attached to this memory.']})
@@ -904,7 +1141,10 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                 media_item=media_item,
                 file=uploaded_file,
                 mime_type=mime_type,
-                file_type=resolve_attachment_file_type(mime_type),
+                file_type=resolve_attachment_file_type(
+                    mime_type,
+                    file_name=getattr(uploaded_file, 'name', ''),
+                ),
                 original_name=uploaded_file.name,
             )
 
@@ -920,6 +1160,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         if remove_primary:
             update_fields.extend(['file', 'media_type'])
         media_item.save(update_fields=update_fields)
+        self._reset_restoration_workflow(media_item, cleanup_existing_outputs=True)
 
         return media_item
 
@@ -1089,6 +1330,45 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         media_item = self.get_object()
         return Response(self._serialize_face_detection_status(media_item))
 
+    @decorators.action(detail=True, methods=['get'], url_path='restoration-status')
+    def restoration_status(self, request, pk=None):
+        media_item = self.get_object()
+        requested_file_id = str(request.query_params.get('fileId', request.query_params.get('file_id')) or '').strip()
+        return Response(self._serialize_restoration_status(media_item, requested_file_id or None))
+
+    @decorators.action(detail=True, methods=['post'], url_path='restore')
+    def restore_photo(self, request, pk=None):
+        media_item = self.get_object()
+        self._enforce_edit_permissions(media_item)
+
+        if media_item.media_type != MediaItem.MediaType.PHOTO:
+            raise ValidationError({'detail': 'Media restoration is only available for photos.'})
+
+        _target_kind, _target_obj, target_file_id = self._resolve_rotation_target(media_item, request)
+        options = self._normalize_restoration_options(request)
+        if not options['colorize'] and not options['denoise']:
+            raise ValidationError({'detail': 'Select at least one tool: colorize or denoise.'})
+
+        current_status = media_item.restoration_status
+        if current_status in (
+            MediaItem.RestorationStatus.QUEUED,
+            MediaItem.RestorationStatus.PROCESSING,
+        ):
+            payload = self._serialize_restoration_status(media_item, target_file_id)
+            payload['detail'] = 'A restoration job is already running for this media item.'
+            return Response(payload, status=status.HTTP_200_OK)
+
+        AIProcessingService().enqueue_media_restoration(
+            media_item,
+            file_id=target_file_id,
+            options=options,
+        )
+        media_item.refresh_from_db()
+        return Response(
+            self._serialize_restoration_status(media_item, target_file_id),
+            status=status.HTTP_202_ACCEPTED,
+        )
+
     @decorators.action(detail=True, methods=['post'], url_path='exif-confirm')
     def exif_confirm(self, request, pk=None):
         media_item = self.get_object()
@@ -1232,6 +1512,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                 detected_face_id='',
                 tagged_file_id='',
             )
+            self._reset_restoration_workflow(media_item, cleanup_existing_outputs=True)
             self._enforce_user_upload_quota(quota_user)
 
         AIProcessingService().enqueue_face_detection_only(media_item)
@@ -1375,7 +1656,11 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             'file': primary_file,
             'title': shared_title or primary_source_file.name,
             'description': shared_description,
-            'media_type': self._resolve_media_type(primary_file, requested_media_type),
+            'media_type': self._resolve_media_type(
+                primary_file,
+                requested_media_type,
+                original_file_name=primary_source_file.name,
+            ),
             'visibility': self._resolve_visibility(requested_visibility, vault),
             'metadata': primary_metadata,
         }
@@ -1402,7 +1687,10 @@ class MediaItemViewSet(viewsets.ModelViewSet):
                     media_item=media_item,
                     file=uploaded_file,
                     mime_type=mime_type,
-                    file_type=resolve_attachment_file_type(mime_type),
+                    file_type=resolve_attachment_file_type(
+                        mime_type,
+                        file_name=original_file_name,
+                    ),
                     original_name=original_file_name,
                 )
                 total_size += int(attachment.file_size or 0)

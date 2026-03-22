@@ -7,9 +7,11 @@ import { mapApiUserToUser } from '../services/authApi';
 import { getApiErrorMessage } from '../services/httpError';
 import { useAuthStore } from '../stores/authStore';
 import { UserRole } from '../types';
+import { useTranslation } from '../i18n/LanguageContext';
 
 const JoinVault: React.FC = () => {
   const { token } = useParams({ strict: false }) as { token?: string };
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { isAuthenticated, setActiveVault, updateUser, login } = useAuthStore();
 
@@ -30,9 +32,9 @@ const JoinVault: React.FC = () => {
   const missingToken = !token;
   const isPreviewLoading = !missingToken && previewQuery.isPending;
   const previewError = missingToken
-    ? 'The invitation token is missing from this link.'
+    ? t.common.join.invitationTokenMissingLink
     : previewQuery.isError
-      ? getApiErrorMessage(previewQuery.error, 'Unable to validate this invitation link.')
+      ? getApiErrorMessage(previewQuery.error, t.common.join.invitationValidationError)
       : null;
 
   const isAccountExistsPath = !!preview?.accountExists || !!preview?.alreadyMember;
@@ -42,7 +44,7 @@ const JoinVault: React.FC = () => {
   const isSuccess = acceptInviteMutation.isSuccess || joinExistingMutation.isSuccess;
   const authenticatedJoinError =
     !isSuccess && showAuthenticatedJoinStatus && joinExistingMutation.isError
-      ? getApiErrorMessage(joinExistingMutation.error, 'Unable to process this invitation for your account.')
+      ? getApiErrorMessage(joinExistingMutation.error, t.common.join.invitationProcessError)
       : null;
   const joinedRole = acceptInviteMutation.data?.role || joinExistingMutation.data?.role || preview?.role || null;
   const joinedVaultName = acceptInviteMutation.data?.vaultName || joinExistingMutation.data?.vaultName || preview?.vaultName || null;
@@ -106,23 +108,23 @@ const JoinVault: React.FC = () => {
     setShowLoginAction(false);
 
     if (!token) {
-      setInlineError('Invitation token is missing.');
+      setInlineError(t.common.join.invitationTokenMissing);
       return;
     }
     if (!fullName.trim()) {
-      setInlineError('Full name is required.');
+      setInlineError(t.common.join.fullNameRequired);
       return;
     }
     if (preview?.requiresEmail && !email.trim()) {
-      setInlineError('Email is required for this invite.');
+      setInlineError(t.common.join.inviteEmailRequired);
       return;
     }
     if (password.length < 6) {
-      setInlineError('Password must be at least 6 characters.');
+      setInlineError(t.common.join.passwordMinLength);
       return;
     }
     if (password !== confirmPassword) {
-      setInlineError('Passwords do not match.');
+      setInlineError(t.common.recovery.passwordsDoNotMatch);
       return;
     }
 
@@ -155,16 +157,16 @@ const JoinVault: React.FC = () => {
         onError: (error) => {
           const errorCode = extractErrorCode(error);
           if (errorCode === 'ACCOUNT_EXISTS') {
-            setInlineError('An account already exists for this invite email. Please log in to continue.');
+            setInlineError(t.common.join.accountExistsForInvite);
             setShowLoginAction(true);
             return;
           }
           if (errorCode === 'ALREADY_MEMBER') {
-            setInlineError('This email is already a member of this vault. Log in to continue.');
+            setInlineError(t.common.join.alreadyMemberInvite);
             setShowLoginAction(true);
             return;
           }
-          setInlineError(getApiErrorMessage(error, 'Unable to complete invitation.'));
+          setInlineError(getApiErrorMessage(error, t.common.join.inviteCompleteError));
         },
       },
     );
@@ -173,13 +175,13 @@ const JoinVault: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6">
       <div className="w-full max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl p-8 space-y-5">
-        <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Join Family Vault</h1>
+        <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{t.common.join.title}</h1>
 
         {(isPreviewLoading || (showAuthenticatedJoinStatus && joinExistingMutation.isPending)) && (
           <div className="flex items-start gap-3 text-slate-600 dark:text-slate-300">
             <Loader2 size={20} className="animate-spin mt-0.5" />
             <p className="text-sm font-medium">
-              {isAuthenticated ? 'Processing your invitation...' : 'Validating invitation link...'}
+              {isAuthenticated ? t.common.join.processingInvitation : t.common.join.validatingInvitation}
             </p>
           </div>
         )}
@@ -189,7 +191,7 @@ const JoinVault: React.FC = () => {
             <CheckCircle2 size={20} className="mt-0.5" />
             <div className="space-y-1">
               <p className="text-sm font-medium">
-                {acceptInviteMutation.data?.message || joinExistingMutation.data?.message || 'You have joined the vault.'}
+                {acceptInviteMutation.data?.message || joinExistingMutation.data?.message || t.common.join.joinedVaultSuccess}
               </p>
               {joinedVaultName && <p className="text-xs opacity-80">Vault: {joinedVaultName}</p>}
             </div>
@@ -212,53 +214,53 @@ const JoinVault: React.FC = () => {
 
         {preview && !previewError && (
           <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4 space-y-1">
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Invited Vault</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t.common.join.invitedVault}</p>
             <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{preview.vaultName}</p>
-            <p className="text-xs text-slate-500 dark:text-slate-300">Role: {preview.role}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-300">{t.common.join.role}: {preview.role}</p>
             {preview.inviteEmail && (
-              <p className="text-xs text-slate-500 dark:text-slate-300">Invite Email: {preview.inviteEmail}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-300">{t.common.join.inviteEmail}: {preview.inviteEmail}</p>
             )}
           </div>
         )}
 
         {showRegistrationForm && (
           <form onSubmit={handleAcceptInvite} className="space-y-3">
-            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Full Name</label>
+            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">{t.common.auth.fullName}</label>
             <div className="relative">
               <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input
                 type="text"
                 value={fullName}
                 onChange={(event) => setFullName(event.target.value)}
-                placeholder="Your full name"
+                placeholder={t.common.join.yourFullName}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl pl-11 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-slate-100"
               />
             </div>
 
             {preview?.requiresEmail && (
               <>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Email</label>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">{t.common.auth.email}</label>
                 <div className="relative">
                   <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   <input
                     type="email"
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
-                    placeholder="you@example.com"
+                    placeholder={t.common.auth.emailPlaceholder}
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl pl-11 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-slate-100"
                   />
                 </div>
               </>
             )}
 
-            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Password</label>
+            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">{t.common.auth.password}</label>
             <div className="relative">
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Create password"
+                placeholder={t.common.join.createPassword}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl pl-11 pr-11 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-slate-100"
               />
               <button
@@ -270,14 +272,14 @@ const JoinVault: React.FC = () => {
               </button>
             </div>
 
-            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Confirm Password</label>
+            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">{t.common.auth.confirmPassword}</label>
             <div className="relative">
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input
                 type={showConfirmPassword ? 'text' : 'password'}
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
-                placeholder="Confirm password"
+                placeholder={t.common.join.confirmPassword}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl pl-11 pr-11 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-slate-100"
               />
               <button
@@ -301,7 +303,7 @@ const JoinVault: React.FC = () => {
                 }
                 className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200 hover:border-primary transition-all"
               >
-                Log In Instead
+                {t.common.join.logInInstead}
               </button>
             )}
 
@@ -310,7 +312,7 @@ const JoinVault: React.FC = () => {
               disabled={acceptInviteMutation.isPending}
               className="w-full bg-primary text-white py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all disabled:opacity-60"
             >
-              {acceptInviteMutation.isPending ? <Loader2 size={16} className="animate-spin mx-auto" /> : 'Join Vault'}
+              {acceptInviteMutation.isPending ? <Loader2 size={16} className="animate-spin mx-auto" /> : t.common.join.joinVault}
             </button>
           </form>
         )}
@@ -320,7 +322,7 @@ const JoinVault: React.FC = () => {
             <div className="flex items-start gap-3 text-amber-700 dark:text-amber-400">
               <CircleX size={20} className="mt-0.5" />
               <p className="text-sm font-medium">
-                An account already exists for this invite. Log in with your invited email to join this vault.
+                {t.common.join.accountExistsPrompt}
               </p>
             </div>
             <button
@@ -332,7 +334,7 @@ const JoinVault: React.FC = () => {
               }
               className="w-full bg-primary text-white py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all"
             >
-              Go To Login
+              {t.common.auth.goToLogin}
             </button>
           </div>
         )}
@@ -344,21 +346,21 @@ const JoinVault: React.FC = () => {
                 onClick={() => navigate({ to: '/vault' })}
                 className="flex-1 bg-primary text-white py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all"
               >
-                Open Vault
+                {t.common.join.openVault}
               </button>
               {joinedRole === UserRole.ADMIN ? (
                 <button
                   onClick={() => navigate({ to: '/members' })}
                   className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200 hover:border-primary transition-all"
                 >
-                  Manage Members
+                  {t.common.join.manageMembers}
                 </button>
               ) : (
                 <button
                   onClick={() => navigate({ to: '/' })}
                   className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200 hover:border-primary transition-all"
                 >
-                  Go Back
+                  {t.common.auth.goBack}
                 </button>
               )}
             </>
@@ -367,7 +369,7 @@ const JoinVault: React.FC = () => {
               onClick={() => navigate({ to: '/' })}
               className="flex-1 bg-primary text-white py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all"
             >
-              Go Back
+              {t.common.auth.goBack}
             </button>
           )}
           {(previewError || authenticatedJoinError) && !missingToken && (
@@ -392,7 +394,7 @@ const JoinVault: React.FC = () => {
               }}
               className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200 hover:border-primary transition-all"
             >
-              Retry
+              {t.common.auth.retry}
             </button>
           )}
         </div>

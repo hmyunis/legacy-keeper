@@ -105,6 +105,9 @@ export interface ApiMediaItem {
   faceDetectionStatus?: string;
   faceDetectionError?: string;
   faceDetectionProcessedAt?: string | null;
+  restorationStatus?: string;
+  restorationError?: string;
+  restorationProcessedAt?: string | null;
   metadata?: Record<string, unknown> | null;
   files?: ApiMediaFile[];
   detectedFaces?: ApiDetectedFace[] | null;
@@ -178,6 +181,55 @@ export interface ApiMediaFaceDetectionStatusResponse {
   faceCount?: number;
   face_count?: number;
   faces?: ApiDetectedFace[] | null;
+  warnings?: string[] | null;
+}
+
+export interface ApiMediaRestorationOptions {
+  colorize?: boolean;
+  denoise?: boolean;
+}
+
+export interface ApiMediaRestorationResult {
+  fileId?: string;
+  file_id?: string;
+  originalName?: string;
+  original_name?: string;
+  isPrimary?: boolean;
+  is_primary?: boolean;
+  restoredPath?: string | null;
+  restored_path?: string | null;
+  restoredUrl?: string | null;
+  restored_url?: string | null;
+  processedAt?: string | null;
+  processed_at?: string | null;
+  taskId?: string | null;
+  task_id?: string | null;
+  width?: number | null;
+  height?: number | null;
+  detectedBlackAndWhite?: boolean | null;
+  detected_black_and_white?: boolean | null;
+  requestedOptions?: ApiMediaRestorationOptions | null;
+  requested_options?: ApiMediaRestorationOptions | null;
+  appliedOptions?: ApiMediaRestorationOptions | null;
+  applied_options?: ApiMediaRestorationOptions | null;
+  warnings?: string[] | null;
+}
+
+export interface ApiMediaRestorationStatusResponse {
+  mediaId?: string;
+  media_id?: string;
+  status?: string;
+  error?: string;
+  taskId?: string | null;
+  task_id?: string | null;
+  processedAt?: string | null;
+  processed_at?: string | null;
+  selectedFileId?: string | null;
+  selected_file_id?: string | null;
+  requestedOptions?: ApiMediaRestorationOptions | null;
+  requested_options?: ApiMediaRestorationOptions | null;
+  result?: ApiMediaRestorationResult | null;
+  results?: ApiMediaRestorationResult[] | null;
   warnings?: string[] | null;
 }
 

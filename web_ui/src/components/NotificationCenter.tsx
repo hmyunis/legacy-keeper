@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import type { InAppNotification, InAppNotificationType } from '../types';
+import { useTranslation } from '../i18n/LanguageContext';
 
 const typeConfig: Record<InAppNotificationType, { icon: React.ReactNode, color: string }> = {
   upload: { icon: <Database size={14} />, color: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400' },
@@ -24,10 +25,10 @@ const typeConfig: Record<InAppNotificationType, { icon: React.ReactNode, color: 
   system: { icon: <Terminal size={14} />, color: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400' },
 };
 
-const toRelativeTime = (value: string | null | undefined): string => {
-  if (!value) return 'just now';
+const toRelativeTime = (value: string | null | undefined, justNowLabel: string): string => {
+  if (!value) return justNowLabel;
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return 'just now';
+  if (Number.isNaN(parsed.getTime())) return justNowLabel;
   return formatDistanceToNow(parsed, { addSuffix: true });
 };
 
@@ -50,14 +51,15 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({
   onDismiss,
   onClearAll,
 }) => {
+  const { t } = useTranslation();
 
   return (
     <div className="absolute top-full right-0 mt-2 w-[360px] max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2rem] shadow-2xl z-[100] flex flex-col overflow-hidden animate-in zoom-in-95 slide-in-from-top-2 duration-200">
       <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/40">
         <div>
-          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">Archival Activity</h3>
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">{t.common.notifications.title}</h3>
           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black mt-0.5">
-            {unreadCount} Unread Alerts
+            {unreadCount} {t.common.notifications.unreadAlerts}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -65,7 +67,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({
             <button 
               onClick={onMarkAllAsRead}
               className="p-2 text-slate-400 hover:text-primary transition-colors"
-              title="Mark all as read"
+              title={t.common.notifications.markAllRead}
             >
               <CheckCircle2 size={18} />
             </button>
@@ -97,7 +99,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({
                   </p>
                   <div className="flex items-center gap-2 mt-2 text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
                     <Clock size={10} />
-                    {toRelativeTime(n.createdAt)}
+                    {toRelativeTime(n.createdAt, t.common.notifications.justNow)}
                   </div>
                 </div>
                 <button 
@@ -117,8 +119,8 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({
             <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-full text-slate-200 dark:text-slate-700 mb-4">
               <Database size={32} />
             </div>
-            <p className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-widest">Vault is Quiet</p>
-            <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">No new notifications from the family circle today.</p>
+            <p className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-widest">{t.common.notifications.quietTitle}</p>
+            <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">{t.common.notifications.quietSubtitle}</p>
           </div>
         )}
       </div>
@@ -129,7 +131,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({
             onClick={onClearAll}
             className="w-full py-2.5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-rose-500 transition-colors"
           >
-            Purge History
+            {t.common.notifications.purgeHistory}
           </button>
         </div>
       )}

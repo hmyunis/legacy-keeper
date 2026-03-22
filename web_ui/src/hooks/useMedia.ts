@@ -6,6 +6,7 @@ import {
   type MediaQueryParams,
   type ConfirmExifPayload,
   type RotateMediaFilePayload,
+  type RestoreMediaFilePayload,
 } from '../services/mediaApi';
 import { toast } from 'sonner';
 import { useAuthStore } from '../stores/authStore';
@@ -16,6 +17,8 @@ import {
   type MediaItem,
   type MediaExifWorkflowStatus,
   type MediaFaceDetectionWorkflowStatus,
+  MediaRestorationStatus,
+  type MediaRestorationWorkflowStatus,
 } from '../types';
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -26,6 +29,10 @@ const EXIF_ACTIVE_STATUSES = new Set<MediaExifStatus>([
 const FACE_DETECTION_ACTIVE_STATUSES = new Set<MediaFaceDetectionStatus>([
   MediaFaceDetectionStatus.QUEUED,
   MediaFaceDetectionStatus.PROCESSING,
+]);
+const RESTORATION_ACTIVE_STATUSES = new Set<MediaRestorationStatus>([
+  MediaRestorationStatus.QUEUED,
+  MediaRestorationStatus.PROCESSING,
 ]);
 
 interface QueryOptions {
@@ -226,6 +233,28 @@ export const useMediaFaceDetectionStatus = (mediaId: string, options?: QueryOpti
   });
 };
 
+export const useMediaRestorationStatus = (
+  mediaId: string,
+  fileId?: string,
+  options?: QueryOptions,
+) => {
+  const enabled = options?.enabled ?? true;
+  const poll = options?.poll ?? false;
+  return useQuery({
+    queryKey: ['mediaRestorationStatus', mediaId, fileId],
+    queryFn: () => mediaApi.getRestorationStatus(mediaId, fileId),
+    enabled: Boolean(mediaId) && enabled,
+    refetchInterval: (query) => {
+      if (!poll) return false;
+      const status = (query.state.data as MediaRestorationWorkflowStatus | undefined)?.status;
+      if (status === MediaRestorationStatus.NOT_STARTED) {
+        return query.state.dataUpdateCount < 10 ? 2500 : false;
+      }
+      return status && RESTORATION_ACTIVE_STATUSES.has(status) ? 2500 : false;
+    },
+  });
+};
+
 const syncUpdatedMediaInCaches = (queryClient: QueryClient, updatedMedia: MediaItem) => {
   queryClient.setQueriesData({ queryKey: ['media'] }, (old: any) => {
     if (!old?.pages) return old;
@@ -288,6 +317,7 @@ export const useUpdateMediaMetadata = () => {
         };
       });
       queryClient.invalidateQueries({ queryKey: ['media'] });
+      queryClient.invalidateQueries({ queryKey: ['mediaRestorationStatus', data.id] });
     },
     onError: (error) => {
       toast.error('Failed to update media', {
@@ -307,10 +337,42 @@ export const useRotateMediaFile = () => {
       syncUpdatedMediaInCaches(queryClient, updatedMedia);
       queryClient.invalidateQueries({ queryKey: ['mediaExifStatus', updatedMedia.id] });
       queryClient.invalidateQueries({ queryKey: ['mediaFaceDetectionStatus', updatedMedia.id] });
+      queryClient.invalidateQueries({ queryKey: ['mediaRestorationStatus', updatedMedia.id] });
       toast.success('Rotation saved');
     },
     onError: (error) => {
       toast.error('Failed to save rotation', {
+        description: getApiErrorMessage(error, 'Please try again.'),
+      });
+    },
+  });
+};
+
+export const useRestoreMediaFile = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ mediaId, payload }: { mediaId: string; payload: RestoreMediaFilePayload }) =>
+      mediaApi.restoreMediaFile(mediaId, payload),
+    onSuccess: (restorationStatus, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['media'] });
+      queryClient.invalidateQueries({ queryKey: ['mediaFavorites'] });
+      queryClient.invalidateQueries({ queryKey: ['media', variables.mediaId] });
+      queryClient.invalidateQueries({
+        queryKey: ['mediaRestorationStatus', variables.mediaId, variables.payload.fileId],
+      });
+      if (restorationStatus.status === MediaRestorationStatus.FAILED) {
+        toast.error('Photo restoration failed', {
+          description: restorationStatus.error || 'Please try again.',
+        });
+      } else if (restorationStatus.status === MediaRestorationStatus.COMPLETED) {
+        toast.success('Photo restoration is ready.');
+      } else {
+        toast.success('Photo restoration started.');
+      }
+    },
+    onError: (error) => {
+      toast.error('Failed to start restoration', {
         description: getApiErrorMessage(error, 'Please try again.'),
       });
     },

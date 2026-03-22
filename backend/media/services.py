@@ -5,7 +5,11 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import MediaItem
-from .tasks import detect_media_faces_task, extract_media_exif_task
+from .tasks import (
+    detect_media_faces_task,
+    extract_media_exif_task,
+    restore_media_photo_task,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +31,11 @@ class AIProcessingService:
             face_detection_data={},
             face_detection_task_id=face_task_id,
             face_detection_processed_at=None,
+            restoration_status=MediaItem.RestorationStatus.NOT_STARTED,
+            restoration_error='',
+            restoration_data={},
+            restoration_task_id='',
+            restoration_processed_at=None,
         )
 
     @staticmethod
@@ -44,6 +53,11 @@ class AIProcessingService:
             face_detection_data={},
             face_detection_processed_at=timezone.now(),
             face_detection_task_id='',
+            restoration_status=MediaItem.RestorationStatus.NOT_AVAILABLE,
+            restoration_error='',
+            restoration_data={},
+            restoration_processed_at=timezone.now(),
+            restoration_task_id='',
         )
 
     @staticmethod
@@ -54,6 +68,30 @@ class AIProcessingService:
             face_detection_data={},
             face_detection_task_id=face_task_id,
             face_detection_processed_at=None,
+        )
+
+    @staticmethod
+    def _mark_restoration_queued(media_item_id: str, task_id: str, file_id: str, options: dict):
+        media_item = MediaItem.objects.filter(pk=media_item_id).first()
+        existing_payload = (
+            media_item.restoration_data if media_item and isinstance(media_item.restoration_data, dict) else {}
+        )
+        next_payload = dict(existing_payload)
+        next_payload['last_request'] = {
+            'file_id': str(file_id),
+            'options': {
+                'colorize': bool(options.get('colorize', True)),
+                'denoise': bool(options.get('denoise', True)),
+            },
+            'requested_at': timezone.now().isoformat(),
+            'task_id': task_id,
+        }
+        MediaItem.objects.filter(pk=media_item_id).update(
+            restoration_status=MediaItem.RestorationStatus.QUEUED,
+            restoration_error='',
+            restoration_task_id=task_id,
+            restoration_processed_at=None,
+            restoration_data=next_payload,
         )
 
     def enqueue_media_processing(self, media_item):
@@ -140,6 +178,42 @@ class AIProcessingService:
                     face_detection_data={},
                     face_detection_processed_at=timezone.now(),
                     face_detection_task_id='',
+                )
+
+        transaction.on_commit(_enqueue)
+
+    def enqueue_media_restoration(self, media_item, *, file_id: str, options: dict):
+        media_item_id = str(media_item.pk)
+        if media_item.media_type != MediaItem.MediaType.PHOTO:
+            MediaItem.objects.filter(pk=media_item_id).update(
+                restoration_status=MediaItem.RestorationStatus.NOT_AVAILABLE,
+                restoration_error='Media restoration is available only for photo items.',
+                restoration_processed_at=timezone.now(),
+                restoration_task_id='',
+            )
+            return
+
+        task_id = uuid4().hex
+        normalized_options = {
+            'colorize': bool(options.get('colorize', True)),
+            'denoise': bool(options.get('denoise', True)),
+        }
+        self._mark_restoration_queued(media_item_id, task_id, file_id, normalized_options)
+
+        def _enqueue():
+            try:
+                restore_media_photo_task.apply_async(
+                    args=[media_item_id, file_id, normalized_options],
+                    queue='media',
+                    task_id=task_id,
+                )
+            except Exception as exc:
+                logger.exception('Failed to enqueue media restoration for media item %s', media_item_id)
+                MediaItem.objects.filter(pk=media_item_id, restoration_task_id=task_id).update(
+                    restoration_status=MediaItem.RestorationStatus.FAILED,
+                    restoration_error=f'Unable to queue restoration: {exc}',
+                    restoration_processed_at=timezone.now(),
+                    restoration_task_id='',
                 )
 
         transaction.on_commit(_enqueue)

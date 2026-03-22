@@ -7,7 +7,7 @@ LegacyKeeper is a family memory vault with:
 - `postgres` (database)
 - `minio` (object storage)
 - `redis` (Celery broker/result backend)
-- `media_worker` (Celery worker for EXIF + face detection background tasks)
+- `media_worker` (Celery worker for EXIF, face detection, and media restoration background tasks)
 
 ## Run With Docker
 
@@ -41,7 +41,7 @@ When `USE_S3=True`, LegacyKeeper now serves media/image URLs as temporary presig
 
 For Docker, set `AWS_S3_PRESIGNED_ENDPOINT_URL` to the browser-reachable MinIO host (`http://localhost:9000`), while backend storage access can still use the internal service URL (`http://minio:9000`).
 
-## EXIF Background Processing
+## Media AI Background Processing
 
 Photo AI processing is asynchronous and handled by Redis + Celery:
 
@@ -56,6 +56,12 @@ Photo AI processing is asynchronous and handled by Redis + Celery:
 7. A user manually confirms each face by linking it to a person profile (`genealogy/tags`).
 8. If no usable EXIF/faces exist: `NOT_AVAILABLE`.
 9. On task error: `FAILED`.
+
+Photo restoration is also asynchronous:
+
+1. User triggers restoration for a photo file with colorize/denoise options.
+2. Backend queues restoration (`QUEUED`) and worker processes it (`PROCESSING`).
+3. Restored output is saved and exposed for before/after compare (`COMPLETED`), or marked `FAILED`.
 
 ## Run Locally In WSL
 

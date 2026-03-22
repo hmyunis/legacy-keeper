@@ -1,10 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Bell,
   BookOpen,
   Clock,
   GitBranch,
   HelpCircle,
+  Link2,
+  RefreshCw,
+  Search,
+  Settings,
   ShieldCheck,
   Sparkles,
   Users,
@@ -17,8 +22,21 @@ import { useAuthStore } from '../stores/authStore';
 import type { ApiHelpArticleMeta } from '../types/api.types';
 import { UserRole } from '../types';
 
-const ARTICLE_KEYS = ['upload', 'ai', 'tree', 'invite', 'audit', 'timeline'] as const;
-const CATEGORY_KEYS = ['vault', 'lineage', 'members', 'security', 'timeline'] as const;
+const ARTICLE_KEYS = [
+  'upload',
+  'search',
+  'ai',
+  'restoration',
+  'tree',
+  'invite',
+  'shareLinks',
+  'audit',
+  'timeline',
+  'notifications',
+  'vaultPrefs',
+  'ownership',
+] as const;
+const CATEGORY_KEYS = ['vault', 'lineage', 'members', 'security', 'timeline', 'settings'] as const;
 
 type ArticleKey = (typeof ARTICLE_KEYS)[number];
 type CategoryKey = (typeof CATEGORY_KEYS)[number];
@@ -37,11 +55,16 @@ const normalizeIconKey = (value: string) =>
 
 const ICON_MAP: Record<string, LucideIcon> = {
   book_open: BookOpen,
+  search: Search,
   sparkles: Sparkles,
+  refresh_cw: RefreshCw,
   git_branch: GitBranch,
   users: Users,
+  link_2: Link2,
   shield_check: ShieldCheck,
   clock: Clock,
+  bell: Bell,
+  settings: Settings,
 };
 
 const VALID_ROLES = new Set<UserRole>([UserRole.ADMIN, UserRole.CONTRIBUTOR, UserRole.VIEWER]);

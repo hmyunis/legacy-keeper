@@ -339,6 +339,18 @@ const Vault: React.FC<{
 
   const canUpload = currentUser ? hasPermission(currentUser.role, 'UPLOAD_MEDIA') : false;
   const canDelete = currentUser ? hasPermission(currentUser.role, 'DELETE_MEDIA') : false;
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    count += filters.people.length;
+    count += filters.tags.length;
+    count += filters.locations.length;
+    count += filters.types.length;
+    if (filters.era) count += 1;
+    if (filters.startDate) count += 1;
+    if (filters.endDate) count += 1;
+    return count;
+  }, [filters]);
+  const activeFilterBadgeLabel = activeFilterCount > 99 ? '99+' : String(activeFilterCount);
 
   const activeMediaData = isFavoritesTab ? favoriteMediaData : mediaData;
   const isLoading = isFavoritesTab ? isLoadingFavoriteMedia : isLoadingMedia;
@@ -436,7 +448,14 @@ const Vault: React.FC<{
   }, [initialAction, canUpload, vaultDefaultVisibility]);
 
   useEffect(() => {
-    if (!allMedia.length) return;
+    if (!allMedia.length) {
+      for (const mediaId of previousExifStatusRef.current.keys()) {
+        toast.dismiss(`exif-bg-${mediaId}`);
+      }
+      previousExifStatusRef.current = new Map();
+      hasInitializedExifStatusRef.current = false;
+      return;
+    }
 
     const statusSnapshot = new Map<string, MediaExifStatus>();
     for (const item of allMedia) {
@@ -481,33 +500,39 @@ const Vault: React.FC<{
       }
 
       if (currentStatus === MediaExifStatus.CONFIRMED) {
+        toast.dismiss(toastId);
         toast.success(`EXIF metadata applied for "${item.title}".`, {
-          id: toastId,
           duration: EXIF_STATUS_TOAST_DURATION_MS,
         });
       } else if (currentStatus === MediaExifStatus.FAILED) {
+        toast.dismiss(toastId);
         toast.error(`EXIF extraction failed for "${item.title}".`, {
-          id: toastId,
           duration: EXIF_STATUS_TOAST_DURATION_MS,
           description: item.exifError || 'Please retry by editing and re-saving the memory.',
         });
       } else if (currentStatus === MediaExifStatus.AWAITING_CONFIRMATION) {
+        toast.dismiss(toastId);
         toast.info(`EXIF ready for "${item.title}". Confirm to apply extracted date/GPS.`, {
-          id: toastId,
           duration: EXIF_STATUS_TOAST_DURATION_MS,
         });
       } else if (currentStatus === MediaExifStatus.NOT_AVAILABLE) {
+        toast.dismiss(toastId);
         toast.info(`No EXIF date/GPS found for "${item.title}".`, {
-          id: toastId,
           duration: EXIF_STATUS_TOAST_DURATION_MS,
         });
       } else if (currentStatus === MediaExifStatus.REJECTED) {
+        toast.dismiss(toastId);
         toast.info(`Extracted EXIF was rejected for "${item.title}".`, {
-          id: toastId,
           duration: EXIF_STATUS_TOAST_DURATION_MS,
         });
       } else {
         toast.dismiss(toastId);
+      }
+    }
+
+    for (const mediaId of previousExifStatusRef.current.keys()) {
+      if (!statusSnapshot.has(mediaId)) {
+        toast.dismiss(`exif-bg-${mediaId}`);
       }
     }
 
@@ -790,7 +815,7 @@ const Vault: React.FC<{
           )}
           <button
             onClick={() => setIsFilterExpanded(!isFilterExpanded)}
-            className={`flex-1 sm:flex-none px-4 py-3 rounded-xl font-bold text-[10px] uppercase tracking-wider flex items-center justify-center gap-2 border transition-all ${
+            className={`relative flex-1 sm:flex-none px-4 py-3 rounded-xl font-bold text-[10px] uppercase tracking-wider flex items-center justify-center gap-2 border transition-all ${
               isFilterExpanded
                 ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-lg'
                 : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
@@ -798,6 +823,11 @@ const Vault: React.FC<{
           >
             <FilterIcon size={14} />
             {t.vault.actions.filter}
+            {activeFilterCount > 0 && (
+              <span className="absolute -top-2 -right-2 min-w-[1.2rem] h-5 px-1.5 rounded-full bg-primary text-white text-[10px] leading-none font-black flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-md">
+                {activeFilterBadgeLabel}
+              </span>
+            )}
           </button>
           {canUpload && (
             <button
@@ -825,27 +855,33 @@ const Vault: React.FC<{
         <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/70 p-3 text-xs text-slate-600 dark:text-slate-300 flex flex-wrap items-center gap-3">
           {exifProgressSummary.active > 0 && (
             <span className="inline-flex items-center gap-2 rounded-full bg-sky-50 dark:bg-sky-900/30 px-3 py-1 font-semibold text-sky-700 dark:text-sky-300">
-              {exifProgressSummary.active} photo{exifProgressSummary.active === 1 ? '' : 's'} processing EXIF
+              {exifProgressSummary.active}{' '}
+              {exifProgressSummary.active === 1
+                ? t.vault.status.photoProcessingExif
+                : t.vault.status.photosProcessingExif}
             </span>
           )}
           {exifProgressSummary.awaitingConfirmation > 0 && (
             <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 dark:bg-amber-900/30 px-3 py-1 font-semibold text-amber-700 dark:text-amber-300">
-              {exifProgressSummary.awaitingConfirmation} awaiting uploader confirmation
+              {exifProgressSummary.awaitingConfirmation} {t.vault.status.awaitingUploaderConfirmation}
             </span>
           )}
           {exifProgressSummary.failed > 0 && (
             <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 dark:bg-rose-900/30 px-3 py-1 font-semibold text-rose-700 dark:text-rose-300">
-              {exifProgressSummary.failed} EXIF extraction failed
+              {exifProgressSummary.failed} {t.vault.status.exifExtractionFailed}
             </span>
           )}
           {exifProgressSummary.faceProcessing > 0 && (
             <span className="inline-flex items-center gap-2 rounded-full bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 font-semibold text-indigo-700 dark:text-indigo-300">
-              {exifProgressSummary.faceProcessing} photo{exifProgressSummary.faceProcessing === 1 ? '' : 's'} processing faces
+              {exifProgressSummary.faceProcessing}{' '}
+              {exifProgressSummary.faceProcessing === 1
+                ? t.vault.status.photoProcessingFaces
+                : t.vault.status.photosProcessingFaces}
             </span>
           )}
           {exifProgressSummary.faceFailed > 0 && (
             <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 dark:bg-rose-900/30 px-3 py-1 font-semibold text-rose-700 dark:text-rose-300">
-              {exifProgressSummary.faceFailed} face detection failed
+              {exifProgressSummary.faceFailed} {t.vault.status.faceDetectionFailed}
             </span>
           )}
         </div>
@@ -865,7 +901,7 @@ const Vault: React.FC<{
               : 'text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-white'
           }`}
         >
-          All Items
+          {t.vault.tabs.allItems}
         </button>
         <button
           onClick={() => {
@@ -881,7 +917,7 @@ const Vault: React.FC<{
           }`}
         >
           <Heart size={14} fill={activeTab === 'favorites' ? 'currentColor' : 'none'} />
-          Favorites
+          {t.vault.tabs.favorites}
         </button>
       </div>
 
@@ -1105,7 +1141,7 @@ const Vault: React.FC<{
 
       {!isLoading && allMedia.length === 0 && (
         <div className="py-16 text-center text-xs uppercase tracking-widest text-slate-400 font-bold">
-          {activeTab === 'favorites' ? 'No favorites yet' : 'No matching records found'}
+          {activeTab === 'favorites' ? t.vault.status.noFavorites : t.vault.status.noMatchingRecords}
         </div>
       )}
 
@@ -1198,7 +1234,7 @@ const Vault: React.FC<{
         isOpen={Boolean(confirmState)}
         title={confirmState?.title || ''}
         message={confirmState?.message || ''}
-        confirmLabel={confirmState?.confirmLabel || 'Confirm'}
+        confirmLabel={confirmState?.confirmLabel || t.common.actions.confirm}
         onConfirm={() => {
           void handleConfirmAction();
         }}

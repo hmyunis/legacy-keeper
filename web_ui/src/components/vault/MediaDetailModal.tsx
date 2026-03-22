@@ -24,8 +24,15 @@ import {
     Maximize2,
     RotateCcw,
     RotateCw,
+    Sparkles,
 } from 'lucide-react';
-import { MediaExifStatus, MediaFaceDetectionStatus, MediaItem, PersonProfile } from '../../types';
+import {
+    MediaExifStatus,
+    MediaFaceDetectionStatus,
+    MediaItem,
+    MediaRestorationStatus,
+    PersonProfile,
+} from '../../types';
 import { useProfiles } from '../../hooks/useProfiles';
 import { useAuthStore } from '../../stores/authStore';
 import { hasPermission } from '@/config/permissions';
@@ -40,6 +47,8 @@ import {
     useConfirmMediaExif,
     useMediaExifStatus,
     useMediaFaceDetectionStatus,
+    useMediaRestorationStatus,
+    useRestoreMediaFile,
     useRotateMediaFile,
 } from '../../hooks/useMedia';
 import { toast } from 'sonner';
@@ -47,6 +56,7 @@ import DatePicker from '../DatePicker';
 import type { UpdateMediaMetadataPayload } from '../../services/mediaApi';
 import PresignedImage from '../ui/PresignedImage';
 import { useSignedUrlRecovery } from '../../hooks/useSignedUrlRecovery';
+import { useTranslation } from '../../i18n/LanguageContext';
 
 // --- Interfaces & Constants ---
 interface MediaDetailModalProps {
@@ -98,15 +108,6 @@ interface ManualAnnotation {
 
 const MAX_MEMORY_FILES = 10;
 const MIN_MANUAL_BOX_SIZE = 0.015;
-
-const FACE_STATUS_LABELS: Record<MediaFaceDetectionStatus, string> = {
-    [MediaFaceDetectionStatus.NOT_STARTED]: 'Not started',
-    [MediaFaceDetectionStatus.QUEUED]: 'Queued',
-    [MediaFaceDetectionStatus.PROCESSING]: 'Processing',
-    [MediaFaceDetectionStatus.COMPLETED]: 'Completed',
-    [MediaFaceDetectionStatus.NOT_AVAILABLE]: 'No faces detected',
-    [MediaFaceDetectionStatus.FAILED]: 'Failed',
-};
 
 // --- Helper Functions ---
 const toFaceCoordinatesPayload = (face: NonNullable<MediaItem['detectedFaces']>[number]) => ({
@@ -171,6 +172,23 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     shouldPollExif = false,
     isUpdatingMedia = false,
 }) => {
+    const { t } = useTranslation();
+    const faceStatusLabels: Record<MediaFaceDetectionStatus, string> = {
+        [MediaFaceDetectionStatus.NOT_STARTED]: 'Not started',
+        [MediaFaceDetectionStatus.QUEUED]: 'Queued',
+        [MediaFaceDetectionStatus.PROCESSING]: 'Processing',
+        [MediaFaceDetectionStatus.COMPLETED]: t.common.status.completed,
+        [MediaFaceDetectionStatus.NOT_AVAILABLE]: 'No faces detected',
+        [MediaFaceDetectionStatus.FAILED]: 'Failed',
+    };
+    const restorationStatusLabels: Record<MediaRestorationStatus, string> = {
+        [MediaRestorationStatus.NOT_STARTED]: 'Ready',
+        [MediaRestorationStatus.QUEUED]: 'Queued',
+        [MediaRestorationStatus.PROCESSING]: 'Processing',
+        [MediaRestorationStatus.COMPLETED]: t.common.status.completed,
+        [MediaRestorationStatus.NOT_AVAILABLE]: 'Not available',
+        [MediaRestorationStatus.FAILED]: 'Failed',
+    };
     // --- State ---
     const [taggingFaceId, setTaggingFaceId] = useState<string | null>(null);
     const [localFaces, setLocalFaces] = useState(media.detectedFaces || []);
@@ -199,6 +217,11 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     const [previewRotationByFileId, setPreviewRotationByFileId] = useState<Record<string, number>>(
         {},
     );
+    const [restorationOptions, setRestorationOptions] = useState({
+        colorize: true,
+        denoise: true,
+    });
+    const [comparePosition, setComparePosition] = useState(0);
     const editFileInputRef = useRef<HTMLInputElement>(null);
     const faceAnchorRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     const { currentUser } = useAuthStore();
@@ -217,6 +240,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     const downloadMediaMutation = useDownloadMedia();
     const confirmMediaExifMutation = useConfirmMediaExif();
     const rotateMediaFileMutation = useRotateMediaFile();
+    const restoreMediaFileMutation = useRestoreMediaFile();
     const recoverSignedUrls = useSignedUrlRecovery();
 
     const { data: exifStatusData } = useMediaExifStatus(media.id, {
@@ -325,6 +349,8 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         setDraftManualRectangle(null);
         setPendingManualAnnotation(null);
         setPreviewRotationByFileId({});
+        setRestorationOptions({ colorize: true, denoise: true });
+        setComparePosition(0);
     }, [media.id, media.detectedFaces]);
 
     useEffect(() => {
@@ -400,6 +426,34 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
             );
     }, [activeFile, localFaces]);
     const activePreviewRotation = activeFile ? previewRotationByFileId[activeFile.id] || 0 : 0;
+    const {
+        data: restorationStatusData,
+        refetch: refetchRestorationStatus,
+    } = useMediaRestorationStatus(media.id, activeFile?.id, {
+        enabled: activeFile?.fileType === 'PHOTO',
+        poll: true,
+    });
+    const effectiveRestorationStatus =
+        restorationStatusData?.status ||
+        media.restorationStatus ||
+        MediaRestorationStatus.NOT_STARTED;
+    const isRestorationInProgress =
+        effectiveRestorationStatus === MediaRestorationStatus.QUEUED ||
+        effectiveRestorationStatus === MediaRestorationStatus.PROCESSING;
+    const activeRestorationResult = useMemo(() => {
+        if (!activeFile || activeFile.fileType !== 'PHOTO') return undefined;
+        const selectedResult =
+            restorationStatusData?.result &&
+            restorationStatusData.result.fileId === activeFile.id
+                ? restorationStatusData.result
+                : undefined;
+        if (selectedResult) return selectedResult;
+        return restorationStatusData?.results.find((result) => result.fileId === activeFile.id);
+    }, [activeFile, restorationStatusData?.result, restorationStatusData?.results]);
+    const restorationWarnings = useMemo(() => {
+        if (activeRestorationResult?.warnings?.length) return activeRestorationResult.warnings;
+        return restorationStatusData?.warnings || [];
+    }, [activeRestorationResult?.warnings, restorationStatusData?.warnings]);
 
     const manualAnnotations = useMemo<ManualAnnotation[]>(() => {
         if (!activeFile || activeFile.fileType !== 'PHOTO') return [];
@@ -444,6 +498,10 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         }
         setActiveFileId((candidateFiles.find((f) => f.isPrimary) || candidateFiles[0]).id);
     }, [activeExistingFiles, isEditMode, media.id, memoryFiles]);
+
+    useEffect(() => {
+        setComparePosition(0);
+    }, [activeFile?.id]);
 
     const handleEditFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const incoming = Array.from(e.target.files || []);
@@ -521,6 +579,30 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                         delete cloned[activeFile.id];
                         return cloned;
                     });
+                },
+            },
+        );
+    };
+
+    const handleRunRestoration = () => {
+        if (!canEdit || !activeFile || activeFile.fileType !== 'PHOTO') return;
+        if (!restorationOptions.colorize && !restorationOptions.denoise) {
+            toast.error('Select at least one restoration tool.');
+            return;
+        }
+
+        restoreMediaFileMutation.mutate(
+            {
+                mediaId: media.id,
+                payload: {
+                    fileId: activeFile.id,
+                    colorize: restorationOptions.colorize,
+                    denoise: restorationOptions.denoise,
+                },
+            },
+            {
+                onSuccess: async () => {
+                    await refetchRestorationStatus();
                 },
             },
         );
@@ -756,7 +838,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
 
     const handleSaveMediaEdits = () => {
         if (!canEdit) return;
-        if (!editDraft.title.trim()) return toast.error('Title is required.');
+        if (!editDraft.title.trim()) return toast.error(t.vault.detail.editForm.titleRequired);
 
         onUpdateMedia(
             {
@@ -1038,7 +1120,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                     onClick={() => setIsManualDrawMode((prev) => !prev)}
                                     className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors ${isManualDrawMode ? 'bg-primary text-white shadow-lg shadow-primary/25' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
                                 >
-                                    {isManualDrawMode ? 'Cancel' : 'Draw Tag'}
+                                    {isManualDrawMode ? t.vault.detail.editForm.cancel : t.vault.detail.drawTag}
                                 </button>
                             )}
                         </div>
@@ -1075,7 +1157,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                     ) : (
                                         <Users size={10} />
                                     )}{' '}
-                                    {media.visibility}
+                                    {media.visibility === 'private' ? t.vault.detail.visibilityPrivate : t.vault.detail.visibilityFamily}
                                 </span>
                             </div>
                         </div>
@@ -1115,7 +1197,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                 <div className="grid gap-4">
                                     <div>
                                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">
-                                            Title
+                                            {t.vault.detail.editForm.title}
                                         </label>
                                         <input
                                             type="text"
@@ -1131,7 +1213,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                     </div>
                                     <div>
                                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">
-                                            Date
+                                            {t.vault.detail.editForm.date}
                                         </label>
                                         <DatePicker
                                             date={editDraft.dateTaken}
@@ -1142,7 +1224,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                     </div>
                                     <div>
                                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">
-                                            Story
+                                            {t.vault.detail.editForm.story}
                                         </label>
                                         <textarea
                                             rows={3}
@@ -1159,7 +1241,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                     {/* File Manager */}
                                     <div className="border-t border-dashed border-slate-200 dark:border-slate-700 pt-3">
                                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">
-                                            Files ({projectedFileCount})
+                                            {t.vault.detail.editForm.files} ({projectedFileCount})
                                         </label>
                                         <div className="space-y-2">
                                             {memoryFiles.map((f) => (
@@ -1183,8 +1265,8 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                         className={`text-[9px] font-black uppercase tracking-widest ${pendingRemovedFileIds.has(f.id) ? 'text-emerald-500' : 'text-rose-500'}`}
                                                     >
                                                         {pendingRemovedFileIds.has(f.id)
-                                                            ? 'Keep'
-                                                            : 'Remove'}
+                                                            ? t.vault.detail.editForm.keep
+                                                            : t.vault.detail.editForm.remove}
                                                     </button>
                                                 </div>
                                             ))}
@@ -1192,7 +1274,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                 onClick={() => editFileInputRef.current?.click()}
                                                 className="w-full py-2 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-primary"
                                             >
-                                                Add File
+                                                {t.vault.detail.editForm.addFile}
                                             </button>
                                             <input
                                                 type="file"
@@ -1208,7 +1290,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                             onClick={() => setIsEditMode(false)}
                                             className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-widest text-slate-500"
                                         >
-                                            Cancel
+                                            {t.vault.detail.editForm.cancel}
                                         </button>
                                     </div>
                                 </div>
@@ -1219,12 +1301,12 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                         {!isEditMode && (
                             <div className="space-y-2">
                                 <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                    The Story
+                                    {t.vault.detail.theStory}
                                 </h3>
                                 <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed italic border-l-2 border-primary/20 pl-4">
                                     {media.description || (
                                         <span className="text-slate-400 not-italic">
-                                            No story added yet.
+                                        {t.vault.detail.noStoryAdded}
                                         </span>
                                     )}
                                 </p>
@@ -1236,12 +1318,12 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                             <div className="space-y-3">
                                 <div className="flex items-center justify-between">
                                     <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                                        Detected Faces
+                                        {t.vault.detail.detectedFaces}
                                     </h3>
                                     <span
                                         className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${isFaceDetectionInProgress ? 'bg-amber-50 text-amber-600' : 'bg-slate-50 text-slate-500'}`}
                                     >
-                                        {FACE_STATUS_LABELS[effectiveFaceStatus]}
+                                        {faceStatusLabels[effectiveFaceStatus]}
                                     </span>
                                 </div>
 
@@ -1310,7 +1392,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                     )}
                                                 </button>
                                                 <span className="text-[9px] font-bold text-amber-600/70 mt-1">
-                                                    Unknown
+                                                    {t.vault.detail.unknown}
                                                 </span>
 
                                                 {/* Tagging Popover */}
@@ -1325,7 +1407,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                         >
                                                             {availableProfiles.length === 0 && (
                                                                 <p className="px-2 py-1.5 text-[9px] font-bold text-slate-500 dark:text-slate-300">
-                                                                    No unlinked relatives
+                                                                    {t.vault.detail.noUnlinkedRelatives}
                                                                 </p>
                                                             )}
                                                             {availableProfiles.map((p) => (
@@ -1391,12 +1473,170 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                             </div>
                         )}
 
+                        {activeFile?.fileType === 'PHOTO' && (
+                            <div className="space-y-3">
+                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                    <Sparkles size={12} /> {t.vault.detail.mediaRestoration}
+                                </h3>
+                                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40 p-3 space-y-3">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <span
+                                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${
+                                                effectiveRestorationStatus ===
+                                                    MediaRestorationStatus.COMPLETED
+                                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                                                    : effectiveRestorationStatus ===
+                                                          MediaRestorationStatus.FAILED
+                                                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300'
+                                                      : effectiveRestorationStatus ===
+                                                            MediaRestorationStatus.QUEUED ||
+                                                          effectiveRestorationStatus ===
+                                                              MediaRestorationStatus.PROCESSING
+                                                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                                        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                                            }`}
+                                        >
+                                            {restorationStatusLabels[effectiveRestorationStatus]}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={handleRunRestoration}
+                                            disabled={
+                                                !canEdit ||
+                                                isRestorationInProgress ||
+                                                restoreMediaFileMutation.isPending
+                                            }
+                                            className="px-3 py-2 rounded-xl bg-primary text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-60 disabled:cursor-not-allowed"
+                                        >
+                                            {isRestorationInProgress ||
+                                            restoreMediaFileMutation.isPending
+                                                ? t.vault.detail.processing
+                                                : t.vault.detail.restorePhoto}
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                setRestorationOptions((state) => ({
+                                                    ...state,
+                                                    denoise: !state.denoise,
+                                                }))
+                                            }
+                                            className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                                                restorationOptions.denoise
+                                                    ? 'border-primary bg-primary/10 text-primary'
+                                                    : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300'
+                                            }`}
+                                        >
+                                            <p className="text-[10px] font-black uppercase tracking-widest">
+                                                {t.vault.detail.denoise}
+                                            </p>
+                                            <p className="text-[10px] font-medium">
+                                                {t.vault.detail.denoiseDesc}
+                                            </p>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                setRestorationOptions((state) => ({
+                                                    ...state,
+                                                    colorize: !state.colorize,
+                                                }))
+                                            }
+                                            className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                                                restorationOptions.colorize
+                                                    ? 'border-primary bg-primary/10 text-primary'
+                                                    : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300'
+                                            }`}
+                                        >
+                                            <p className="text-[10px] font-black uppercase tracking-widest">
+                                                {t.vault.detail.colorize}
+                                            </p>
+                                            <p className="text-[10px] font-medium">
+                                                {t.vault.detail.colorizeDesc}
+                                            </p>
+                                        </button>
+                                    </div>
+
+                                    {restorationStatusData?.error && (
+                                        <p className="text-[10px] text-rose-600 dark:text-rose-300 font-semibold">
+                                            {restorationStatusData.error}
+                                        </p>
+                                    )}
+                                    {restorationWarnings.length > 0 && (
+                                        <p className="text-[10px] text-amber-700 dark:text-amber-300 font-medium">
+                                            {restorationWarnings[0]}
+                                        </p>
+                                    )}
+
+                                    {activeRestorationResult?.restoredUrl && (
+                                        <div className="space-y-2 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5">
+                                            <div className="relative aspect-4/3 rounded-xl overflow-hidden bg-slate-950/90">
+                                                <PresignedImage
+                                                    src={activeFile.fileUrl}
+                                                    alt={`${activeFile.originalName} original`}
+                                                    className="absolute inset-0 w-full h-full object-contain"
+                                                    onRecover={() => recoverSignedUrls(media.id)}
+                                                />
+                                                <div
+                                                    className="absolute inset-0"
+                                                    style={{
+                                                        maskImage: `linear-gradient(to right, transparent 0%, transparent ${comparePosition}%, black ${comparePosition}%, black 100%)`,
+                                                        WebkitMaskImage: `linear-gradient(to right, transparent 0%, transparent ${comparePosition}%, black ${comparePosition}%, black 100%)`,
+                                                    }}
+                                                >
+                                                    <PresignedImage
+                                                        src={activeRestorationResult.restoredUrl}
+                                                        alt={`${activeFile.originalName} restored`}
+                                                        className="absolute inset-0 w-full h-full object-contain"
+                                                        onRecover={async () => {
+                                                            await recoverSignedUrls(media.id);
+                                                            await refetchRestorationStatus();
+                                                        }}
+                                                    />
+                                                </div>
+                                                <div
+                                                    className="absolute inset-y-0 w-0.5 bg-white/90 shadow-[0_0_0_1px_rgba(15,23,42,0.25)]"
+                                                    style={{ left: `calc(${comparePosition}% - 1px)` }}
+                                                />
+                                                <div className="absolute bottom-2 left-2 rounded bg-slate-900/70 text-white text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5">
+                                                    {t.vault.detail.after}
+                                                </div>
+                                                <div className="absolute bottom-2 right-2 rounded bg-primary/90 text-white text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5">
+                                                    {t.vault.detail.before}
+                                                </div>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min={0}
+                                                max={100}
+                                                value={comparePosition}
+                                                onChange={(e) =>
+                                                    setComparePosition(Number(e.target.value))
+                                                }
+                                                className="w-full accent-primary"
+                                                style={{
+                                                    accentColor: 'var(--color-primary)',
+                                                }}
+                                                aria-label={t.common.media.compareSlider}
+                                            />
+                                            <p className="text-[10px] text-slate-500 dark:text-slate-300 font-medium">
+                                                {t.vault.detail.compareHint}
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Technical Details (EXIF) - Expanded */}
                         {media.type === 'PHOTO' &&
                             effectiveExifStatus !== MediaExifStatus.NOT_AVAILABLE && (
                                 <div className="space-y-3">
                                     <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                                        <Camera size={12} /> Technical Details
+                                        <Camera size={12} /> {t.vault.detail.technicalDetails}
                                     </h3>
 
                                     <div className="grid grid-cols-2 gap-3">
@@ -1404,7 +1644,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                             <div className="col-span-2 p-2.5 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/15 space-y-2">
                                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                                     <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
-                                                        EXIF needs review
+                                                        {t.vault.detail.exifNeedsReview}
                                                     </p>
                                                     {isUploader ? (
                                                         <div className="flex items-center gap-2">
@@ -1419,8 +1659,8 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                                 className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest disabled:opacity-60"
                                                             >
                                                                 {confirmMediaExifMutation.isPending
-                                                                    ? 'Saving...'
-                                                                    : 'Accept'}
+                                                                    ? t.vault.detail.saving
+                                                                    : t.vault.detail.accept}
                                                             </button>
                                                             <button
                                                                 type="button"
@@ -1432,12 +1672,12 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                                 }
                                                                 className="px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-700 text-[9px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300 disabled:opacity-60"
                                                             >
-                                                                Reject
+                                                                {t.vault.detail.reject}
                                                             </button>
                                                         </div>
                                                     ) : (
                                                         <p className="text-[9px] font-medium text-amber-700/80 dark:text-amber-300/90">
-                                                            Uploader review required.
+                                                            {t.vault.detail.uploaderReviewRequired}
                                                         </p>
                                                     )}
                                                 </div>
@@ -1445,27 +1685,27 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                                                         <div className="rounded-xl border border-amber-200/80 dark:border-amber-800/70 bg-white/80 dark:bg-slate-900/40 px-2 py-1.5">
                                                             <p className="text-[8px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
-                                                                Source
+                                                                {t.vault.detail.source}
                                                             </p>
                                                             <p className="mt-0.5 text-[10px] font-semibold text-slate-700 dark:text-slate-200 truncate">
                                                                 {selectedExifCandidate.originalName ||
-                                                                    'Primary file'}
+                                                                    t.vault.detail.primaryFile}
                                                             </p>
                                                         </div>
                                                         <div className="rounded-xl border border-amber-200/80 dark:border-amber-800/70 bg-white/80 dark:bg-slate-900/40 px-2 py-1.5">
                                                             <p className="text-[8px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
-                                                                Date Found
+                                                                {t.vault.detail.dateFound}
                                                             </p>
                                                             <p className="mt-0.5 text-[10px] font-semibold text-slate-700 dark:text-slate-200 truncate">
-                                                                {selectedExifDatePreview || 'No date found'}
+                                                                {selectedExifDatePreview || t.vault.detail.noDateFound}
                                                             </p>
                                                         </div>
                                                         <div className="rounded-xl border border-amber-200/80 dark:border-amber-800/70 bg-white/80 dark:bg-slate-900/40 px-2 py-1.5">
                                                             <p className="text-[8px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
-                                                                GPS Found
+                                                                {t.vault.detail.gpsFound}
                                                             </p>
                                                             <p className="mt-0.5 text-[10px] font-semibold text-slate-700 dark:text-slate-200 truncate">
-                                                                {selectedExifGpsPreview || 'No GPS found'}
+                                                                {selectedExifGpsPreview || t.vault.detail.noGpsFound}
                                                             </p>
                                                         </div>
                                                     </div>
@@ -1492,7 +1732,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                                     }`}
                                                                 >
                                                                     {candidate.originalName ||
-                                                                        'Candidate'}
+                                                                        t.vault.detail.candidate}
                                                                 </button>
                                                             );
                                                         })}
@@ -1506,13 +1746,13 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                             <div className="flex items-center gap-2 mb-1 text-slate-400">
                                                 <Camera size={12} />{' '}
                                                 <span className="text-[9px] font-black uppercase tracking-widest">
-                                                    Device
+                                                    {t.vault.detail.device}
                                                 </span>
                                             </div>
                                             <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">
                                                 {(media.metadata as any)?.exif?.make}{' '}
                                                 {(media.metadata as any)?.exif?.model ||
-                                                    'Unknown Camera'}
+                                                    t.vault.detail.unknownCamera}
                                             </p>
                                         </div>
 
@@ -1520,7 +1760,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                             <div className="flex items-center gap-2 mb-1 text-slate-400">
                                                 <Aperture size={12} />{' '}
                                                 <span className="text-[9px] font-black uppercase tracking-widest">
-                                                    Settings
+                                                    {t.vault.detail.settings}
                                                 </span>
                                             </div>
                                             <p className="text-[10px] font-medium text-slate-600 dark:text-slate-300">
@@ -1540,13 +1780,13 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                     <div className="flex items-center gap-2 mb-1 text-slate-400">
                                                         <MapPin size={12} />{' '}
                                                         <span className="text-[9px] font-black uppercase tracking-widest">
-                                                            GPS Coordinates
+                                                            {t.vault.detail.gpsCoordinates}
                                                         </span>
                                                     </div>
                                                     <p className="text-[10px] font-mono text-slate-600 dark:text-slate-300">
                                                         {selectedExifCandidate?.gps
                                                             ? `${selectedExifCandidate.gps.latitude.toFixed(6)}, ${selectedExifCandidate.gps.longitude.toFixed(6)}`
-                                                            : 'Location data available via map'}
+                                                            : t.vault.detail.locationViaMap}
                                                     </p>
                                                 </div>
                                                 <a
@@ -1566,7 +1806,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                         {/* Tags List */}
                         <div className="space-y-3">
                             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                Preservation Tags
+                                {t.vault.detail.preservationTags}
                             </h3>
                             <div className="flex flex-wrap gap-2">
                                 {media.tags.map((tag) => (
@@ -1590,7 +1830,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                         onClick={() => setTagInputVisible(true)}
                                         className="px-3 flex gap-1.5 items-center py-1.5 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl text-[10px] font-bold text-slate-400 hover:text-primary transition-all"
                                     >
-                                        <Plus size={12} /> Add
+                                        <Plus size={12} /> {t.vault.detail.add}
                                     </button>
                                 )}
                             </div>
@@ -1603,14 +1843,14 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                         autoFocus
                                         value={manualTagValue}
                                         onChange={(e) => onTagInputChange(e.target.value)}
-                                        placeholder="New tag..."
+                                        placeholder={t.common.actions.newTagPlaceholder}
                                         className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
                                     />
                                     <button
                                         type="submit"
                                         className="px-3 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[10px] font-black uppercase tracking-widest"
                                     >
-                                        Save
+                                        {t.common.actions.save}
                                     </button>
                                 </form>
                             )}
@@ -1620,7 +1860,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                         {!isEditMode && memoryFiles.length > 1 && (
                             <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                                 <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                    Files in Memory ({memoryFiles.length})
+                                    {t.vault.detail.filesInMemory} ({memoryFiles.length})
                                 </h3>
                                 <div className="space-y-2">
                                     {memoryFiles.map((file) => (
@@ -1668,7 +1908,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                 }`}
                             >
                                 <Heart size={14} fill={isFavorite ? 'currentColor' : 'none'} />{' '}
-                                {isFavorite ? 'Essential' : 'Mark Essential'}
+                                {isFavorite ? t.vault.detail.essential : t.vault.detail.markEssential}
                             </button>
 
                             <div className="flex gap-2">
