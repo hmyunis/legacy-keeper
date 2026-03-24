@@ -39,5 +39,9 @@ export const auditLogs = {
     synced: "ምዝግብ ማስታወሻዎች ተመሳስለዋል",
     failed: "ማመሳሰል አልተሳካም",
     exported: "የኦዲት መዝገብ ወደ ማህደር ተልኳል"
+  },
+  errors: {
+    noVaultSelected: "ንቁ ማከማቻ አልተመረጠም",
+    retry: "እባክዎ እንደገና ይሞክሩ።"
   }
 };

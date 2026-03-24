@@ -105,6 +105,7 @@ export const vault = {
     editForm: {
       title: "ርዕስ",
       date: "ቀን",
+      location: "ቦታ",
       story: "ታሪክ",
       files: "ፋይሎች",
       keep: "አቆይ",

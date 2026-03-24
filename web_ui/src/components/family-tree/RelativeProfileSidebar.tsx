@@ -49,11 +49,17 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
   onDelete,
 }) => {
   const { t } = useTranslation();
+  const profilePlaceholderUrl = `https://placehold.co/200x200?text=${encodeURIComponent(t.tree.profile)}`;
+  const formatTemplate = (template: string, values: Record<string, string>) =>
+    Object.entries(values).reduce(
+      (message, [key, value]) => message.replace(`{${key}}`, value),
+      template,
+    );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState(person.photoUrl || 'https://placehold.co/200x200?text=Profile');
+  const [previewUrl, setPreviewUrl] = useState(person.photoUrl || profilePlaceholderUrl);
   const [errors, setErrors] = useState<FormErrors>({});
   const [formData, setFormData] = useState({
     fullName: person.fullName,
@@ -67,7 +73,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
     setIsEditing(false);
     setSelectedFile(null);
     setErrors({});
-    setPreviewUrl(person.photoUrl || 'https://placehold.co/200x200?text=Profile');
+    setPreviewUrl(person.photoUrl || profilePlaceholderUrl);
     setFormData({
       fullName: person.fullName,
       birthDate: parseDate(person.birthDate),
@@ -75,7 +81,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
       deathDate: parseDate(person.deathDate),
       biography: person.biography || '',
     });
-  }, [person]);
+  }, [person, profilePlaceholderUrl]);
 
   useEffect(() => {
     return () => {
@@ -99,7 +105,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
     } catch (error) {
       if (error instanceof z.ZodError) {
         const nextErrors: FormErrors = {};
-        error.errors.forEach((issue) => {
+        error.issues.forEach((issue) => {
           const path = issue.path[0] as keyof FormData;
           nextErrors[path] = issue.message;
         });
@@ -114,12 +120,12 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
-      setErrors((previous) => ({ ...previous, profilePhoto: 'Image must be less than 5MB' }));
+      setErrors((previous) => ({ ...previous, profilePhoto: t.modals.addPerson.feedback.imageTooLarge }));
       return;
     }
 
     if (!file.type.startsWith('image/')) {
-      setErrors((previous) => ({ ...previous, profilePhoto: 'Please select an image file' }));
+      setErrors((previous) => ({ ...previous, profilePhoto: t.modals.addPerson.feedback.imageTypeInvalid }));
       return;
     }
 
@@ -132,7 +138,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
     setIsEditing(false);
     setSelectedFile(null);
     setErrors({});
-    setPreviewUrl(person.photoUrl || 'https://placehold.co/200x200?text=Profile');
+    setPreviewUrl(person.photoUrl || profilePlaceholderUrl);
     setFormData({
       fullName: person.fullName,
       birthDate: parseDate(person.birthDate),
@@ -190,7 +196,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
     const shareUrl = buildShareUrl();
     const shareData: ShareData = {
       title: person.fullName,
-      text: `View memories linked to ${person.fullName}`,
+      text: formatTemplate(t.tree.share.textTemplate, { name: person.fullName }),
       url: shareUrl,
     };
 
@@ -200,7 +206,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
         if (typeof navigator.canShare === 'function' && !navigator.canShare(shareData)) {
           const copied = await copyShareLink(shareUrl);
           if (!copied) throw new Error('Copy failed');
-          toast.success('Profile link copied to clipboard');
+          toast.success(t.tree.share.copied);
           return;
         }
         await navigator.share(shareData);
@@ -209,10 +215,10 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
 
       const copied = await copyShareLink(shareUrl);
       if (!copied) throw new Error('Copy failed');
-      toast.success('Profile link copied to clipboard');
+      toast.success(t.tree.share.copied);
     } catch (error: any) {
       if (error?.name === 'AbortError') return;
-      toast.error('Unable to share right now. Try copying manually.');
+      toast.error(t.tree.share.copyFailed);
     } finally {
       setIsSharing(false);
     }
@@ -383,14 +389,14 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
               disabled={isSharing}
               className="flex-1 py-3 px-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-slate-700 dark:text-slate-200 transition-all flex items-center justify-center gap-2 hover:border-primary shadow-sm disabled:opacity-60"
             >
-              <Share2 size={14} /> {isSharing ? 'Sharing...' : 'Circulate'}
+              <Share2 size={14} /> {isSharing ? t.tree.actions.sharing : t.tree.actions.share}
             </button>
             <Link
               to="/vault"
               search={{ people: person.fullName } as any}
               className="flex-1 py-3 px-4 bg-primary text-white rounded-2xl text-[10px] font-bold uppercase tracking-widest glow-primary text-center hover:opacity-90 shadow-lg shadow-primary/20 flex items-center justify-center"
             >
-              View Vault
+              {t.tree.actions.viewVault}
             </Link>
           </div>
           {canEdit && onDelete && (
@@ -401,7 +407,7 @@ const RelativeProfileSidebar: React.FC<RelativeProfileSidebarProps> = ({
                 onClick={() => onDelete(person.id)}
                 className="w-full py-3 px-4 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-900 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-rose-600 dark:text-rose-300 transition-all flex items-center justify-center gap-2 hover:bg-rose-100 dark:hover:bg-rose-900/30 disabled:opacity-50"
               >
-                <Trash2 size={14} /> Remove Profile
+                <Trash2 size={14} /> {t.tree.actions.removeProfile}
               </button>
             </div>
           )}

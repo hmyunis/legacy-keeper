@@ -57,3 +57,37 @@ Copy `.env.example` to your local env file (`.env` or `.env.development`) and up
 - `npm run dev`: start local development server
 - `npm run build`: build production assets
 - `npm run preview`: preview production build
+- `npm run test`: run tests once with Vitest
+- `npm run test:watch`: run Vitest in watch mode
+
+## Vitest In This Windows Environment
+
+Some Windows setups in this project environment block child-process spawning for `esbuild.exe`, which causes direct `vitest` startup to fail with `EPERM`.
+
+To make tests runnable here, `npm run test` and `npm run test:watch` use:
+
+- `scripts/run-vitest.ps1`: resolves a usable `node.exe` (from PATH or VS Code).
+- `scripts/vitest-no-spawn.mjs`: launches Vitest with spawn-safe defaults for this environment.
+- `vite.config.ts`: applies test-mode config that avoids esbuild-based transforms.
+
+### Commands
+
+Run full test suite:
+
+```bash
+npm run test
+```
+
+Run a single file:
+
+```bash
+npm run test -- src/features/landing/selectors.test.ts
+```
+
+Watch mode:
+
+```bash
+npm run test:watch
+```
+
+Pass extra Vitest args through the scripts with `--` (for example: reporter, test name filters, or `--run`).

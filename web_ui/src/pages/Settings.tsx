@@ -1,66 +1,59 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { AxiosError } from 'axios';
-import { User as UserIcon, Bell, Database, ChevronRight, ShieldCheck, Palette } from 'lucide-react';
-import { STORAGE_LIMITS, useAuthStore } from '../stores/authStore';
-import { toast } from 'sonner';
-import ProfileSection from '../components/settings/ProfileSection';
-import NotificationsSection from '../components/settings/NotificationsSection';
-import AppearanceSection from '../components/settings/AppearanceSection';
-import VaultPrefsSection from '../components/settings/VaultPrefsSection';
-import { useTranslation } from '../i18n/LanguageContext';
-import { MemberStatus, NotificationPreferences, UserRole } from '../types';
+import { ShieldCheck } from 'lucide-react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { useLeaveVault, useMembers, useTransferVaultOwnership } from '../hooks/useMembers';
-import { getApiErrorMessage } from '../services/httpError';
-import { useUpdateProfile } from '../hooks/useAuth';
+import { toast } from 'sonner';
+import AppearanceSection from '@/components/settings/AppearanceSection';
+import NotificationsSection from '@/components/settings/NotificationsSection';
+import ProfileSection from '@/components/settings/ProfileSection';
+import VaultHealthDialog from '@/components/settings/VaultHealthDialog';
+import VaultPrefsSection from '@/components/settings/VaultPrefsSection';
+import ConfirmModal from '@/components/ui/ConfirmModal';
+import { SettingsHeader } from '@/features/settings/components/SettingsHeader';
+import { SettingsTabsNav } from '@/features/settings/components/SettingsTabsNav';
+import {
+  buildSettingsTabItems,
+  buildTransferCandidates,
+  buildVaultSettings,
+  flattenSettingsMembers,
+  getIsAdminInVault,
+  getVaultHealthSummary,
+  resolveSettingsTab,
+  resolveTransferMembershipSelection,
+  withSettingsTabSearch,
+} from '@/features/settings/selectors';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type SettingsConfirmState,
+  type SettingsSearchState,
+  type VaultSettings,
+} from '@/features/settings/types';
+import { useUpdateProfile } from '@/hooks/useAuth';
+import { useLeaveVault, useMembers, useTransferVaultOwnership } from '@/hooks/useMembers';
+import {
+  useNotificationPreferences,
+  useTriggerNotificationTest,
+  useUpdateNotificationPreferences,
+} from '@/hooks/useNotificationPreferences';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
 import {
   useCleanupVaultRedundant,
   useUpdateVault,
   useVault,
   useVaultHealthAnalysis,
-} from '../hooks/useVaults';
-import ConfirmModal from '../components/ui/ConfirmModal';
-import {
-  useNotificationPreferences,
-  useTriggerNotificationTest,
-  useUpdateNotificationPreferences,
-} from '../hooks/useNotificationPreferences';
-import { usePushNotifications } from '../hooks/usePushNotifications';
-import VaultHealthDialog from '../components/settings/VaultHealthDialog';
+} from '@/hooks/useVaults';
+import { useTranslation } from '@/i18n/LanguageContext';
+import { getApiErrorMessage } from '@/services/httpError';
+import { STORAGE_LIMITS, useAuthStore } from '@/stores/authStore';
+import { MemberStatus, type NotificationPreferences, UserRole } from '@/types';
 
-const SETTINGS_TABS = ['profile', 'vault', 'notifications', 'appearance'] as const;
-type SettingsTab = (typeof SETTINGS_TABS)[number];
-const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
-  inAppEnabled: true,
-  pushEnabled: false,
-  newUploads: true,
-  comments: false,
-  treeUpdates: true,
-  securityAlerts: true,
-  memberJoins: false,
-  pushAvailable: false,
-};
-
-type VaultQuality = 'balanced' | 'high' | 'original';
-type VaultVisibility = 'private' | 'family';
-type VaultSettings = {
-  quality: VaultQuality;
-  defaultVisibility: VaultVisibility;
-  safetyWindowMinutes: number;
-};
-
-type SettingsConfirmState =
-  | { kind: 'leave'; title: string; message: string; confirmLabel: string }
-  | { kind: 'transfer'; membershipId: string; title: string; message: string; confirmLabel: string };
-
-const Settings: React.FC = () => {
+const Settings = () => {
   const { t } = useTranslation();
   const { currentUser, activeVaultId, updateUser } = useAuthStore();
   const navigate = useNavigate();
-  const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
-  const requestedTab = typeof searchParams.tab === 'string' ? searchParams.tab : undefined;
-  const activeTab: SettingsTab =
-    requestedTab && SETTINGS_TABS.includes(requestedTab as SettingsTab) ? (requestedTab as SettingsTab) : 'profile';
+  const searchParams = useSearch({ strict: false }) as SettingsSearchState;
+  const requestedTab = searchParams.tab;
+  const activeTab = resolveSettingsTab(requestedTab);
   const leaveVaultMutation = useLeaveVault();
   const transferOwnershipMutation = useTransferVaultOwnership();
   const updateProfileMutation = useUpdateProfile();
@@ -91,13 +84,13 @@ const Settings: React.FC = () => {
   const [familyNameDraft, setFamilyNameDraft] = useState('');
   const [confirmState, setConfirmState] = useState<SettingsConfirmState | null>(null);
 
-  const members = useMemo(() => {
-    if (!membersData) return [];
-    return membersData.pages.flatMap(page => page.items);
-  }, [membersData]);
+  const members = useMemo(() => flattenSettingsMembers(membersData), [membersData]);
 
   const isVaultOwner = Boolean(activeVault?.isOwner);
-  const isAdminInVault = (activeVault?.myRole || currentUser?.role) === UserRole.ADMIN;
+  const isAdminInVault = getIsAdminInVault({
+    vaultRole: activeVault?.myRole,
+    currentUserRole: currentUser?.role,
+  });
   const [formData, setFormData] = useState({ 
     fullName: currentUser?.fullName || '', 
     email: currentUser?.email || '', 
@@ -111,7 +104,7 @@ const Settings: React.FC = () => {
     navigate({
       to: '/settings',
       replace: true,
-      search: (prev: Record<string, unknown>) => ({ ...prev, tab: activeTab }),
+      search: (prev: Record<string, unknown>) => withSettingsTabSearch(prev, activeTab),
     } as any);
   }, [activeTab, navigate, requestedTab]);
 
@@ -129,16 +122,12 @@ const Settings: React.FC = () => {
   }, [activeVault?.familyName]);
 
   useEffect(() => {
-    setVaultSettings({
-      quality: (activeVault?.storageQuality || 'high') as VaultQuality,
-      defaultVisibility: (activeVault?.defaultVisibility || 'family') as VaultVisibility,
-      safetyWindowMinutes: Number(activeVault?.safetyWindowMinutes ?? 60),
-    });
+    setVaultSettings(buildVaultSettings(activeVault));
   }, [activeVault?.defaultVisibility, activeVault?.safetyWindowMinutes, activeVault?.storageQuality]);
 
   const [vaultSettings, setVaultSettings] = useState<VaultSettings>({
-    quality: 'high' as VaultQuality,
-    defaultVisibility: 'family' as VaultVisibility,
+    quality: 'high',
+    defaultVisibility: 'family',
     safetyWindowMinutes: 60,
   });
 
@@ -177,8 +166,8 @@ const Settings: React.FC = () => {
         },
         onError: (error) => {
           setVaultSettings(previousSettings);
-          toast.error('Unable to update vault policy', {
-            description: getApiErrorMessage(error, 'Please try again.'),
+          toast.error(t.settings.vault.toasts.updateError, {
+            description: getApiErrorMessage(error, t.settings.vault.toasts.updateErrorDesc),
           });
         },
       }
@@ -194,17 +183,17 @@ const Settings: React.FC = () => {
         const result = await enablePushNotifications(true);
         if (!result.ok) {
           if (result.reason === 'permission_denied') {
-            toast.error('Browser push permission is required.', {
-              description: 'Allow notifications in your browser settings and try again.',
+            toast.error(t.settings.notifications.toasts.pushPermissionRequired, {
+              description: t.settings.notifications.toasts.pushPermissionRequiredDesc,
             });
           } else if (result.reason === 'missing_key') {
-            toast.error('Push is not configured on the backend.', {
-              description: 'Set VAPID keys and retry.',
+            toast.error(t.settings.notifications.toasts.pushMissingKey, {
+              description: t.settings.notifications.toasts.pushMissingKeyDesc,
             });
           } else if (result.reason === 'unsupported') {
-            toast.error('This browser does not support push notifications.');
+            toast.error(t.settings.notifications.toasts.pushUnsupported);
           } else {
-            toast.error('Failed to enable browser push notifications.');
+            toast.error(t.settings.notifications.toasts.pushEnableFailed);
           }
           return;
         }
@@ -282,12 +271,12 @@ const Settings: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = (e: FormEvent) => {
     e.preventDefault();
     const fullName = formData.fullName.trim();
     const bio = formData.bio;
     if (!fullName) {
-      toast.error(t.settings.profile.toasts.error || 'Name is required.');
+      toast.error(t.settings.profile.toasts.error);
       return;
     }
 
@@ -301,8 +290,8 @@ const Settings: React.FC = () => {
           if (fileInputRef.current) fileInputRef.current.value = '';
         },
         onError: (error) => {
-          toast.error(t.settings.profile.toasts.error || 'Failed to update profile.', {
-            description: getApiErrorMessage(error, t.settings.profile.toasts.errorDesc || 'Please try again.'),
+          toast.error(t.settings.profile.toasts.error, {
+            description: getApiErrorMessage(error, t.settings.profile.toasts.errorDesc),
           });
         },
       }
@@ -328,9 +317,9 @@ const Settings: React.FC = () => {
 
     setConfirmState({
       kind: 'leave',
-      title: 'Leave Vault?',
+      title: t.settings.vault.leave.confirmTitle,
       message: t.settings.vault.leave.confirmPrompt,
-      confirmLabel: 'Leave Vault',
+      confirmLabel: t.settings.vault.leave.button,
     });
   };
 
@@ -355,26 +344,18 @@ const Settings: React.FC = () => {
     });
   };
 
-  const transferCandidates = useMemo(() => {
-    const currentEmail = currentUser?.email?.toLowerCase();
-    return members
-      .filter(
-        (member) =>
-          member.email.toLowerCase() !== currentEmail && member.role === UserRole.CONTRIBUTOR
-      )
-      .map((member) => ({
-        id: member.id,
-        label: `${member.fullName} (${member.email})`,
-      }));
-  }, [members, currentUser?.email]);
+  const transferCandidates = useMemo(
+    () => buildTransferCandidates(members, currentUser?.email),
+    [currentUser?.email, members],
+  );
 
   useEffect(() => {
-    if (!transferCandidates.length) {
-      setSelectedTransferMembershipId('');
-      return;
-    }
-    if (!transferCandidates.some((candidate) => candidate.id === selectedTransferMembershipId)) {
-      setSelectedTransferMembershipId(transferCandidates[0].id);
+    const resolvedSelection = resolveTransferMembershipSelection(
+      transferCandidates,
+      selectedTransferMembershipId,
+    );
+    if (resolvedSelection !== selectedTransferMembershipId) {
+      setSelectedTransferMembershipId(resolvedSelection);
     }
   }, [transferCandidates, selectedTransferMembershipId]);
 
@@ -395,9 +376,9 @@ const Settings: React.FC = () => {
     setConfirmState({
       kind: 'transfer',
       membershipId: selectedTransferMembershipId,
-      title: 'Transfer Vault Ownership?',
+      title: t.settings.vault.transfer.confirmTitle,
       message: `${t.settings.vault.transfer.confirmPrompt} ${targetLabel}. ${t.settings.vault.transfer.confirmConsequence}`.trim(),
-      confirmLabel: 'Transfer Ownership',
+      confirmLabel: t.settings.vault.transfer.confirmLabel,
     });
   };
 
@@ -411,7 +392,7 @@ const Settings: React.FC = () => {
         navigate({
           to: '/settings',
           replace: true,
-          search: (prev: Record<string, unknown>) => ({ ...prev, tab: 'profile' }),
+          search: (prev: Record<string, unknown>) => withSettingsTabSearch(prev, 'profile'),
         } as any);
       },
       onError: (error) => {
@@ -482,39 +463,45 @@ const Settings: React.FC = () => {
     );
   };
 
-  const items = useMemo(() => [
-    { id: 'profile', label: t.settings.tabs.profile, icon: <UserIcon size={18} />, desc: t.settings.profile.fields.name },
-    { id: 'vault', label: t.settings.tabs.vault, icon: <Database size={18} />, desc: t.settings.vault.rules },
-    { id: 'appearance', label: t.settings.tabs.appearance, icon: <Palette size={18} />, desc: t.settings.appearance.title },
-    { id: 'notifications', label: t.settings.tabs.notifications, icon: <Bell size={18} />, desc: t.settings.notifications.subtitle },
-  ] as const, [t]);
+  const items = useMemo(
+    () =>
+      buildSettingsTabItems({
+        profileLabel: t.settings.tabs.profile,
+        profileDescription: t.settings.profile.fields.name,
+        vaultLabel: t.settings.tabs.vault,
+        vaultDescription: t.settings.vault.rules,
+        appearanceLabel: t.settings.tabs.appearance,
+        appearanceDescription: t.settings.appearance.title,
+        notificationsLabel: t.settings.tabs.notifications,
+        notificationsDescription: t.settings.notifications.subtitle,
+      }),
+    [
+      t.settings.appearance.title,
+      t.settings.notifications.subtitle,
+      t.settings.profile.fields.name,
+      t.settings.tabs.appearance,
+      t.settings.tabs.notifications,
+      t.settings.tabs.profile,
+      t.settings.tabs.vault,
+      t.settings.vault.rules,
+    ],
+  );
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-in slide-in-from-bottom-4 pb-20">
-      <div className="border-b border-slate-200 dark:border-slate-800 pb-6">
-        <h1 className="text-2xl font-bold tracking-tight">{t.settings.title}</h1>
-        <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">{t.settings.subtitle}</p>
-      </div>
+      <SettingsHeader title={t.settings.title} subtitle={t.settings.subtitle} />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        <div className="space-y-2">
-          {items.map((it) => (
-            <button 
-              key={it.id} 
-              onClick={() =>
-                navigate({
-                  to: '/settings',
-                  search: (prev: Record<string, unknown>) => ({ ...prev, tab: it.id }),
-                } as any)
-              } 
-              className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all border text-left group ${activeTab === it.id ? 'bg-white border-primary shadow-sm dark:bg-slate-900 dark:border-primary/50' : 'bg-transparent border-transparent hover:bg-white/50 dark:hover:bg-slate-800/50 text-slate-500 dark:text-slate-400'}`}
-            >
-              <div className={`p-2.5 rounded-xl transition-colors ${activeTab === it.id ? 'bg-primary text-white shadow-lg' : 'bg-slate-100 dark:bg-slate-800 group-hover:bg-slate-200 dark:group-hover:bg-slate-700'}`}>{it.icon}</div>
-              <div className="flex-1 min-w-0"><p className={`text-xs font-bold uppercase tracking-widest ${activeTab === it.id ? 'text-slate-900 dark:text-slate-100' : ''}`}>{it.label}</p><p className="text-[10px] text-slate-400 truncate">{it.desc}</p></div>
-              {activeTab === it.id && <ChevronRight size={14} className="text-primary animate-in slide-in-from-left-2" />}
-            </button>
-          ))}
-        </div>
+        <SettingsTabsNav
+          activeTab={activeTab}
+          items={items}
+          onSelectTab={(tab) =>
+            navigate({
+              to: '/settings',
+              search: (prev: Record<string, unknown>) => withSettingsTabSearch(prev, tab),
+            } as any)
+          }
+        />
 
         <div className="lg:col-span-3 space-y-6">
           {activeTab === 'profile' && currentUser && (
@@ -552,15 +539,7 @@ const Settings: React.FC = () => {
               onTransferOwnership={handleTransferOwnership}
               isTransferringOwnership={transferOwnershipMutation.isPending}
               isHealthLoading={healthAnalysisQuery.isFetching}
-              healthSummary={
-                healthAnalysisQuery.data
-                  ? {
-                      duplicateGroupsCount: healthAnalysisQuery.data.duplicateGroupsCount,
-                      duplicateItemsCount: healthAnalysisQuery.data.duplicateItemsCount,
-                      reclaimableBytes: healthAnalysisQuery.data.reclaimableBytes,
-                    }
-                  : null
-              }
+              healthSummary={getVaultHealthSummary(healthAnalysisQuery.data)}
               onOpenHealthAnalysis={openHealthDialog}
             />
           )}
@@ -580,7 +559,7 @@ const Settings: React.FC = () => {
         isOpen={Boolean(confirmState)}
         title={confirmState?.title || ''}
         message={confirmState?.message || ''}
-        confirmLabel={confirmState?.confirmLabel || 'Confirm'}
+        confirmLabel={confirmState?.confirmLabel || t.common.actions.confirm}
         requirePassword={confirmState?.kind === 'transfer'}
         passwordValue={transferPassword}
         passwordLabel={t.settings.vault.transfer.passwordLabel}

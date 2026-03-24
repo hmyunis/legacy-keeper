@@ -73,6 +73,11 @@ export const modals = {
   addPerson: {
     title: "Preserve Lineage Record",
     portrait: "Profile Portrait",
+    feedback: {
+      imageTooLarge: "Image must be less than 5MB",
+      imageTypeInvalid: "Please select an image file",
+      profilePreviewAlt: "Profile preview"
+    },
     fields: {
       name: "Full Legal Name",
       namePlaceholder: "e.g. Abebe Bikila Aferra",

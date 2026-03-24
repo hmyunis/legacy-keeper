@@ -105,6 +105,7 @@ export const vault = {
     editForm: {
       title: "Title",
       date: "Date",
+      location: "Location",
       story: "Story",
       files: "Files",
       keep: "Keep",

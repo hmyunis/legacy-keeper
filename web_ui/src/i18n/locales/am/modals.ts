@@ -73,6 +73,11 @@ export const modals = {
   addPerson: {
     title: "የዘር ሐረግ መዝገብ ጠብቅ",
     portrait: "የመገለጫ ምስል",
+    feedback: {
+      imageTooLarge: "ምስሉ ከ5MB ያነሰ መሆን አለበት",
+      imageTypeInvalid: "እባክዎ የምስል ፋይል ይምረጡ",
+      profilePreviewAlt: "የመገለጫ ቅድመ እይታ"
+    },
     fields: {
       name: "ሙሉ የህግ ስም",
       namePlaceholder: "ምሳሌ፡ እሌኒ ሮዝ ሃሪንግተን",

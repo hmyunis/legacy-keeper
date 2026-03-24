@@ -14,6 +14,10 @@ export const helpCenter = {
     title: "No guides found for",
     subtitle: "Try using broader keywords or explore our module categories above."
   },
+  errors: {
+    loadFailed: "Failed to load help guides.",
+    retry: "Retry"
+  },
   modal: {
     overview: "Summary",
     procedure: "How to do it",

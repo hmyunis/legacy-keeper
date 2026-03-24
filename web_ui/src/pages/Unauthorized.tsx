@@ -1,44 +1,47 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useSearch } from '@tanstack/react-router';
-import { ShieldAlert } from 'lucide-react';
-import { useVaults } from '../hooks/useVaults';
-import { useAuthStore } from '../stores/authStore';
-import { UserRole } from '../types';
-import { useTranslation } from '../i18n/LanguageContext';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearch } from '@tanstack/react-router';
+import { UnauthorizedActions } from '@/features/unauthorized/components/UnauthorizedActions';
+import { UnauthorizedCard } from '@/features/unauthorized/components/UnauthorizedCard';
+import {
+  getUnauthorizedCandidateVaults,
+  getUnauthorizedRequiredRoles,
+  parseUnauthorizedRetryTarget,
+  resolveAttemptedUnauthorizedPath,
+  resolveUnauthorizedSelectedVaultId,
+} from '@/features/unauthorized/selectors';
+import type { UnauthorizedSearchState } from '@/features/unauthorized/types';
+import { useVaults } from '@/hooks/useVaults';
+import { useTranslation } from '@/i18n/LanguageContext';
+import { useAuthStore } from '@/stores/authStore';
 
-const Unauthorized: React.FC = () => {
+const Unauthorized = () => {
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const search = useSearch({ strict: false }) as { from?: string };
+  const search = useSearch({ strict: false }) as UnauthorizedSearchState;
   const { data: vaults } = useVaults();
   const { activeVaultId, setActiveVault, updateUser } = useAuthStore();
-  const attemptedPath = typeof search.from === 'string' && search.from.trim() ? search.from : null;
+  const attemptedPath = resolveAttemptedUnauthorizedPath(search.from);
 
-  const requiredRoles = useMemo(() => {
-    if (!attemptedPath) return [UserRole.ADMIN, UserRole.CONTRIBUTOR, UserRole.VIEWER] as const;
-    if (attemptedPath.startsWith('/members') || attemptedPath.startsWith('/logs')) {
-      return [UserRole.ADMIN] as const;
-    }
-    return [UserRole.ADMIN, UserRole.CONTRIBUTOR, UserRole.VIEWER] as const;
-  }, [attemptedPath]);
-
-  const candidateVaults = useMemo(() => {
-    if (!vaults?.length) return [];
-    return vaults.filter((vault) => vault.myRole && requiredRoles.includes(vault.myRole));
-  }, [requiredRoles, vaults]);
+  const requiredRoles = useMemo(
+    () => getUnauthorizedRequiredRoles(attemptedPath),
+    [attemptedPath],
+  );
+  const candidateVaults = useMemo(
+    () => getUnauthorizedCandidateVaults(vaults, requiredRoles),
+    [requiredRoles, vaults],
+  );
 
   const [selectedVaultId, setSelectedVaultId] = useState('');
 
   useEffect(() => {
-    if (!candidateVaults.length) {
-      setSelectedVaultId('');
-      return;
+    const resolvedSelection = resolveUnauthorizedSelectedVaultId({
+      candidateVaults,
+      selectedVaultId,
+      activeVaultId,
+    });
+    if (resolvedSelection !== selectedVaultId) {
+      setSelectedVaultId(resolvedSelection);
     }
-
-    if (candidateVaults.some((vault) => vault.id === selectedVaultId)) return;
-
-    const preferred = candidateVaults.find((vault) => vault.id === activeVaultId) || candidateVaults[0];
-    setSelectedVaultId(preferred.id);
   }, [activeVaultId, candidateVaults, selectedVaultId]);
 
   const switchVaultAndRetry = () => {
@@ -50,73 +53,35 @@ const Unauthorized: React.FC = () => {
       updateUser({ role: targetVault.myRole });
     }
 
-    if (!attemptedPath) {
+    const retryTarget = parseUnauthorizedRetryTarget(attemptedPath);
+    if (!retryTarget) {
       navigate({ to: '/' });
       return;
     }
 
-    const [path, query] = attemptedPath.split('?');
-    const parsedSearch = query ? Object.fromEntries(new URLSearchParams(query).entries()) : undefined;
-    navigate({ to: path as any, search: parsedSearch as any });
+    navigate({ to: retryTarget.to as any, search: retryTarget.search as any });
   };
 
   return (
     <div className="max-w-3xl mx-auto py-12">
       <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 md:p-10 shadow-sm space-y-6">
-        <div className="flex items-start gap-4">
-          <div className="p-3 rounded-2xl bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300">
-            <ShieldAlert size={24} />
-          </div>
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">{t.common.unauthorized.title}</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
-              {t.common.unauthorized.description}
-            </p>
-            {attemptedPath && (
-              <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
-                {t.common.unauthorized.attemptedRoute}: <span className="font-mono">{attemptedPath}</span>
-              </p>
-            )}
-          </div>
-        </div>
+        <UnauthorizedCard
+          title={t.common.unauthorized.title}
+          description={t.common.unauthorized.description}
+          attemptedRouteLabel={t.common.unauthorized.attemptedRoute}
+          attemptedPath={attemptedPath}
+        />
 
-        <div className="flex flex-col sm:flex-row gap-3 pt-2">
-          {candidateVaults.length > 0 && (
-            <div className="flex flex-1 flex-col sm:flex-row gap-2">
-              <select
-                value={selectedVaultId}
-                onChange={(event) => setSelectedVaultId(event.target.value)}
-                className="flex-1 rounded-2xl border border-slate-300 dark:border-slate-700 px-4 py-3 text-xs font-bold uppercase tracking-widest bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
-              >
-                {candidateVaults.map((vault) => (
-                  <option key={vault.id} value={vault.id}>
-                    {vault.name} ({vault.myRole})
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={switchVaultAndRetry}
-                className="inline-flex items-center justify-center rounded-2xl border border-primary/40 bg-primary/5 text-primary px-5 py-3 text-xs font-black uppercase tracking-widest hover:bg-primary/10 transition-colors"
-              >
-                {t.common.unauthorized.switchVaultAndRetry}
-              </button>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => navigate({ to: '/' })}
-            className="inline-flex items-center justify-center rounded-2xl bg-primary text-white px-5 py-3 text-xs font-black uppercase tracking-widest hover:opacity-90 transition-opacity"
-          >
-            {t.common.unauthorized.goToDashboard}
-          </button>
-          <Link
-            to="/help"
-            className="inline-flex items-center justify-center rounded-2xl border border-slate-300 dark:border-slate-700 px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          >
-            {t.common.unauthorized.openHelpCenter}
-          </Link>
-        </div>
+        <UnauthorizedActions
+          candidateVaults={candidateVaults}
+          selectedVaultId={selectedVaultId}
+          switchVaultAndRetryLabel={t.common.unauthorized.switchVaultAndRetry}
+          goToDashboardLabel={t.common.unauthorized.goToDashboard}
+          openHelpCenterLabel={t.common.unauthorized.openHelpCenter}
+          onSelectedVaultChange={setSelectedVaultId}
+          onSwitchVaultAndRetry={switchVaultAndRetry}
+          onGoToDashboard={() => navigate({ to: '/' })}
+        />
       </div>
     </div>
   );

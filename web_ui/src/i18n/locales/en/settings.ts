@@ -22,7 +22,9 @@ export const settings = {
       updating: "Updating..."
     },
     toasts: {
-      success: "Identity updated"
+      success: "Identity updated",
+      error: "Failed to update profile.",
+      errorDesc: "Please try again."
     }
   },
   vault: {
@@ -69,6 +71,7 @@ export const settings = {
       description: "You will lose access to this family vault immediately. You can rejoin only if someone invites you again.",
       button: "Leave Vault",
       loading: "Leaving...",
+      confirmTitle: "Leave Vault?",
       adminMustTransferFirst: "Admin must transfer ownership before leaving this vault.",
       confirmPrompt: "Are you sure you want to leave this vault?",
       noVaultSelected: "No active vault selected.",
@@ -88,6 +91,8 @@ export const settings = {
       passwordLabel: "Admin Password",
       passwordPlaceholder: "Enter your current password",
       passwordRequired: "Password is required to transfer ownership.",
+      confirmTitle: "Transfer Vault Ownership?",
+      confirmLabel: "Transfer Ownership",
       confirmPrompt: "Transfer ownership to:",
       confirmConsequence: "After transfer, your role will be downgraded to Contributor and admin-only settings will no longer be available.",
       success: "Ownership transferred successfully.",
@@ -96,7 +101,9 @@ export const settings = {
       errorDesc: "Please try again."
     },
     toasts: {
-      success: "Vault logic updated"
+      success: "Vault logic updated",
+      updateError: "Unable to update vault policy",
+      updateErrorDesc: "Please try again."
     }
   },
   notifications: {
@@ -129,6 +136,12 @@ export const settings = {
     toasts: {
       updated: "Preference updated",
       synced: "Your archival alert settings have been synchronized.",
+      pushPermissionRequired: "Browser push permission is required.",
+      pushPermissionRequiredDesc: "Allow notifications in your browser settings and try again.",
+      pushMissingKey: "Push is not configured on the backend.",
+      pushMissingKeyDesc: "Set VAPID keys and retry.",
+      pushUnsupported: "This browser does not support push notifications.",
+      pushEnableFailed: "Failed to enable browser push notifications.",
       blocked: "Notification blocked",
       blockedDesc: "New Upload notifications are currently disabled in your settings.",
       testSuccess: "Test Push Received",

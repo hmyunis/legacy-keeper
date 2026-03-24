@@ -39,5 +39,9 @@ export const auditLogs = {
     synced: "Logs synchronized",
     failed: "Synchronization failed",
     exported: "Audit record exported to archive"
+  },
+  errors: {
+    noVaultSelected: "No active vault selected",
+    retry: "Please try again."
   }
 };

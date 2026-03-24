@@ -14,6 +14,10 @@ export const helpCenter = {
     title: "ምንም መመሪያ አልተገኘም ለ",
     subtitle: "ሰፋ ያሉ ቁልፍ ቃላትን ለመጠቀም ይሞክሩ ወይም ከላይ ያሉትን የሞጁል ምድቦች ያስሱ።"
   },
+  errors: {
+    loadFailed: "የእርዳታ መመሪያዎችን መጫን አልተሳካም።",
+    retry: "እንደገና ሞክር"
+  },
   modal: {
     overview: "ማጠቃለያ",
     procedure: "እንዴት እንደሚደረግ",

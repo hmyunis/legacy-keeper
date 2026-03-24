@@ -22,7 +22,9 @@ export const settings = {
       updating: "በማዘመን ላይ..."
     },
     toasts: {
-      success: "ማንነት ተዘምኗል"
+      success: "ማንነት ተዘምኗል",
+      error: "መገለጫን ማዘመን አልተቻለም።",
+      errorDesc: "እባክዎ እንደገና ይሞክሩ።"
     }
   },
   vault: {
@@ -63,11 +65,13 @@ export const settings = {
     },
     health: "የማህደር ጤና",
     healthDesc: "የስርዓት ቅኝት በ1950ዎቹ ስብስብ ውስጥ 12 ተደጋጋሚ መዝገቦች መገኘታቸውን ያሳያል። ማጽዳት ይመከራል።",
+    healthClickHint: "ለመተንተን ይጫኑ",
     leave: {
       title: "ከዚህ ማከማቻ ውጣ",
       description: "ወዲያውኑ ወደዚህ የቤተሰብ ማከማቻ መዳረሻዎን ያጣሉ። ዳግም ለመቀላቀል አዲስ ግብዣ ያስፈልጋል።",
       button: "ማከማቻን ተው",
       loading: "በመውጣት ላይ...",
+      confirmTitle: "ከማከማቻው መውጣት?",
       adminMustTransferFirst: "አስተዳዳሪዎች ከማከማቻው ከመውጣታቸው በፊት ባለቤትነትን ማስተላለፍ አለባቸው።",
       confirmPrompt: "ከዚህ ማከማቻ መውጣት እርግጠኛ ነዎት?",
       noVaultSelected: "ንቁ ማከማቻ አልተመረጠም።",
@@ -87,6 +91,8 @@ export const settings = {
       passwordLabel: "የአስተዳዳሪ የይለፍ ቃል",
       passwordPlaceholder: "የአሁኑን የይለፍ ቃል ያስገቡ",
       passwordRequired: "ባለቤትነት ለማስተላለፍ የይለፍ ቃል ያስፈልጋል።",
+      confirmTitle: "የማከማቻ ባለቤትነት ይተላለፍ?",
+      confirmLabel: "ባለቤትነት አስተላልፍ",
       confirmPrompt: "ባለቤትነትን ወደዚህ ያስተላልፉ:",
       confirmConsequence: "ከማስተላለፉ በኋላ ሚናዎ ወደ Contributor ይቀንሳል እና የአስተዳዳሪ ቅንብሮችን መዳረሻ አይኖርዎትም።",
       success: "ባለቤትነት በተሳካ ሁኔታ ተላልፏል።",
@@ -95,7 +101,9 @@ export const settings = {
       errorDesc: "እባክዎ እንደገና ይሞክሩ።"
     },
     toasts: {
-      success: "የማከማቻ አመክንዮ ተዘምኗል"
+      success: "የማከማቻ አመክንዮ ተዘምኗል",
+      updateError: "የማከማቻ ፖሊሲን ማዘመን አልተቻለም",
+      updateErrorDesc: "እባክዎ እንደገና ይሞክሩ።"
     }
   },
   notifications: {
@@ -128,6 +136,12 @@ export const settings = {
     toasts: {
       updated: "ምርጫ ተዘምኗል",
       synced: "የእርስዎ የማህደር ማንቂያ ቅንብሮች ተመሳስለዋል።",
+      pushPermissionRequired: "የአሳሽ ግፋ ፍቃድ ያስፈልጋል።",
+      pushPermissionRequiredDesc: "በአሳሽዎ ቅንብር ውስጥ ማሳወቂያ ፍቃድ ይፍቀዱ እና እንደገና ይሞክሩ።",
+      pushMissingKey: "በbackend ላይ ግፋ አልተቀናበረም።",
+      pushMissingKeyDesc: "VAPID ቁልፎችን ያቀናብሩ እና እንደገና ይሞክሩ።",
+      pushUnsupported: "ይህ አሳሽ ግፋ ማሳወቂያዎችን አይደግፍም።",
+      pushEnableFailed: "የአሳሽ ግፋ ማሳወቂያዎችን ማንቃት አልተቻለም።",
       blocked: "ማሳወቂያ ታግዷል",
       blockedDesc: "አዲስ ሰቀላ ማሳወቂያዎች በአሁኑ ጊዜ በእርስዎ ቅንብሮች ውስጥ ተሰናክለዋል።",
       testSuccess: "የሙከራ ግፋ ደርሷል",

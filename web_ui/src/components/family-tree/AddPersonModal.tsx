@@ -33,11 +33,11 @@ const AddPersonModal: React.FC<AddPersonModalProps> = ({ isPending, onClose, onS
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
-        setErrors(prev => ({ ...prev, profilePhoto: 'Image must be less than 5MB' }));
+        setErrors(prev => ({ ...prev, profilePhoto: t.modals.addPerson.feedback.imageTooLarge }));
         return;
       }
       if (!file.type.startsWith('image/')) {
-        setErrors(prev => ({ ...prev, profilePhoto: 'Please select an image file' }));
+        setErrors(prev => ({ ...prev, profilePhoto: t.modals.addPerson.feedback.imageTypeInvalid }));
         return;
       }
       setSelectedFile(file);
@@ -60,7 +60,7 @@ const AddPersonModal: React.FC<AddPersonModalProps> = ({ isPending, onClose, onS
     } catch (error) {
       if (error instanceof z.ZodError) {
         const newErrors: Partial<Record<keyof FormData, string>> = {};
-        error.errors.forEach((err) => {
+        error.issues.forEach((err) => {
           const path = err.path[0] as keyof FormData;
           newErrors[path] = err.message;
         });
@@ -98,7 +98,7 @@ const AddPersonModal: React.FC<AddPersonModalProps> = ({ isPending, onClose, onS
               <img 
                 src={previewUrl} 
                 className="w-24 h-24 rounded-3xl object-cover border-4 border-slate-50 dark:border-slate-800 shadow-xl group-hover:scale-105 transition-transform" 
-                alt="Profile preview" 
+                alt={t.modals.addPerson.feedback.profilePreviewAlt} 
               />
               <button 
                 type="button" 

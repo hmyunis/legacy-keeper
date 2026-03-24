@@ -300,9 +300,31 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         if (Number.isNaN(parsed.getTime())) return selectedExifCandidate.dateTaken;
         return parsed.toLocaleString();
     }, [selectedExifCandidate?.dateTaken]);
-    const selectedExifGpsPreview = selectedExifCandidate?.gps
-        ? `${selectedExifCandidate.gps.latitude.toFixed(6)}, ${selectedExifCandidate.gps.longitude.toFixed(6)}`
+    const selectedExifGpsPreview = hasExifGpsCandidate
+        ? `${selectedExifCandidate!.gps!.latitude.toFixed(6)}, ${selectedExifCandidate!.gps!.longitude.toFixed(6)}`
         : '';
+    const locationMapHref = useMemo(() => {
+        if (hasExifGpsCandidate) {
+            const latitude = selectedExifCandidate!.gps!.latitude;
+            const longitude = selectedExifCandidate!.gps!.longitude;
+            return `https://maps.google.com/?q=${latitude},${longitude}`;
+        }
+
+        const normalizedLocation = media.location?.trim();
+        if (normalizedLocation) {
+            return `https://maps.google.com/?q=${encodeURIComponent(normalizedLocation)}`;
+        }
+
+        return undefined;
+    }, [
+        hasExifGpsCandidate,
+        selectedExifCandidate?.gps?.latitude,
+        selectedExifCandidate?.gps?.longitude,
+        media.location,
+    ]);
+    const locationPreviewText = hasExifGpsCandidate
+        ? selectedExifGpsPreview
+        : media.location?.trim() || t.vault.detail.locationViaMap;
 
     const effectiveFaceStatus =
         faceStatusData?.status || media.faceDetectionStatus || MediaFaceDetectionStatus.NOT_STARTED;
@@ -1224,6 +1246,22 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                     </div>
                                     <div>
                                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">
+                                            {t.vault.detail.editForm.location}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={editDraft.location}
+                                            onChange={(e) =>
+                                                setEditDraft({
+                                                    ...editDraft,
+                                                    location: e.target.value,
+                                                })
+                                            }
+                                            className="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm bg-white dark:bg-slate-900"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">
                                             {t.vault.detail.editForm.story}
                                         </label>
                                         <textarea
@@ -1774,7 +1812,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                             </p>
                                         </div>
 
-                                        {(selectedExifCandidate?.gps || media.location) && (
+                                        {locationMapHref && (
                                             <div className="col-span-2 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
                                                 <div>
                                                     <div className="flex items-center gap-2 mb-1 text-slate-400">
@@ -1784,13 +1822,11 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                                         </span>
                                                     </div>
                                                     <p className="text-[10px] font-mono text-slate-600 dark:text-slate-300">
-                                                        {selectedExifCandidate?.gps
-                                                            ? `${selectedExifCandidate.gps.latitude.toFixed(6)}, ${selectedExifCandidate.gps.longitude.toFixed(6)}`
-                                                            : t.vault.detail.locationViaMap}
+                                                        {locationPreviewText}
                                                     </p>
                                                 </div>
                                                 <a
-                                                    href={`https://maps.google.com/?q=${selectedExifCandidate?.gps?.latitude},${selectedExifCandidate?.gps?.longitude}`}
+                                                    href={locationMapHref}
                                                     target="_blank"
                                                     rel="noreferrer"
                                                     className="p-2 bg-white dark:bg-slate-900 rounded-xl text-primary hover:bg-primary hover:text-white transition-colors"

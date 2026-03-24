@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearch } from '@tanstack/react-router';
-import { CheckCircle2, CircleX, Loader2 } from 'lucide-react';
-import { useResendVerification, useVerifyEmail } from '../hooks/useAuth';
-import { getApiErrorMessage } from '../services/httpError';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { toast } from 'sonner';
-import { useTranslation } from '../i18n/LanguageContext';
-
-type VerifyStatus = 'idle' | 'loading' | 'success' | 'error';
+import { VerifyEmailActions } from '@/features/recovery/components/VerifyEmailActions';
+import { VerifyResendForm } from '@/features/recovery/components/VerifyResendForm';
+import { VerifyTokenForm } from '@/features/recovery/components/VerifyTokenForm';
+import { RecoveryStatusMessage } from '@/features/recovery/components/RecoveryStatusMessage';
+import { buildVerifyLoginSearch, resolveVerifySearch, validateRecoveryEmail } from '@/features/recovery/selectors';
+import type { RecoveryStatus } from '@/features/recovery/types';
+import { useResendVerification, useVerifyEmail } from '@/hooks/useAuth';
+import { useTranslation } from '@/i18n/LanguageContext';
+import { getApiErrorMessage } from '@/services/httpError';
 
 const VerifyEmail: React.FC = () => {
   const navigate = useNavigate();
@@ -19,15 +22,20 @@ const VerifyEmail: React.FC = () => {
   const verifyMutation = useVerifyEmail();
   const resendMutation = useResendVerification();
   const { t } = useTranslation();
-  const [status, setStatus] = useState<VerifyStatus>('idle');
+  const initialSearch = resolveVerifySearch(search);
+
+  const [status, setStatus] = useState<RecoveryStatus>('idle');
   const [message, setMessage] = useState(t.common.recovery.verifyEmailIntro);
-  const [tokenInput, setTokenInput] = useState((search.token || '').trim());
-  const [emailInput, setEmailInput] = useState((search.email || '').trim());
+  const [tokenInput, setTokenInput] = useState(initialSearch.token);
+  const [emailInput, setEmailInput] = useState(initialSearch.email);
   const autoVerifiedTokenRef = useRef<string | null>(null);
   const verifyAttemptIdRef = useRef(0);
 
-  const joinToken = typeof search.joinToken === 'string' && search.joinToken.trim() ? search.joinToken : undefined;
-  const redirectPath = typeof search.redirect === 'string' && search.redirect.startsWith('/') ? search.redirect : undefined;
+  const verifySearch = resolveVerifySearch(search);
+  const loginSearch = buildVerifyLoginSearch({
+    joinToken: verifySearch.joinToken,
+    redirectPath: verifySearch.redirectPath,
+  });
 
   const verifyWithToken = async (token: string) => {
     const normalized = token.trim();
@@ -39,6 +47,7 @@ const VerifyEmail: React.FC = () => {
 
     const attemptId = ++verifyAttemptIdRef.current;
     setStatus('loading');
+
     try {
       const data = await verifyMutation.mutateAsync({ token: normalized });
       if (verifyAttemptIdRef.current !== attemptId) {
@@ -56,7 +65,7 @@ const VerifyEmail: React.FC = () => {
   };
 
   useEffect(() => {
-    const token = (search.token || '').trim();
+    const token = resolveVerifySearch(search).token;
     setTokenInput(token);
 
     if (!token || autoVerifiedTokenRef.current === token) {
@@ -68,7 +77,7 @@ const VerifyEmail: React.FC = () => {
   }, [search.token]);
 
   useEffect(() => {
-    const email = (search.email || '').trim();
+    const email = resolveVerifySearch(search).email;
     if (!email) return;
     setEmailInput(email);
   }, [search.email]);
@@ -80,15 +89,19 @@ const VerifyEmail: React.FC = () => {
 
   const handleResend = () => {
     const email = emailInput.trim();
-    if (!email) {
-      toast.error(t.common.recovery.resendVerificationEmailRequired);
+    const validationError = validateRecoveryEmail({
+      email,
+      requiredMessage: t.common.recovery.resendVerificationEmailRequired,
+    });
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
 
     resendMutation.mutate(
       {
         email,
-        ...(joinToken ? { joinToken } : {}),
+        ...(verifySearch.joinToken ? { joinToken: verifySearch.joinToken } : {}),
       },
       {
         onSuccess: (data) => {
@@ -106,75 +119,45 @@ const VerifyEmail: React.FC = () => {
       <div className="w-full max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 shadow-xl space-y-6">
         <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight mb-4">{t.common.recovery.verifyEmailTitle}</h1>
 
-        <div className="flex items-start gap-3 text-sm">
-          {status === 'loading' && <Loader2 className="animate-spin text-primary mt-0.5" size={20} />}
-          {status === 'success' && <CheckCircle2 className="text-emerald-600 mt-0.5" size={20} />}
-          {status === 'error' && <CircleX className="text-rose-600 mt-0.5" size={20} />}
-          <p className="text-slate-600 dark:text-slate-300 leading-relaxed">{message}</p>
-        </div>
+        <RecoveryStatusMessage
+          status={status}
+          message={message}
+        />
 
         {status !== 'success' && (
-          <form onSubmit={handleManualVerify} className="space-y-3">
-            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">{t.common.recovery.verificationToken}</label>
-            <input
-              type="text"
-              value={tokenInput}
-              onChange={(event) => setTokenInput(event.target.value)}
-              placeholder={t.common.recovery.verificationToken}
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-slate-100"
-            />
-            <button
-              type="submit"
-              disabled={verifyMutation.isPending}
-              className="w-full inline-flex items-center justify-center rounded-2xl bg-primary text-white px-5 py-3 text-xs font-black uppercase tracking-widest hover:opacity-90 transition-opacity disabled:opacity-60"
-            >
-              {verifyMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : t.common.recovery.verifyTokenAction}
-            </button>
-          </form>
+          <VerifyTokenForm
+            tokenInput={tokenInput}
+            isPending={verifyMutation.isPending}
+            labels={{
+              tokenLabel: t.common.recovery.verificationToken,
+              tokenPlaceholder: t.common.recovery.verificationToken,
+              submit: t.common.recovery.verifyTokenAction,
+            }}
+            onSubmit={handleManualVerify}
+            onTokenChange={setTokenInput}
+          />
         )}
 
         {status !== 'success' && (
-          <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">{t.common.recovery.resendVerificationEmail}</label>
-            <input
-              type="email"
-              value={emailInput}
-              onChange={(event) => setEmailInput(event.target.value)}
-              placeholder={t.common.auth.emailPlaceholder}
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-slate-100"
-            />
-            <button
-              type="button"
-              onClick={handleResend}
-              disabled={resendMutation.isPending}
-              className="w-full inline-flex items-center justify-center rounded-2xl border border-slate-300 dark:border-slate-700 px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-60"
-            >
-              {resendMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : t.common.recovery.resendEmailAction}
-            </button>
-          </div>
+          <VerifyResendForm
+            emailInput={emailInput}
+            isPending={resendMutation.isPending}
+            labels={{
+              title: t.common.recovery.resendVerificationEmail,
+              emailPlaceholder: t.common.auth.emailPlaceholder,
+              submit: t.common.recovery.resendEmailAction,
+            }}
+            onEmailChange={setEmailInput}
+            onSubmit={handleResend}
+          />
         )}
 
-        <div className="mt-8 flex gap-3">
-          <Link
-            to="/login"
-            search={
-              {
-                ...(joinToken ? { joinToken } : {}),
-                ...(redirectPath ? { redirect: redirectPath } : {}),
-              } as any
-            }
-            className="inline-flex items-center justify-center rounded-2xl bg-primary text-white px-5 py-3 text-xs font-black uppercase tracking-widest hover:opacity-90 transition-opacity"
-          >
-            {t.common.auth.goToLogin}
-          </Link>
-          <button
-            type="button"
-            onClick={() => navigate({ to: '/' })}
-            className="inline-flex items-center justify-center rounded-2xl border border-slate-300 dark:border-slate-700 px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          >
-            {t.common.auth.backToLanding}
-          </button>
-        </div>
+        <VerifyEmailActions
+          loginLabel={t.common.auth.goToLogin}
+          backToLandingLabel={t.common.auth.backToLanding}
+          loginSearch={loginSearch}
+          onBackToLanding={() => navigate({ to: '/' })}
+        />
       </div>
     </div>
   );
