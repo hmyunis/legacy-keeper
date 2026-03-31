@@ -7,6 +7,7 @@ import {
   MediaRestorationStatus,
   MediaStatus,
   MediaType,
+  UserRole,
   type MediaItem,
 } from '@/types';
 import {
@@ -14,6 +15,8 @@ import {
   buildVaultFiltersState,
   buildVaultMediaQueryParams,
   buildVaultSearchParams,
+  canManageMediaActions,
+  excludeLockAuthorFromCandidates,
   flattenVaultMedia,
   getActiveFilterCount,
   getVaultTotalCount,
@@ -195,6 +198,121 @@ describe('vault utils', () => {
     });
   });
 
+  it('excludes the author from lock target candidates', () => {
+    const candidates = [
+      { userId: '11', fullName: 'Author User', email: 'author@example.com' },
+      { userId: '22', fullName: 'Target One', email: 'one@example.com' },
+      { userId: '33', fullName: 'Target Two', email: 'two@example.com' },
+    ];
+
+    expect(excludeLockAuthorFromCandidates(candidates, '11')).toEqual([
+      { userId: '22', fullName: 'Target One', email: 'one@example.com' },
+      { userId: '33', fullName: 'Target Two', email: 'two@example.com' },
+    ]);
+  });
+
+  it('returns candidates unchanged when no author id is provided', () => {
+    const candidates = [
+      { userId: '11', fullName: 'Author User', email: 'author@example.com' },
+      { userId: '22', fullName: 'Target One', email: 'one@example.com' },
+    ];
+
+    expect(excludeLockAuthorFromCandidates(candidates, '')).toEqual(candidates);
+    expect(excludeLockAuthorFromCandidates(candidates, null)).toEqual(candidates);
+  });
+
+  it('allows admins to manage any media', () => {
+    expect(
+      canManageMediaActions({
+        role: UserRole.ADMIN,
+        currentUserId: 'admin-1',
+        uploaderId: 'someone-else',
+        uploadTimestamp: '2026-03-31T09:00:00.000Z',
+        safetyWindowMinutes: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it('denies viewers and anonymous users from managing media', () => {
+    expect(
+      canManageMediaActions({
+        role: UserRole.VIEWER,
+        currentUserId: 'viewer-1',
+        uploaderId: 'viewer-1',
+      }),
+    ).toBe(false);
+
+    expect(
+      canManageMediaActions({
+        role: null,
+        currentUserId: null,
+        uploaderId: 'user-1',
+      }),
+    ).toBe(false);
+  });
+
+  it('denies contributors editing media they did not upload', () => {
+    expect(
+      canManageMediaActions({
+        role: UserRole.CONTRIBUTOR,
+        currentUserId: 'contrib-1',
+        uploaderId: 'contrib-2',
+        uploadTimestamp: '2026-03-31T09:00:00.000Z',
+        safetyWindowMinutes: 60,
+      }),
+    ).toBe(false);
+  });
+
+  it('enforces contributor safety window based on upload timestamp', () => {
+    const uploadedAt = '2026-03-31T09:00:00.000Z';
+    const insideWindow = Date.parse('2026-03-31T09:30:00.000Z');
+    const outsideWindow = Date.parse('2026-03-31T10:30:01.000Z');
+
+    expect(
+      canManageMediaActions({
+        role: UserRole.CONTRIBUTOR,
+        currentUserId: 'contrib-1',
+        uploaderId: 'contrib-1',
+        uploadTimestamp: uploadedAt,
+        safetyWindowMinutes: 60,
+        nowMs: insideWindow,
+      }),
+    ).toBe(true);
+
+    expect(
+      canManageMediaActions({
+        role: UserRole.CONTRIBUTOR,
+        currentUserId: 'contrib-1',
+        uploaderId: 'contrib-1',
+        uploadTimestamp: uploadedAt,
+        safetyWindowMinutes: 60,
+        nowMs: outsideWindow,
+      }),
+    ).toBe(false);
+  });
+
+  it('allows contributor actions when safety window is not provided or timestamp is invalid', () => {
+    expect(
+      canManageMediaActions({
+        role: UserRole.CONTRIBUTOR,
+        currentUserId: 'contrib-1',
+        uploaderId: 'contrib-1',
+        uploadTimestamp: 'invalid-date',
+        safetyWindowMinutes: 10,
+      }),
+    ).toBe(true);
+
+    expect(
+      canManageMediaActions({
+        role: UserRole.CONTRIBUTOR,
+        currentUserId: 'contrib-1',
+        uploaderId: 'contrib-1',
+        uploadTimestamp: '2026-03-31T09:00:00.000Z',
+        safetyWindowMinutes: null,
+      }),
+    ).toBe(true);
+  });
+
   it('flattens media pages and reads total count', () => {
     const mediaData: InfiniteData<PaginatedMediaResult> = {
       pages: [
@@ -258,4 +376,3 @@ describe('vault utils', () => {
     expect(isFaceDetectionRunning(MediaFaceDetectionStatus.FAILED)).toBe(false);
   });
 });
-

@@ -12,6 +12,7 @@ import {
   useUpdateMediaMetadata,
 } from '../hooks/useMedia';
 import { useVault } from '../hooks/useVaults';
+import { useVaultMemberUsers } from '../hooks/useMembers';
 import { useTranslation } from '../i18n/LanguageContext';
 import { useAuthStore } from '../stores/authStore';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -34,6 +35,7 @@ import {
   buildEmptyVaultFilters,
   buildVaultFiltersState,
   buildVaultMediaQueryParams,
+  excludeLockAuthorFromCandidates,
   flattenVaultMedia,
   getActiveFilterCount,
   getVaultTotalCount,
@@ -149,6 +151,9 @@ const Vault: React.FC<{
     tags: '',
     story: '',
     visibility: 'family',
+    lockRule: 'none',
+    lockReleaseAt: '',
+    lockTargetUserIds: [],
   });
   const [confirmState, setConfirmState] = useState<VaultConfirmState | null>(null);
   const sortRef = useRef<HTMLDivElement>(null);
@@ -229,6 +234,15 @@ const Vault: React.FC<{
 
   const canUpload = currentUser ? hasPermission(currentUser.role, 'UPLOAD_MEDIA') : false;
   const canDelete = currentUser ? hasPermission(currentUser.role, 'DELETE_MEDIA') : false;
+  const { data: lockTargetCandidates = [] } = useVaultMemberUsers({
+    enabled: uploadState.open || Boolean(selectedMedia),
+  });
+  const lockTargetCandidatesForUpload = useMemo(() => {
+    return excludeLockAuthorFromCandidates(lockTargetCandidates, currentUser?.id);
+  }, [currentUser?.id, lockTargetCandidates]);
+  const lockTargetCandidatesForSelectedMedia = useMemo(() => {
+    return excludeLockAuthorFromCandidates(lockTargetCandidates, selectedMedia?.uploaderId);
+  }, [lockTargetCandidates, selectedMedia?.uploaderId]);
   const activeFilterCount = useMemo(() => getActiveFilterCount(filters), [filters]);
   const activeFilterBadgeLabel = activeFilterCount > 99 ? '99+' : String(activeFilterCount);
 
@@ -405,6 +419,9 @@ const Vault: React.FC<{
       ...state,
       open: true,
       visibility: vaultDefaultVisibility,
+      lockRule: 'none',
+      lockReleaseAt: '',
+      lockTargetUserIds: [],
     }));
   };
 
@@ -563,6 +580,8 @@ const Vault: React.FC<{
       <VaultMediaDetailModalContainer
         media={selectedMedia}
         relatedMedia={allMedia}
+        lockTargetCandidates={lockTargetCandidatesForSelectedMedia}
+        safetyWindowMinutes={activeVault?.safetyWindowMinutes}
         tagState={tagState}
         setTagState={setTagState}
         onClose={() => setSelectedMedia(null)}
@@ -579,6 +598,7 @@ const Vault: React.FC<{
       <VaultUploadModalContainer
         canUpload={canUpload}
         uploadState={uploadState}
+        lockTargetCandidates={lockTargetCandidatesForUpload}
         setUploadState={setUploadState}
         isUploading={uploadMutation.isPending}
         onClose={resetUploadState}

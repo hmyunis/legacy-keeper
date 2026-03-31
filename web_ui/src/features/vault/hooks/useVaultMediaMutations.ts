@@ -94,6 +94,9 @@ export const useVaultMediaMutations = ({
       tags: '',
       story: '',
       visibility: vaultDefaultVisibility,
+      lockRule: 'none',
+      lockReleaseAt: '',
+      lockTargetUserIds: [],
     });
   }, [setUploadState, vaultDefaultVisibility]);
 
@@ -150,6 +153,22 @@ export const useVaultMediaMutations = ({
         .map((tag) => tag.trim())
         .filter(Boolean);
 
+      const needsTimeCondition =
+        uploadState.lockRule === 'time' ||
+        uploadState.lockRule === 'time_and_target';
+      const needsTargetCondition =
+        uploadState.lockRule === 'targeted' ||
+        uploadState.lockRule === 'time_and_target';
+
+      if (needsTimeCondition && !uploadState.lockReleaseAt.trim()) {
+        toast.error('Unlock date-time is required for this lock rule.');
+        return;
+      }
+      if (needsTargetCondition && uploadState.lockTargetUserIds.length === 0) {
+        toast.error('Select at least one target user for this lock rule.');
+        return;
+      }
+
       uploadMediaMutate(
         {
           payload: {
@@ -161,6 +180,11 @@ export const useVaultMediaMutations = ({
             location: uploadState.location,
             tags: parsedTags,
             visibility: uploadState.visibility,
+            lockRule: uploadState.lockRule,
+            lockReleaseAt: uploadState.lockReleaseAt
+              ? new Date(uploadState.lockReleaseAt).toISOString()
+              : null,
+            lockTargetUserIds: uploadState.lockTargetUserIds,
           },
           onUploadProgress: (progress) => {
             setUploadState((current) => ({ ...current, progress }));

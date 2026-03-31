@@ -95,6 +95,12 @@ export interface MembersQueryParams {
   status?: MemberStatus;
 }
 
+export interface VaultMemberUserOption {
+  userId: string;
+  fullName: string;
+  email: string;
+}
+
 export interface InviteMemberResponse {
   message: string;
   link?: string;
@@ -208,6 +214,47 @@ export const membersApi = {
       hasNextPage: Array.isArray(data) ? false : !!data.next,
       hasPreviousPage: Array.isArray(data) ? false : !!data.previous,
     };
+  },
+
+  getActiveMemberUsers: async (vaultId: string): Promise<VaultMemberUserOption[]> => {
+    const pageSize = 100;
+    let page = 1;
+    let hasNextPage = true;
+    const usersById = new Map<string, VaultMemberUserOption>();
+
+    while (hasNextPage) {
+      const response = await axiosClient.get<PaginatedApiResponse<ApiMembership> | ApiMembership[]>(
+        `vaults/${vaultId}/${MEMBERS_ENDPOINT}`,
+        {
+          params: {
+            page,
+            pageSize,
+            isActive: true,
+          },
+        },
+      );
+      const payload = response.data;
+      const rows = unwrapList(payload);
+      rows.forEach((row: any) => {
+        if (!row || typeof row !== 'object') return;
+        const user = row.user && typeof row.user === 'object' ? row.user : null;
+        const userId = String(user?.id || '').trim();
+        if (!userId) return;
+        const fullName = String(user?.fullName ?? user?.full_name ?? '').trim() || 'Member';
+        const email = String(user?.email ?? '').trim();
+        if (!usersById.has(userId)) {
+          usersById.set(userId, { userId, fullName, email });
+        }
+      });
+
+      hasNextPage = Array.isArray(payload) ? false : Boolean(payload.next);
+      page += 1;
+      if (page > 30) {
+        hasNextPage = false;
+      }
+    }
+
+    return Array.from(usersById.values()).sort((a, b) => a.fullName.localeCompare(b.fullName));
   },
 
   removeMember: async (vaultId: string, membershipId: string): Promise<void> => {

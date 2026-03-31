@@ -7,6 +7,12 @@ import type { VaultTagState } from '@/features/vault/utils';
 interface VaultMediaDetailModalContainerProps {
   media: MediaItem | null;
   relatedMedia: MediaItem[];
+  lockTargetCandidates: Array<{
+    userId: string;
+    fullName: string;
+    email: string;
+  }>;
+  safetyWindowMinutes?: number;
   tagState: VaultTagState;
   setTagState: Dispatch<SetStateAction<VaultTagState>>;
   onClose: () => void;
@@ -26,6 +32,8 @@ interface VaultMediaDetailModalContainerProps {
 export const VaultMediaDetailModalContainer: FC<VaultMediaDetailModalContainerProps> = ({
   media,
   relatedMedia,
+  lockTargetCandidates,
+  safetyWindowMinutes,
   tagState,
   setTagState,
   onClose,
@@ -52,6 +60,8 @@ export const VaultMediaDetailModalContainer: FC<VaultMediaDetailModalContainerPr
     <MediaDetailModal
       media={media}
       relatedMedia={relatedMedia}
+      lockTargetCandidates={lockTargetCandidates}
+      safetyWindowMinutes={safetyWindowMinutes}
       isFavorite={Boolean(media.isFavorite)}
       isTagInputVisible={tagState.visible}
       manualTagValue={tagState.value}
@@ -73,4 +83,3 @@ export const VaultMediaDetailModalContainer: FC<VaultMediaDetailModalContainerPr
     />
   );
 };
-

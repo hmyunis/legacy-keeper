@@ -1,8 +1,10 @@
 import json
 import mimetypes
 from rest_framework import serializers
+from django.utils import timezone
 from core.storage_urls import build_storage_file_url, build_storage_path_url
 from .models import MediaAttachment, MediaItem
+from vaults.models import Membership
 
 MAX_UPLOAD_MB = 20
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
@@ -97,6 +99,9 @@ class MediaItemSerializer(serializers.ModelSerializer):
     files = serializers.SerializerMethodField()
     linked_relatives = serializers.SerializerMethodField()
     detected_faces = serializers.SerializerMethodField()
+    lock_target_user_ids = serializers.SerializerMethodField()
+    lock_target_users = serializers.SerializerMethodField()
+    is_time_locked = serializers.SerializerMethodField()
 
     class Meta:
         model = MediaItem
@@ -104,6 +109,7 @@ class MediaItemSerializer(serializers.ModelSerializer):
             'id', 'vault', 'uploader', 'uploader_name', 'uploader_avatar',
             'file', 'file_url', 'is_favorite', 'file_size', 'media_type', 
             'title', 'description', 'date_taken', 'visibility',
+            'lock_rule', 'lock_release_at', 'lock_target_user_ids', 'lock_target_users', 'is_time_locked',
             'ai_status',
             'exif_status',
             'exif_error',
@@ -116,6 +122,7 @@ class MediaItemSerializer(serializers.ModelSerializer):
             'restoration_error',
             'restoration_processed_at',
             'created_at',
+            'is_time_locked',
             'metadata',
             'files',
             'linked_relatives',
@@ -310,6 +317,70 @@ class MediaItemSerializer(serializers.ModelSerializer):
             )
 
         return faces
+
+    def _is_request_user_vault_admin(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not request or not user or not user.is_authenticated:
+            return False
+        annotated = getattr(obj, 'can_view_private', None)
+        if annotated is not None:
+            return bool(annotated)
+        return obj.vault.members.filter(
+            user=user,
+            role=Membership.Roles.ADMIN,
+            is_active=True,
+        ).exists()
+
+    def _is_request_user_lock_target(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not request or not user or not user.is_authenticated:
+            return False
+        annotated = getattr(obj, 'is_lock_target', None)
+        if annotated is not None:
+            return bool(annotated)
+        return obj.lock_targets.filter(user=user).exists()
+
+    def get_is_time_locked(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not request or not user or not user.is_authenticated:
+            return False
+
+        if obj.lock_rule == MediaItem.LockRule.NONE:
+            return False
+        if obj.uploader_id == user.id:
+            return False
+        if self._is_request_user_vault_admin(obj):
+            return False
+
+        now = timezone.now()
+        is_time_ready = bool(obj.lock_release_at and obj.lock_release_at <= now)
+        is_target_user = self._is_request_user_lock_target(obj)
+
+        if obj.lock_rule == MediaItem.LockRule.TIME:
+            return not is_time_ready
+        if obj.lock_rule == MediaItem.LockRule.TARGETED:
+            return not is_target_user
+        if obj.lock_rule == MediaItem.LockRule.TIME_AND_TARGET:
+            return not (is_time_ready and is_target_user)
+        if obj.lock_rule == MediaItem.LockRule.TIME_OR_TARGET:
+            return not (is_time_ready or is_target_user)
+        return False
+
+    def get_lock_target_user_ids(self, obj):
+        return [str(entry.user_id) for entry in obj.lock_targets.all()]
+
+    def get_lock_target_users(self, obj):
+        return [
+            {
+                'id': str(entry.user_id),
+                'full_name': entry.user.full_name,
+                'email': entry.user.email,
+            }
+            for entry in obj.lock_targets.all()
+        ]
 
     def validate_file(self, value):
         """

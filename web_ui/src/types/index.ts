@@ -53,6 +53,13 @@ export enum MediaType {
   VIDEO = 'VIDEO'
 }
 
+export type MediaLockRule =
+  | 'none'
+  | 'time'
+  | 'targeted'
+  | 'time_and_target'
+  | 'time_or_target';
+
 export interface User {
   id: string;
   fullName: string;
@@ -156,6 +163,15 @@ export interface MediaItem {
   isFavorite: boolean;
   type: MediaType;
   visibility: 'private' | 'family';
+  lockRule?: MediaLockRule;
+  lockReleaseAt?: string;
+  lockTargetUserIds?: string[];
+  lockTargetUsers?: Array<{
+    id: string;
+    fullName: string;
+    email: string;
+  }>;
+  isTimeLocked?: boolean;
   title: string;
   description: string;
   dateTaken: string;

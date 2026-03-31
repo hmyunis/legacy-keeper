@@ -5,13 +5,14 @@ import json
 import mimetypes
 from pathlib import Path
 
+from django.contrib.auth import get_user_model
 from django.db import connection, transaction
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db.models import Count, Exists, Max, Min, OuterRef, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
-from django.utils.dateparse import parse_date
+from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import decorators, permissions, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
@@ -19,7 +20,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from django.shortcuts import get_object_or_404
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from .models import MediaAttachment, MediaFavorite, MediaItem
+from .models import MediaAttachment, MediaFavorite, MediaItem, MediaItemLockTarget
 from .serializers import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, MediaItemSerializer, resolve_attachment_file_type
 from .file_processing import process_uploaded_file_for_storage
 from .natural_language_search import parse_natural_language_query
@@ -27,6 +28,7 @@ from .services import AIProcessingService
 from core.storage_urls import build_storage_path_url
 from vaults.models import FamilyVault, Membership
 from vaults.permissions import IsVaultMember
+
 
 class MediaItemViewSet(viewsets.ModelViewSet):
     serializer_class = MediaItemSerializer
@@ -334,6 +336,211 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         if default_visibility in valid_values:
             return default_visibility
         return MediaItem.Visibility.FAMILY
+
+    def _is_request_key_present(self, request, keys):
+        source = request.data
+        return any(key in source for key in keys)
+
+    def _normalize_lock_rule(self, raw_rule):
+        token = str(raw_rule or '').strip().upper()
+        aliases = {
+            'NONE': MediaItem.LockRule.NONE,
+            'TIME': MediaItem.LockRule.TIME,
+            'TARGET': MediaItem.LockRule.TARGETED,
+            'TARGETED': MediaItem.LockRule.TARGETED,
+            'TIME_AND_TARGET': MediaItem.LockRule.TIME_AND_TARGET,
+            'TIME_OR_TARGET': MediaItem.LockRule.TIME_OR_TARGET,
+        }
+        normalized = aliases.get(token, token)
+        valid_values = {choice[0] for choice in MediaItem.LockRule.choices}
+        if normalized not in valid_values:
+            raise ValidationError(
+                {
+                    'lockRule': [
+                        'Invalid lock rule. Use NONE, TIME, TARGETED, TIME_AND_TARGET, or TIME_OR_TARGET.'
+                    ]
+                }
+            )
+        return normalized
+
+    def _parse_lock_release_at(self, raw_release_at):
+        if raw_release_at in (None, '', 'null', 'None'):
+            return None
+        if isinstance(raw_release_at, datetime):
+            parsed = raw_release_at
+        else:
+            parsed = parse_datetime(str(raw_release_at).strip())
+        if not parsed:
+            raise ValidationError({'lockReleaseAt': ['Lock release date-time is invalid.']})
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+        return parsed
+
+    def _parse_lock_target_user_ids(self, raw_target_ids):
+        if raw_target_ids in (None, ''):
+            return []
+
+        values = []
+        if isinstance(raw_target_ids, (list, tuple)):
+            values = list(raw_target_ids)
+        elif isinstance(raw_target_ids, str):
+            token = raw_target_ids.strip()
+            if not token:
+                return []
+            try:
+                parsed = json.loads(token)
+                if isinstance(parsed, list):
+                    values = parsed
+                else:
+                    values = [item.strip() for item in token.split(',') if item.strip()]
+            except ValueError:
+                values = [item.strip() for item in token.split(',') if item.strip()]
+        else:
+            values = [raw_target_ids]
+
+        normalized_ids = []
+        seen = set()
+        user_pk_field = get_user_model()._meta.pk
+        for value in values:
+            raw_id = str(value or '').strip()
+            if not raw_id:
+                continue
+            try:
+                normalized_id = str(user_pk_field.to_python(raw_id))
+            except (TypeError, ValueError):
+                raise ValidationError({'lockTargetUserIds': [f'Invalid user id: "{raw_id}".']})
+            if not normalized_id or normalized_id.lower() == 'none':
+                raise ValidationError({'lockTargetUserIds': [f'Invalid user id: "{raw_id}".']})
+            if normalized_id in seen:
+                continue
+            seen.add(normalized_id)
+            normalized_ids.append(normalized_id)
+        return normalized_ids
+
+    def _resolve_lock_payload(self, request, vault, media_item=None):
+        lock_rule_present = self._is_request_key_present(request, ('lock_rule', 'lockRule'))
+        lock_release_present = self._is_request_key_present(
+            request,
+            ('lock_release_at', 'lockReleaseAt'),
+        )
+        lock_targets_present = self._is_request_key_present(
+            request,
+            ('lock_target_user_ids', 'lockTargetUserIds'),
+        )
+
+        if media_item is not None and not (lock_rule_present or lock_release_present or lock_targets_present):
+            return None
+
+        current_rule = media_item.lock_rule if media_item else MediaItem.LockRule.NONE
+        current_release_at = media_item.lock_release_at if media_item else None
+        current_target_ids = (
+            [str(user_id) for user_id in media_item.lock_targets.values_list('user_id', flat=True)]
+            if media_item
+            else []
+        )
+
+        next_rule = current_rule
+        next_release_at = current_release_at
+        next_target_ids = current_target_ids
+
+        if lock_rule_present:
+            raw_rule = request.data.get('lock_rule', request.data.get('lockRule'))
+            next_rule = self._normalize_lock_rule(raw_rule)
+
+        if lock_release_present:
+            raw_release_at = request.data.get('lock_release_at', request.data.get('lockReleaseAt'))
+            next_release_at = self._parse_lock_release_at(raw_release_at)
+
+        if lock_targets_present:
+            raw_targets = request.data.get('lock_target_user_ids', request.data.get('lockTargetUserIds'))
+            next_target_ids = self._parse_lock_target_user_ids(raw_targets)
+
+        if next_rule == MediaItem.LockRule.NONE:
+            next_release_at = None
+            next_target_ids = []
+        elif next_rule == MediaItem.LockRule.TIME:
+            if not next_release_at:
+                raise ValidationError({'lockReleaseAt': ['A release date-time is required for TIME lock rule.']})
+            next_target_ids = []
+        elif next_rule == MediaItem.LockRule.TARGETED:
+            if not next_target_ids:
+                raise ValidationError({'lockTargetUserIds': ['Select at least one target user.']})
+            next_release_at = None
+        elif next_rule == MediaItem.LockRule.TIME_AND_TARGET:
+            if not next_release_at:
+                raise ValidationError(
+                    {'lockReleaseAt': ['A release date-time is required for TIME_AND_TARGET lock rule.']}
+                )
+            if not next_target_ids:
+                raise ValidationError({'lockTargetUserIds': ['Select at least one target user.']})
+        elif next_rule == MediaItem.LockRule.TIME_OR_TARGET:
+            if not next_release_at and not next_target_ids:
+                raise ValidationError(
+                    {
+                        'lockRule': [
+                            'TIME_OR_TARGET requires at least one condition: lock release date-time or target users.'
+                        ]
+                    }
+                )
+
+        if next_target_ids:
+            active_member_user_ids = {
+                str(user_id)
+                for user_id in Membership.objects.filter(
+                    vault=vault,
+                    is_active=True,
+                    user_id__in=next_target_ids,
+                ).values_list('user_id', flat=True)
+            }
+            invalid_target_ids = [user_id for user_id in next_target_ids if user_id not in active_member_user_ids]
+            if invalid_target_ids:
+                raise ValidationError({'lockTargetUserIds': ['All target users must be active vault members.']})
+
+        return {
+            'lock_rule': next_rule,
+            'lock_release_at': next_release_at,
+            'lock_target_user_ids': next_target_ids,
+        }
+
+    def _apply_lock_payload(self, media_item, lock_payload):
+        if lock_payload is None:
+            return media_item
+
+        update_fields = []
+        next_rule = lock_payload['lock_rule']
+        next_release_at = lock_payload['lock_release_at']
+        next_target_ids = set(lock_payload['lock_target_user_ids'])
+
+        if media_item.lock_rule != next_rule:
+            media_item.lock_rule = next_rule
+            update_fields.append('lock_rule')
+        if media_item.lock_release_at != next_release_at:
+            media_item.lock_release_at = next_release_at
+            update_fields.append('lock_release_at')
+        if update_fields:
+            media_item.save(update_fields=update_fields)
+
+        existing_target_ids = {
+            str(user_id)
+            for user_id in MediaItemLockTarget.objects.filter(media_item=media_item).values_list('user_id', flat=True)
+        }
+        if existing_target_ids != next_target_ids:
+            lock_targets_qs = MediaItemLockTarget.objects.filter(media_item=media_item)
+            if next_target_ids:
+                lock_targets_qs.exclude(user_id__in=next_target_ids).delete()
+            else:
+                lock_targets_qs.delete()
+            new_target_ids = next_target_ids.difference(existing_target_ids)
+            if new_target_ids:
+                MediaItemLockTarget.objects.bulk_create(
+                    [
+                        MediaItemLockTarget(media_item=media_item, user_id=user_id)
+                        for user_id in new_target_ids
+                    ],
+                    ignore_conflicts=True,
+                )
+
+        return media_item
 
     def _process_files_for_vault(self, uploaded_files, vault):
         storage_quality = getattr(vault, 'storage_quality', FamilyVault.StorageQuality.HIGH)
@@ -1008,7 +1215,19 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         return int(total_size)
 
     def _extract_update_payload(self, request):
-        excluded_keys = {'remove_file_ids', 'removeFileIds', 'new_files', 'newFiles', 'files'}
+        excluded_keys = {
+            'remove_file_ids',
+            'removeFileIds',
+            'new_files',
+            'newFiles',
+            'files',
+            'lock_rule',
+            'lockRule',
+            'lock_release_at',
+            'lockReleaseAt',
+            'lock_target_user_ids',
+            'lockTargetUserIds',
+        }
         source = request.data
         data = {}
 
@@ -1172,6 +1391,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         remove_file_ids = self._parse_remove_file_ids(request)
         raw_new_files = self._parse_new_files(request)
         new_files = self._process_files_for_vault(raw_new_files, media_item.vault)
+        lock_payload = self._resolve_lock_payload(request, media_item.vault, media_item=media_item)
         update_payload = self._extract_update_payload(request)
         serializer = self.get_serializer(media_item, data=update_payload, partial=partial)
         serializer.is_valid(raise_exception=True)
@@ -1179,11 +1399,13 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         self.perform_update(serializer)
 
         updated_media = serializer.instance
-        if has_file_mutations:
+        if has_file_mutations or lock_payload is not None:
             with transaction.atomic():
-                self._lock_quota_user(quota_user)
-                updated_media = self._apply_file_mutations(updated_media, remove_file_ids, new_files)
-                self._enforce_user_upload_quota(quota_user)
+                if has_file_mutations:
+                    self._lock_quota_user(quota_user)
+                    updated_media = self._apply_file_mutations(updated_media, remove_file_ids, new_files)
+                    self._enforce_user_upload_quota(quota_user)
+                updated_media = self._apply_lock_payload(updated_media, lock_payload)
 
         # EXIF/face processing is only needed when media files change.
         should_enqueue_processing = has_file_mutations
@@ -1252,7 +1474,11 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         queryset = MediaItem.objects.filter(
             vault__members__user=self.request.user,
             vault__members__is_active=True,
-        ).select_related('uploader', 'vault').prefetch_related('tags__person', 'attachments').annotate(
+        ).select_related('uploader', 'vault').prefetch_related(
+            'tags__person',
+            'attachments',
+            'lock_targets__user',
+        ).annotate(
             sort_date=Coalesce('date_taken', 'created_at')
         )
 
@@ -1266,15 +1492,38 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             role=Membership.Roles.ADMIN,
             is_active=True,
         )
+        lock_target_subquery = MediaItemLockTarget.objects.filter(
+            media_item_id=OuterRef('pk'),
+            user=self.request.user,
+        )
         queryset = queryset.annotate(
             is_favorite=Exists(favorite_subquery),
             can_view_private=Exists(admin_membership_subquery),
+            is_lock_target=Exists(lock_target_subquery),
         )
 
         queryset = queryset.filter(
             Q(visibility=MediaItem.Visibility.FAMILY)
             | Q(uploader=self.request.user)
             | Q(can_view_private=True)
+        )
+
+        now = timezone.now()
+        queryset = queryset.filter(
+            Q(lock_rule=MediaItem.LockRule.NONE)
+            | Q(uploader=self.request.user)
+            | Q(can_view_private=True)
+            | Q(lock_rule=MediaItem.LockRule.TIME, lock_release_at__lte=now)
+            | Q(lock_rule=MediaItem.LockRule.TARGETED, is_lock_target=True)
+            | Q(
+                lock_rule=MediaItem.LockRule.TIME_AND_TARGET,
+                lock_release_at__lte=now,
+                is_lock_target=True,
+            )
+            | (
+                Q(lock_rule=MediaItem.LockRule.TIME_OR_TARGET)
+                & (Q(lock_release_at__lte=now) | Q(is_lock_target=True))
+            )
         )
 
         if vault_pk:
@@ -1642,6 +1891,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
         shared_metadata = self._parse_metadata_payload(request.data.get('metadata'))
         requested_media_type = request.data.get('media_type') or request.data.get('mediaType')
         requested_visibility = request.data.get('visibility')
+        lock_payload = self._resolve_lock_payload(request, vault)
         requested_primary_file_index = request.data.get('primary_file_index', request.data.get('primaryFileIndex'))
         primary_file_index = self._resolve_primary_file_index(uploaded_files, requested_primary_file_index)
         primary_source_file = uploaded_files[primary_file_index]
@@ -1698,6 +1948,7 @@ class MediaItemViewSet(viewsets.ModelViewSet):
             if media_item.file_size != total_size:
                 media_item.file_size = total_size
                 media_item.save(update_fields=['file_size'])
+            media_item = self._apply_lock_payload(media_item, lock_payload)
             self._enforce_user_upload_quota(request.user)
 
         AIProcessingService().enqueue_media_processing(media_item)

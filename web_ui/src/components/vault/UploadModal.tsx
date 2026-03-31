@@ -1,7 +1,9 @@
-import React, { useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { X, Upload, Loader2, Image as ImageIcon, Calendar, MapPin, Tag as TagIcon, AlignLeft, File as FileIcon, Lock, Users } from 'lucide-react';
 import DatePicker from '../DatePicker';
 import { useTranslation } from '../../i18n/LanguageContext';
+import type { MediaLockRule } from '../../types';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '../ui/Select';
 
 interface UploadModalProps {
   isUploading: boolean;
@@ -14,6 +16,14 @@ interface UploadModalProps {
   tags: string;
   story: string;
   visibility: 'private' | 'family';
+  lockRule: MediaLockRule;
+  lockReleaseAt: string;
+  lockTargetUserIds: string[];
+  lockTargetCandidates: Array<{
+    userId: string;
+    fullName: string;
+    email: string;
+  }>;
   onDateChange: (date: Date) => void;
   onFilesChange: (files: File[], primaryFileIndex?: number) => void;
   onPrimaryFileChange: (index: number) => void;
@@ -22,9 +32,34 @@ interface UploadModalProps {
   onTagsChange: (value: string) => void;
   onStoryChange: (value: string) => void;
   onVisibilityChange: (value: 'private' | 'family') => void;
+  onLockRuleChange: (value: MediaLockRule) => void;
+  onLockReleaseAtChange: (value: string) => void;
+  onLockTargetUserIdsChange: (value: string[]) => void;
   onClose: () => void;
   onStartUpload: () => void;
 }
+
+const LOCK_HOUR_OPTIONS = Array.from({ length: 24 }, (_, index) =>
+  String(index).padStart(2, '0'),
+);
+const LOCK_MINUTE_OPTIONS = ['00', '15', '30', '45'];
+
+const parseLocalDateTime = (value: string): Date | undefined => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return undefined;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed;
+};
+
+const formatLocalDateTime = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  const hour = String(value.getHours()).padStart(2, '0');
+  const minute = String(value.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+};
 
 const UploadModal: React.FC<UploadModalProps> = ({
   isUploading,
@@ -37,6 +72,10 @@ const UploadModal: React.FC<UploadModalProps> = ({
   tags,
   story,
   visibility,
+  lockRule,
+  lockReleaseAt,
+  lockTargetUserIds,
+  lockTargetCandidates,
   onDateChange,
   onFilesChange,
   onPrimaryFileChange,
@@ -45,12 +84,72 @@ const UploadModal: React.FC<UploadModalProps> = ({
   onTagsChange,
   onStoryChange,
   onVisibilityChange,
+  onLockRuleChange,
+  onLockReleaseAtChange,
+  onLockTargetUserIdsChange,
   onClose,
   onStartUpload,
 }) => {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const maxFiles = 10;
+  const effectiveLockRule: Exclude<MediaLockRule, 'time_or_target'> =
+    lockRule === 'time_or_target' ? 'time_and_target' : lockRule;
+  const needsTimeCondition =
+    effectiveLockRule === 'time' || effectiveLockRule === 'time_and_target';
+  const needsTargetCondition =
+    effectiveLockRule === 'targeted' || effectiveLockRule === 'time_and_target';
+  const lockReleaseDateTime = useMemo(
+    () => parseLocalDateTime(lockReleaseAt),
+    [lockReleaseAt],
+  );
+  const selectedLockHour = String(lockReleaseDateTime?.getHours() ?? 9).padStart(2, '0');
+  const rawSelectedLockMinute = String(lockReleaseDateTime?.getMinutes() ?? 0).padStart(2, '0');
+  const selectedLockMinute = LOCK_MINUTE_OPTIONS.includes(rawSelectedLockMinute)
+    ? rawSelectedLockMinute
+    : LOCK_MINUTE_OPTIONS[0];
+  const lockRuleLabel =
+    effectiveLockRule === 'time'
+      ? t.modals.upload.timeLock.rules.time
+      : effectiveLockRule === 'targeted'
+        ? t.modals.upload.timeLock.rules.targeted
+        : effectiveLockRule === 'time_and_target'
+          ? t.modals.upload.timeLock.rules.both
+          : t.modals.upload.timeLock.rules.none;
+
+  const toggleTargetUser = (userId: string) => {
+    if (!userId) return;
+    if (lockTargetUserIds.includes(userId)) {
+      onLockTargetUserIdsChange(lockTargetUserIds.filter((id) => id !== userId));
+      return;
+    }
+    onLockTargetUserIdsChange([...lockTargetUserIds, userId]);
+  };
+
+  const ensureLockDateTime = () => {
+    if (lockReleaseDateTime) return new Date(lockReleaseDateTime);
+    const fallback = new Date();
+    fallback.setHours(9, 0, 0, 0);
+    return fallback;
+  };
+
+  const handleLockDateChange = (nextDate: Date) => {
+    const next = ensureLockDateTime();
+    next.setFullYear(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate());
+    onLockReleaseAtChange(formatLocalDateTime(next));
+  };
+
+  const handleLockHourChange = (nextHour: string) => {
+    const next = ensureLockDateTime();
+    next.setHours(Number(nextHour), Number(selectedLockMinute), 0, 0);
+    onLockReleaseAtChange(formatLocalDateTime(next));
+  };
+
+  const handleLockMinuteChange = (nextMinute: string) => {
+    const next = ensureLockDateTime();
+    next.setHours(Number(selectedLockHour), Number(nextMinute), 0, 0);
+    onLockReleaseAtChange(formatLocalDateTime(next));
+  };
 
   const mergeFiles = (incoming: File[]) => {
     if (!incoming.length) return;
@@ -249,6 +348,103 @@ const UploadModal: React.FC<UploadModalProps> = ({
                 </button>
               </div>
             </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                {t.modals.upload.timeLock.title}
+              </label>
+              <Select
+                value={effectiveLockRule}
+                onValueChange={(value) => onLockRuleChange(value as MediaLockRule)}
+                className="w-full"
+              >
+                <SelectTrigger className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm">
+                  <span className="text-slate-700 dark:text-slate-200">{lockRuleLabel}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t.modals.upload.timeLock.rules.none}</SelectItem>
+                  <SelectItem value="time">{t.modals.upload.timeLock.rules.time}</SelectItem>
+                  <SelectItem value="targeted">{t.modals.upload.timeLock.rules.targeted}</SelectItem>
+                  <SelectItem value="time_and_target">{t.modals.upload.timeLock.rules.both}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {needsTimeCondition && (
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  {t.modals.upload.timeLock.unlockAt}
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <DatePicker
+                    date={lockReleaseDateTime}
+                    onChange={handleLockDateChange}
+                    placeholder={t.modals.upload.timeLock.pickDate}
+                    className="sm:col-span-2"
+                  />
+                  <Select value={selectedLockHour} onValueChange={handleLockHourChange}>
+                    <SelectTrigger className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm">
+                      <span className="text-slate-700 dark:text-slate-200">{`${selectedLockHour}:${selectedLockMinute}`}</span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LOCK_HOUR_OPTIONS.map((hour) => (
+                        <SelectItem key={hour} value={hour}>
+                          {`${hour}:${selectedLockMinute}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    {t.modals.upload.timeLock.minuteLabel}
+                  </span>
+                  <Select value={selectedLockMinute} onValueChange={handleLockMinuteChange}>
+                    <SelectTrigger className="w-24 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs">
+                      <span className="text-slate-700 dark:text-slate-200">{selectedLockMinute}</span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LOCK_MINUTE_OPTIONS.map((minute) => (
+                        <SelectItem key={minute} value={minute}>
+                          {minute}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+            {needsTargetCondition && (
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  {t.modals.upload.timeLock.targetUsers}
+                </label>
+                <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/40 p-2 space-y-1">
+                  {lockTargetCandidates.length === 0 && (
+                    <p className="px-2 py-2 text-[11px] text-slate-500">
+                      {t.modals.upload.timeLock.noMembers}
+                    </p>
+                  )}
+                  {lockTargetCandidates.map((member) => {
+                    const isSelected = lockTargetUserIds.includes(member.userId);
+                    return (
+                      <label
+                        key={member.userId}
+                        className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleTargetUser(member.userId)}
+                        />
+                        <span className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                          {member.fullName}
+                        </span>
+                        <span className="text-[10px] text-slate-500 truncate">{member.email}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div className="md:col-span-2 space-y-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><AlignLeft size={12} /> {t.modals.upload.fields.story}</label><textarea rows={3} value={story} onChange={(event) => onStoryChange(event.target.value)} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm" /></div>
           </div>
         </div>

@@ -14,7 +14,7 @@ import {
 
 vi.mock('@/components/vault/MediaDetailModal', () => ({
   default: (props: any) => (
-    <div data-testid="media-detail-modal">
+    <div data-testid="media-detail-modal" data-safety-window={String(props.safetyWindowMinutes ?? '')}>
       <button onClick={() => props.onAddTag('new')}>add-tag</button>
       <button onClick={() => props.onRemoveTag('old')}>remove-tag</button>
       <button onClick={() => props.onManualTagSubmit()}>manual-submit</button>
@@ -52,6 +52,7 @@ describe('VaultMediaDetailModalContainer', () => {
       <VaultMediaDetailModalContainer
         media={null}
         relatedMedia={[]}
+        lockTargetCandidates={[]}
         tagState={{ visible: false, value: '' }}
         setTagState={vi.fn()}
         onClose={vi.fn()}
@@ -77,6 +78,7 @@ describe('VaultMediaDetailModalContainer', () => {
       <VaultMediaDetailModalContainer
         media={buildMedia()}
         relatedMedia={[]}
+        lockTargetCandidates={[]}
         tagState={{ visible: true, value: '  extra  ' }}
         setTagState={setTagState}
         onClose={vi.fn()}
@@ -120,5 +122,29 @@ describe('VaultMediaDetailModalContainer', () => {
       visible: true,
       value: '',
     });
+  });
+
+  it('forwards safety window minutes to modal', () => {
+    render(
+      <VaultMediaDetailModalContainer
+        media={buildMedia()}
+        relatedMedia={[]}
+        lockTargetCandidates={[]}
+        safetyWindowMinutes={30}
+        tagState={{ visible: false, value: '' }}
+        setTagState={vi.fn()}
+        onClose={vi.fn()}
+        onSelectRelatedMedia={vi.fn()}
+        onToggleFavorite={vi.fn()}
+        onDelete={vi.fn()}
+        onPersistTags={vi.fn()}
+        onUpdateMedia={vi.fn()}
+        onSyncMedia={vi.fn()}
+        shouldPollExif={false}
+        isUpdatingMedia={false}
+      />,
+    );
+
+    expect(screen.getByTestId('media-detail-modal')).toHaveAttribute('data-safety-window', '30');
   });
 });

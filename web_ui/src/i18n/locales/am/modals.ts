@@ -21,6 +21,20 @@ export const modals = {
         desc: "በቮልቱ ውስጥ ላሉ ንቁ አባላት ሁሉ ይታያል።"
       }
     },
+    timeLock: {
+      title: "የመልቀቂያ ደንቦች",
+      unlockAt: "የሚከፈትበት ጊዜ",
+      pickDate: "ቀን ይምረጡ",
+      minuteLabel: "ደቂቃ",
+      targetUsers: "የተመረጡ ተጠቃሚዎች",
+      noMembers: "ንቁ የቮልት አባላት አልተገኙም።",
+      rules: {
+        none: "መቆለፊያ የለም",
+        time: "በተያዘ ጊዜ መልቀቅ",
+        targeted: "ለተመረጡ ተጠቃሚዎች ብቻ",
+        both: "ጊዜ + ተጠቃሚዎች"
+      }
+    },
     actions: {
       cancel: "ሰርዝ",
       submit: "ጠብቅ",

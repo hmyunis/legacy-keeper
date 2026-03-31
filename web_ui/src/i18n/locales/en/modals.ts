@@ -21,6 +21,20 @@ export const modals = {
         desc: "Visible to all active members in this vault."
       }
     },
+    timeLock: {
+      title: "Release Rules",
+      unlockAt: "Unlock At",
+      pickDate: "Pick date",
+      minuteLabel: "Minute",
+      targetUsers: "Target Users",
+      noMembers: "No active vault members found.",
+      rules: {
+        none: "No lock",
+        time: "Scheduled release",
+        targeted: "Recipients only",
+        both: "Scheduled + recipients"
+      }
+    },
     actions: {
       cancel: "Cancel",
       submit: "Preserve",

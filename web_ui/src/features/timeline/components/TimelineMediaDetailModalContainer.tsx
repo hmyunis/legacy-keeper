@@ -52,6 +52,7 @@ export const TimelineMediaDetailModalContainer: FC<TimelineMediaDetailModalConta
     <MediaDetailModal
       media={media}
       relatedMedia={relatedMedia}
+      lockTargetCandidates={[]}
       isFavorite={false}
       isTagInputVisible={tagState.visible}
       manualTagValue={tagState.value}

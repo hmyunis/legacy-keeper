@@ -69,6 +69,22 @@ export const useMembers = (
   });
 };
 
+export const useVaultMemberUsers = (options?: UseMembersOptions) => {
+  const activeVaultId = useAuthStore((state) => state.activeVaultId);
+
+  return useQuery({
+    queryKey: ['vaultMemberUsers', activeVaultId || null],
+    queryFn: () => {
+      if (!activeVaultId) throw new Error('No active vault selected');
+      return membersApi.getActiveMemberUsers(activeVaultId);
+    },
+    enabled: Boolean(activeVaultId) && (options?.enabled ?? true),
+    retry: options?.retry ?? false,
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+};
+
 export const useInviteMember = () => {
   const queryClient = useQueryClient();
   const { activeVaultId } = useAuthStore();

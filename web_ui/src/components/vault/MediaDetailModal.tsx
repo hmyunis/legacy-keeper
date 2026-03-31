@@ -25,17 +25,18 @@ import {
     RotateCcw,
     RotateCw,
     Sparkles,
+    ExternalLink,
 } from 'lucide-react';
 import {
     MediaExifStatus,
     MediaFaceDetectionStatus,
+    MediaLockRule,
     MediaItem,
     MediaRestorationStatus,
     PersonProfile,
 } from '../../types';
 import { useProfiles } from '../../hooks/useProfiles';
 import { useAuthStore } from '../../stores/authStore';
-import { hasPermission } from '@/config/permissions';
 import {
     useCreateMediaTag,
     useDeleteMediaTag,
@@ -57,11 +58,19 @@ import type { UpdateMediaMetadataPayload } from '../../services/mediaApi';
 import PresignedImage from '../ui/PresignedImage';
 import { useSignedUrlRecovery } from '../../hooks/useSignedUrlRecovery';
 import { useTranslation } from '../../i18n/LanguageContext';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '../ui/Select';
+import { canManageMediaActions } from '@/features/vault/utils';
 
 // --- Interfaces & Constants ---
 interface MediaDetailModalProps {
     media: MediaItem;
     relatedMedia?: MediaItem[];
+    lockTargetCandidates: Array<{
+        userId: string;
+        fullName: string;
+        email: string;
+    }>;
+    safetyWindowMinutes?: number;
     isFavorite: boolean;
     isTagInputVisible: boolean;
     manualTagValue: string;
@@ -89,6 +98,9 @@ interface EditDraft {
     location: string;
     tags: string;
     visibility: 'private' | 'family';
+    lockRule: MediaLockRule;
+    lockReleaseAt: string;
+    lockTargetUserIds: string[];
     dateTaken?: Date;
 }
 
@@ -108,6 +120,10 @@ interface ManualAnnotation {
 
 const MAX_MEMORY_FILES = 10;
 const MIN_MANUAL_BOX_SIZE = 0.015;
+const LOCK_HOUR_OPTIONS = Array.from({ length: 24 }, (_, index) =>
+    String(index).padStart(2, '0'),
+);
+const LOCK_MINUTE_OPTIONS = ['00', '15', '30', '45'];
 
 // --- Helper Functions ---
 const toFaceCoordinatesPayload = (face: NonNullable<MediaItem['detectedFaces']>[number]) => ({
@@ -143,14 +159,39 @@ const normalizeFaceCoordinates = (
     return { x: clampedX, y: clampedY, w: clampedWidth, h: clampedHeight };
 };
 
+const parseLocalDateTime = (value: string): Date | undefined => {
+    const normalized = String(value || '').trim();
+    if (!normalized) return undefined;
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) return undefined;
+    return parsed;
+};
+
+const formatLocalDateTime = (value: Date): string => {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    const hour = String(value.getHours()).padStart(2, '0');
+    const minute = String(value.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hour}:${minute}`;
+};
+
 const toEditDraft = (media: MediaItem): EditDraft => {
     const parsedDate = media.dateTaken ? new Date(media.dateTaken) : undefined;
+    const parsedLockReleaseAt = media.lockReleaseAt ? new Date(media.lockReleaseAt) : null;
+    const lockReleaseAtInput =
+        parsedLockReleaseAt && !Number.isNaN(parsedLockReleaseAt.getTime())
+            ? `${parsedLockReleaseAt.getFullYear()}-${String(parsedLockReleaseAt.getMonth() + 1).padStart(2, '0')}-${String(parsedLockReleaseAt.getDate()).padStart(2, '0')}T${String(parsedLockReleaseAt.getHours()).padStart(2, '0')}:${String(parsedLockReleaseAt.getMinutes()).padStart(2, '0')}`
+            : '';
     return {
         title: media.title || '',
         story: media.description || '',
         location: media.location || '',
         tags: (media.tags || []).join(', '),
         visibility: media.visibility || 'family',
+        lockRule: media.lockRule === 'time_or_target' ? 'time_and_target' : media.lockRule || 'none',
+        lockReleaseAt: lockReleaseAtInput,
+        lockTargetUserIds: media.lockTargetUserIds || [],
         dateTaken: parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : undefined,
     };
 };
@@ -158,6 +199,8 @@ const toEditDraft = (media: MediaItem): EditDraft => {
 const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     media,
     isFavorite,
+    lockTargetCandidates,
+    safetyWindowMinutes,
     isTagInputVisible,
     manualTagValue,
     onClose,
@@ -257,9 +300,14 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     });
 
     // --- Computed State ---
-    const canEdit = currentUser ? hasPermission(currentUser.role, 'EDIT_MEDIA') : false;
-    const canDelete = currentUser ? hasPermission(currentUser.role, 'DELETE_MEDIA') : false;
-    const isUploader = currentUser?.id === media.uploaderId;
+    const canEdit = canManageMediaActions({
+        role: currentUser?.role,
+        currentUserId: currentUser?.id,
+        uploaderId: media.uploaderId,
+        uploadTimestamp: media.uploadTimestamp,
+        safetyWindowMinutes,
+    });
+    const canDelete = canEdit;
 
     const effectiveExifStatus =
         exifStatusData?.status || media.exifStatus || MediaExifStatus.NOT_STARTED;
@@ -325,6 +373,41 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     const locationPreviewText = hasExifGpsCandidate
         ? selectedExifGpsPreview
         : media.location?.trim() || t.vault.detail.locationViaMap;
+    const lockTargetUsersForDisplay = useMemo(() => {
+        const candidateById = new Map(
+            lockTargetCandidates.map((candidate) => [String(candidate.userId), candidate]),
+        );
+        const normalizedUsers: Array<{ id: string; fullName: string; email: string }> = [];
+        const seen = new Set<string>();
+
+        const mediaUsers = Array.isArray(media.lockTargetUsers) ? media.lockTargetUsers : [];
+        for (const user of mediaUsers) {
+            const id = String(user?.id || '').trim();
+            if (!id || seen.has(id)) continue;
+            const fallbackCandidate = candidateById.get(id);
+            seen.add(id);
+            normalizedUsers.push({
+                id,
+                fullName: String(user?.fullName || fallbackCandidate?.fullName || '').trim(),
+                email: String(user?.email || fallbackCandidate?.email || '').trim(),
+            });
+        }
+
+        const targetIds = Array.isArray(media.lockTargetUserIds) ? media.lockTargetUserIds : [];
+        for (const rawId of targetIds) {
+            const id = String(rawId || '').trim();
+            if (!id || seen.has(id)) continue;
+            const fallbackCandidate = candidateById.get(id);
+            seen.add(id);
+            normalizedUsers.push({
+                id,
+                fullName: String(fallbackCandidate?.fullName || '').trim(),
+                email: String(fallbackCandidate?.email || '').trim(),
+            });
+        }
+
+        return normalizedUsers;
+    }, [lockTargetCandidates, media.lockTargetUserIds, media.lockTargetUsers]);
 
     const effectiveFaceStatus =
         faceStatusData?.status || media.faceDetectionStatus || MediaFaceDetectionStatus.NOT_STARTED;
@@ -858,9 +941,88 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
             );
     };
 
+    const needsTimeLockCondition =
+        editDraft.lockRule === 'time' ||
+        editDraft.lockRule === 'time_and_target';
+    const needsTargetLockCondition =
+        editDraft.lockRule === 'targeted' ||
+        editDraft.lockRule === 'time_and_target';
+    const lockReleaseDateTime = useMemo(
+        () => parseLocalDateTime(editDraft.lockReleaseAt),
+        [editDraft.lockReleaseAt],
+    );
+    const selectedLockHour = String(lockReleaseDateTime?.getHours() ?? 9).padStart(2, '0');
+    const rawSelectedLockMinute = String(lockReleaseDateTime?.getMinutes() ?? 0).padStart(2, '0');
+    const selectedLockMinute = LOCK_MINUTE_OPTIONS.includes(rawSelectedLockMinute)
+        ? rawSelectedLockMinute
+        : LOCK_MINUTE_OPTIONS[0];
+    const lockRuleLabel =
+        editDraft.lockRule === 'time'
+            ? t.vault.detail.editForm.lockRules.time
+            : editDraft.lockRule === 'targeted'
+                ? t.vault.detail.editForm.lockRules.targeted
+                : editDraft.lockRule === 'time_and_target'
+                    ? t.vault.detail.editForm.lockRules.both
+                    : t.vault.detail.editForm.lockRules.none;
+
+    const toggleEditLockTargetUser = (userId: string) => {
+        setEditDraft((prev) => {
+            if (prev.lockTargetUserIds.includes(userId)) {
+                return {
+                    ...prev,
+                    lockTargetUserIds: prev.lockTargetUserIds.filter((id) => id !== userId),
+                };
+            }
+            return {
+                ...prev,
+                lockTargetUserIds: [...prev.lockTargetUserIds, userId],
+            };
+        });
+    };
+
+    const ensureLockDateTime = () => {
+        if (lockReleaseDateTime) return new Date(lockReleaseDateTime);
+        const fallback = new Date();
+        fallback.setHours(9, 0, 0, 0);
+        return fallback;
+    };
+
+    const handleLockDateChange = (nextDate: Date) => {
+        const next = ensureLockDateTime();
+        next.setFullYear(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate());
+        setEditDraft((prev) => ({
+            ...prev,
+            lockReleaseAt: formatLocalDateTime(next),
+        }));
+    };
+
+    const handleLockHourChange = (nextHour: string) => {
+        const next = ensureLockDateTime();
+        next.setHours(Number(nextHour), Number(selectedLockMinute), 0, 0);
+        setEditDraft((prev) => ({
+            ...prev,
+            lockReleaseAt: formatLocalDateTime(next),
+        }));
+    };
+
+    const handleLockMinuteChange = (nextMinute: string) => {
+        const next = ensureLockDateTime();
+        next.setHours(Number(selectedLockHour), Number(nextMinute), 0, 0);
+        setEditDraft((prev) => ({
+            ...prev,
+            lockReleaseAt: formatLocalDateTime(next),
+        }));
+    };
+
     const handleSaveMediaEdits = () => {
         if (!canEdit) return;
         if (!editDraft.title.trim()) return toast.error(t.vault.detail.editForm.titleRequired);
+        if (needsTimeLockCondition && !editDraft.lockReleaseAt.trim()) {
+            return toast.error(t.vault.detail.editForm.unlockAtRequired);
+        }
+        if (needsTargetLockCondition && editDraft.lockTargetUserIds.length === 0) {
+            return toast.error(t.vault.detail.editForm.targetUsersRequired);
+        }
 
         onUpdateMedia(
             {
@@ -878,6 +1040,11 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 ),
                 dateTaken: editDraft.dateTaken?.toISOString() || null,
                 visibility: editDraft.visibility,
+                lockRule: editDraft.lockRule,
+                lockReleaseAt: editDraft.lockReleaseAt
+                    ? new Date(editDraft.lockReleaseAt).toISOString()
+                    : null,
+                lockTargetUserIds: editDraft.lockTargetUserIds,
                 removeFileIds: Array.from(pendingRemovedFileIds),
                 newFiles: pendingNewFiles,
             },
@@ -1072,19 +1239,48 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                     )}
 
                     {activeFile?.fileType === 'DOCUMENT' && (
-                        <div className="flex flex-col items-center justify-center p-8 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl">
-                            <FileText size={40} className="text-slate-400 mb-3" />
-                            <p className="font-bold text-slate-700 dark:text-slate-200 mb-4 text-center max-w-xs truncate">
-                                {activeFile.originalName}
-                            </p>
-                            <a
-                                href={activeFile.fileUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-primary hover:text-white transition-colors"
-                            >
-                                Open Document
-                            </a>
+                        <div className="w-full max-w-xl rounded-3xl border border-slate-200/80 dark:border-slate-700/80 bg-gradient-to-br from-white via-slate-50 to-slate-100/70 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/60 p-6 shadow-2xl shadow-slate-900/10">
+                            <div className="mb-5 flex items-start gap-4">
+                                <div className="h-14 w-14 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 shadow-sm flex items-center justify-center shrink-0">
+                                    <FileText size={26} className="text-slate-600 dark:text-slate-300" />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                                        Document Preview
+                                    </p>
+                                    <p className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
+                                        {activeFile.originalName}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                                        Open in a new tab for full reading and native document controls.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <a
+                                    href={activeFile.fileUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black uppercase tracking-widest border border-slate-900 bg-slate-900 text-white transition-colors hover:bg-slate-700 hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white dark:hover:border-white"
+                                >
+                                    <ExternalLink size={14} />
+                                    Open Document
+                                </a>
+                                <button
+                                    type="button"
+                                    onClick={handleDownload}
+                                    disabled={downloadMediaMutation.isPending}
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black uppercase tracking-widest border border-slate-300 bg-white text-slate-700 transition-colors hover:bg-slate-900 hover:border-slate-900 hover:text-white focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-60 disabled:cursor-not-allowed dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-100 dark:hover:border-slate-100 dark:hover:text-slate-900"
+                                >
+                                    {downloadMediaMutation.isPending ? (
+                                        <Loader2 size={14} className="animate-spin" />
+                                    ) : (
+                                        <Download size={14} />
+                                    )}
+                                    Download Copy
+                                </button>
+                            </div>
                         </div>
                     )}
 
@@ -1181,6 +1377,11 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                     )}{' '}
                                     {media.visibility === 'private' ? t.vault.detail.visibilityPrivate : t.vault.detail.visibilityFamily}
                                 </span>
+                                {media.lockRule && media.lockRule !== 'none' && (
+                                    <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 border text-[9px] font-bold uppercase tracking-widest border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/10 dark:text-amber-300">
+                                        <Lock size={10} /> {t.vault.detail.timeLocked}
+                                    </span>
+                                )}
                             </div>
                         </div>
 
@@ -1276,6 +1477,109 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                             className="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm bg-white dark:bg-slate-900"
                                         />
                                     </div>
+                                    <div>
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">
+                                            {t.vault.detail.editForm.timeLock}
+                                        </label>
+                                        <Select
+                                            value={editDraft.lockRule}
+                                            onValueChange={(value) =>
+                                                setEditDraft({
+                                                    ...editDraft,
+                                                    lockRule: value as MediaLockRule,
+                                                })
+                                            }
+                                            className="w-full"
+                                        >
+                                            <SelectTrigger className="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm bg-white dark:bg-slate-900">
+                                                <span className="text-slate-700 dark:text-slate-200">
+                                                    {lockRuleLabel}
+                                                </span>
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="none">{t.vault.detail.editForm.lockRules.none}</SelectItem>
+                                                <SelectItem value="time">{t.vault.detail.editForm.lockRules.time}</SelectItem>
+                                                <SelectItem value="targeted">{t.vault.detail.editForm.lockRules.targeted}</SelectItem>
+                                                <SelectItem value="time_and_target">{t.vault.detail.editForm.lockRules.both}</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    {needsTimeLockCondition && (
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">
+                                                {t.vault.detail.editForm.unlockAt}
+                                            </label>
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                                <DatePicker
+                                                    date={lockReleaseDateTime}
+                                                    onChange={handleLockDateChange}
+                                                    placeholder={t.vault.detail.editForm.pickDate}
+                                                    className="sm:col-span-2"
+                                                />
+                                                <Select value={selectedLockHour} onValueChange={handleLockHourChange}>
+                                                    <SelectTrigger className="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm bg-white dark:bg-slate-900">
+                                                        <span className="text-slate-700 dark:text-slate-200">{`${selectedLockHour}:${selectedLockMinute}`}</span>
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {LOCK_HOUR_OPTIONS.map((hour) => (
+                                                            <SelectItem key={hour} value={hour}>
+                                                                {`${hour}:${selectedLockMinute}`}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                                    {t.vault.detail.editForm.minuteLabel}
+                                                </span>
+                                                <Select value={selectedLockMinute} onValueChange={handleLockMinuteChange}>
+                                                    <SelectTrigger className="w-24 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 text-xs bg-white dark:bg-slate-900">
+                                                        <span className="text-slate-700 dark:text-slate-200">{selectedLockMinute}</span>
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {LOCK_MINUTE_OPTIONS.map((minute) => (
+                                                            <SelectItem key={minute} value={minute}>
+                                                                {minute}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {needsTargetLockCondition && (
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">
+                                                {t.vault.detail.editForm.targetUsers}
+                                            </label>
+                                            <div className="max-h-36 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 space-y-1">
+                                                {lockTargetCandidates.length === 0 && (
+                                                    <p className="text-[11px] text-slate-500">
+                                                        {t.vault.detail.editForm.noMembers}
+                                                    </p>
+                                                )}
+                                                {lockTargetCandidates.map((member) => (
+                                                    <label
+                                                        key={member.userId}
+                                                        className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={editDraft.lockTargetUserIds.includes(member.userId)}
+                                                            onChange={() => toggleEditLockTargetUser(member.userId)}
+                                                        />
+                                                        <span className="text-xs text-slate-700 dark:text-slate-200 font-medium">
+                                                            {member.fullName}
+                                                        </span>
+                                                        <span className="text-[10px] text-slate-500 truncate">
+                                                            {member.email}
+                                                        </span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                     {/* File Manager */}
                                     <div className="border-t border-dashed border-slate-200 dark:border-slate-700 pt-3">
                                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">
@@ -1348,6 +1652,32 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                         </span>
                                     )}
                                 </p>
+                            </div>
+                        )}
+
+                        {!isEditMode && lockTargetUsersForDisplay.length > 0 && (
+                            <div className="space-y-3">
+                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                    <Users size={12} /> {t.vault.detail.editForm.targetUsers}
+                                </h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {lockTargetUsersForDisplay.map((targetUser) => (
+                                        <div
+                                            key={targetUser.id}
+                                            className="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/50 px-3 py-2"
+                                        >
+                                            <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">
+                                                {targetUser.fullName || targetUser.email || targetUser.id}
+                                            </p>
+                                            {(targetUser.email ||
+                                                targetUser.fullName !== targetUser.id) && (
+                                                <p className="text-[10px] text-slate-500 dark:text-slate-300 truncate">
+                                                    {targetUser.email || targetUser.id}
+                                                </p>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
 

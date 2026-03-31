@@ -102,17 +102,32 @@ export const vault = {
     noUnlinkedRelatives: "No unlinked relatives",
     visibilityPrivate: "Private",
     visibilityFamily: "Family",
+    timeLocked: "Time Locked",
     editForm: {
       title: "Title",
       date: "Date",
       location: "Location",
       story: "Story",
+      timeLock: "Release Rules",
+      unlockAt: "Unlock At",
+      pickDate: "Pick date",
+      minuteLabel: "Minute",
+      targetUsers: "Target Users",
+      noMembers: "No active members available.",
+      lockRules: {
+        none: "No lock",
+        time: "Scheduled release",
+        targeted: "Recipients only",
+        both: "Scheduled + recipients"
+      },
       files: "Files",
       keep: "Keep",
       remove: "Remove",
       addFile: "Add File",
       cancel: "Cancel",
-      titleRequired: "Title is required."
+      titleRequired: "Title is required.",
+      unlockAtRequired: "Unlock date-time is required for this lock rule.",
+      targetUsersRequired: "Select at least one target user for this lock rule."
     }
   }
 };

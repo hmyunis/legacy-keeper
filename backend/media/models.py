@@ -76,6 +76,13 @@ class MediaItem(TimeStampedModel):
         PRIVATE = 'PRIVATE', _('Private')
         FAMILY = 'FAMILY', _('Family')
 
+    class LockRule(models.TextChoices):
+        NONE = 'NONE', _('None')
+        TIME = 'TIME', _('Time')
+        TARGETED = 'TARGETED', _('Targeted Users')
+        TIME_AND_TARGET = 'TIME_AND_TARGET', _('Time And Targeted Users')
+        TIME_OR_TARGET = 'TIME_OR_TARGET', _('Time Or Targeted Users')
+
     class ExifStatus(models.TextChoices):
         NOT_STARTED = 'NOT_STARTED', _('Not Started')
         QUEUED = 'QUEUED', _('Queued')
@@ -121,6 +128,13 @@ class MediaItem(TimeStampedModel):
         choices=Visibility.choices,
         default=Visibility.FAMILY,
     )
+    lock_rule = models.CharField(
+        max_length=24,
+        choices=LockRule.choices,
+        default=LockRule.NONE,
+        db_index=True,
+    )
+    lock_release_at = models.DateTimeField(null=True, blank=True, db_index=True)
     
     # Technical Metadata (EXIF, GPS, etc.)
     metadata = models.JSONField(default=dict, blank=True)
@@ -275,3 +289,31 @@ class MediaAttachment(TimeStampedModel):
 
     def __str__(self):
         return self.original_name or f'Attachment {self.id}'
+
+
+class MediaItemLockTarget(TimeStampedModel):
+    media_item = models.ForeignKey(
+        MediaItem,
+        on_delete=models.CASCADE,
+        related_name='lock_targets',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='targeted_media_locks',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['media_item', 'user'],
+                name='uniq_media_item_lock_target_user',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['media_item', 'user']),
+            models.Index(fields=['user', 'media_item']),
+        ]
+
+    def __str__(self):
+        return f'{self.media_item_id}:{self.user_id}'

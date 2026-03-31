@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import MediaAttachment, MediaFavorite, MediaItem
+from .models import MediaAttachment, MediaFavorite, MediaItem, MediaItemLockTarget
 
 @admin.register(MediaItem)
 class MediaItemAdmin(admin.ModelAdmin):
@@ -9,6 +9,8 @@ class MediaItemAdmin(admin.ModelAdmin):
         'vault',
         'uploader',
         'media_type',
+        'lock_rule',
+        'lock_release_at',
         'ai_status',
         'exif_status',
         'face_detection_status',
@@ -18,6 +20,7 @@ class MediaItemAdmin(admin.ModelAdmin):
     search_fields = ('title', 'description', 'uploader__email', 'uploader__full_name')
     list_filter = (
         'media_type',
+        'lock_rule',
         'ai_status',
         'exif_status',
         'face_detection_status',
@@ -37,3 +40,9 @@ class MediaAttachmentAdmin(admin.ModelAdmin):
     list_display = ('id', 'media_item', 'file_type', 'mime_type', 'file_size', 'created_at')
     search_fields = ('media_item__title', 'original_name')
     list_filter = ('file_type', 'created_at')
+
+
+@admin.register(MediaItemLockTarget)
+class MediaItemLockTargetAdmin(admin.ModelAdmin):
+    list_display = ('id', 'media_item', 'user', 'created_at')
+    search_fields = ('media_item__title', 'user__email', 'user__full_name')

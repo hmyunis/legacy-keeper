@@ -102,17 +102,32 @@ export const vault = {
     noUnlinkedRelatives: "ያልተገናኙ ዘመዶች የሉም",
     visibilityPrivate: "የግል",
     visibilityFamily: "ቤተሰብ",
+    timeLocked: "በጊዜ ተቆልፏል",
     editForm: {
       title: "ርዕስ",
       date: "ቀን",
       location: "ቦታ",
       story: "ታሪክ",
+      timeLock: "የመልቀቂያ ደንቦች",
+      unlockAt: "የሚከፈትበት ጊዜ",
+      pickDate: "ቀን ይምረጡ",
+      minuteLabel: "ደቂቃ",
+      targetUsers: "የተመረጡ ተጠቃሚዎች",
+      noMembers: "ንቁ አባላት አልተገኙም።",
+      lockRules: {
+        none: "መቆለፊያ የለም",
+        time: "በተያዘ ጊዜ መልቀቅ",
+        targeted: "ለተመረጡ ተጠቃሚዎች ብቻ",
+        both: "ጊዜ + ተጠቃሚዎች"
+      },
       files: "ፋይሎች",
       keep: "አቆይ",
       remove: "አስወግድ",
       addFile: "ፋይል ጨምር",
       cancel: "ሰርዝ",
-      titleRequired: "ርዕስ ያስፈልጋል።"
+      titleRequired: "ርዕስ ያስፈልጋል።",
+      unlockAtRequired: "ለዚህ የመቆለፊያ ደንብ የሚከፈትበት ጊዜ ያስፈልጋል።",
+      targetUsersRequired: "ለዚህ ደንብ ቢያንስ አንድ የተመረጠ ተጠቃሚ ይምረጡ።"
     }
   }
 };

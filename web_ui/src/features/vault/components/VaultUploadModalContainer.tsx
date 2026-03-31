@@ -5,6 +5,11 @@ import type { VaultUploadState } from '@/features/vault/utils';
 interface VaultUploadModalContainerProps {
   canUpload: boolean;
   uploadState: VaultUploadState;
+  lockTargetCandidates: Array<{
+    userId: string;
+    fullName: string;
+    email: string;
+  }>;
   setUploadState: Dispatch<SetStateAction<VaultUploadState>>;
   isUploading: boolean;
   onClose: () => void;
@@ -14,6 +19,7 @@ interface VaultUploadModalContainerProps {
 export const VaultUploadModalContainer: FC<VaultUploadModalContainerProps> = ({
   canUpload,
   uploadState,
+  lockTargetCandidates,
   setUploadState,
   isUploading,
   onClose,
@@ -33,6 +39,10 @@ export const VaultUploadModalContainer: FC<VaultUploadModalContainerProps> = ({
       tags={uploadState.tags}
       story={uploadState.story}
       visibility={uploadState.visibility}
+      lockRule={uploadState.lockRule}
+      lockReleaseAt={uploadState.lockReleaseAt}
+      lockTargetUserIds={uploadState.lockTargetUserIds}
+      lockTargetCandidates={lockTargetCandidates}
       onDateChange={(date) => setUploadState((state) => ({ ...state, date }))}
       onFilesChange={(files, nextPrimaryFileIndex) =>
         setUploadState((state) => {
@@ -59,6 +69,11 @@ export const VaultUploadModalContainer: FC<VaultUploadModalContainerProps> = ({
       onTagsChange={(value) => setUploadState((state) => ({ ...state, tags: value }))}
       onStoryChange={(value) => setUploadState((state) => ({ ...state, story: value }))}
       onVisibilityChange={(value) => setUploadState((state) => ({ ...state, visibility: value }))}
+      onLockRuleChange={(value) => setUploadState((state) => ({ ...state, lockRule: value }))}
+      onLockReleaseAtChange={(value) => setUploadState((state) => ({ ...state, lockReleaseAt: value }))}
+      onLockTargetUserIdsChange={(value) =>
+        setUploadState((state) => ({ ...state, lockTargetUserIds: value }))
+      }
       onClose={onClose}
       onStartUpload={onStartUpload}
     />

@@ -34,6 +34,9 @@ const buildUploadState = (overrides: Partial<VaultUploadState> = {}): VaultUploa
   tags: '',
   story: '',
   visibility: 'family',
+  lockRule: 'none',
+  lockReleaseAt: '',
+  lockTargetUserIds: [],
   ...overrides,
 });
 
@@ -43,6 +46,7 @@ describe('VaultUploadModalContainer', () => {
       <VaultUploadModalContainer
         canUpload
         uploadState={buildUploadState({ open: false })}
+        lockTargetCandidates={[]}
         setUploadState={vi.fn()}
         isUploading={false}
         onClose={vi.fn()}
@@ -56,6 +60,7 @@ describe('VaultUploadModalContainer', () => {
       <VaultUploadModalContainer
         canUpload={false}
         uploadState={buildUploadState({ open: true })}
+        lockTargetCandidates={[]}
         setUploadState={vi.fn()}
         isUploading={false}
         onClose={vi.fn()}
@@ -75,6 +80,7 @@ describe('VaultUploadModalContainer', () => {
       <VaultUploadModalContainer
         canUpload
         uploadState={buildUploadState()}
+        lockTargetCandidates={[]}
         setUploadState={setUploadState}
         isUploading={false}
         onClose={onClose}

@@ -13,6 +13,7 @@ import type {
 } from '../types/api.types';
 import {
     MediaItem,
+    MediaLockRule,
     MediaStatus,
     MediaExifStatus,
     MediaExifWorkflowStatus,
@@ -98,6 +99,15 @@ const parseMetadataLocation = (metadata?: Record<string, unknown> | null): strin
 const normalizeVisibility = (value?: string | null): 'private' | 'family' => {
     const normalized = String(value || '').trim().toUpperCase();
     return normalized === 'PRIVATE' ? 'private' : 'family';
+};
+
+const normalizeLockRule = (value?: string | null): MediaLockRule => {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (normalized === 'TIME') return 'time';
+    if (normalized === 'TARGETED') return 'targeted';
+    if (normalized === 'TIME_AND_TARGET') return 'time_and_target';
+    if (normalized === 'TIME_OR_TARGET') return 'time_or_target';
+    return 'none';
 };
 
 const normalizeExifStatus = (value?: string | null): MediaExifStatus => {
@@ -369,6 +379,44 @@ const mapApiMediaToMediaItem = (item: ApiMediaItem): MediaItem => {
         isFavorite: Boolean(item.isFavorite),
         type: resolvedMediaType,
         visibility: normalizeVisibility((item as any).visibility),
+        lockRule: normalizeLockRule((item as any).lockRule ?? (item as any).lock_rule),
+        lockReleaseAt:
+            typeof (item as any).lockReleaseAt === 'string'
+                ? (item as any).lockReleaseAt
+                : typeof (item as any).lock_release_at === 'string'
+                    ? (item as any).lock_release_at
+                    : undefined,
+        lockTargetUserIds: Array.isArray((item as any).lockTargetUserIds)
+            ? (item as any).lockTargetUserIds
+                .map((value: unknown) => String(value || '').trim())
+                .filter(Boolean)
+            : Array.isArray((item as any).lock_target_user_ids)
+                ? (item as any).lock_target_user_ids
+                    .map((value: unknown) => String(value || '').trim())
+                    .filter(Boolean)
+                : [],
+        lockTargetUsers: Array.isArray((item as any).lockTargetUsers)
+            ? (item as any).lockTargetUsers
+                .map((entry: Record<string, unknown>) => {
+                    const id = String((entry as any).id || '').trim();
+                    if (!id) return null;
+                    const fullName = String((entry as any).fullName ?? (entry as any).full_name ?? '').trim();
+                    const email = String((entry as any).email ?? '').trim();
+                    return { id, fullName, email };
+                })
+                .filter(Boolean) as MediaItem['lockTargetUsers']
+            : Array.isArray((item as any).lock_target_users)
+                ? (item as any).lock_target_users
+                    .map((entry: Record<string, unknown>) => {
+                        const id = String((entry as any).id || '').trim();
+                        if (!id) return null;
+                        const fullName = String((entry as any).fullName ?? (entry as any).full_name ?? '').trim();
+                        const email = String((entry as any).email ?? '').trim();
+                        return { id, fullName, email };
+                    })
+                    .filter(Boolean) as MediaItem['lockTargetUsers']
+                : [],
+        isTimeLocked: Boolean((item as any).isTimeLocked ?? (item as any).is_time_locked),
         title: item.title || 'Untitled memory',
         description: item.description || '',
         dateTaken: item.dateTaken || item.createdAt,
@@ -423,6 +471,9 @@ export interface UploadMediaPayload {
     location?: string;
     tags?: string[];
     visibility?: 'private' | 'family';
+    lockRule?: MediaLockRule;
+    lockReleaseAt?: string | null;
+    lockTargetUserIds?: string[];
 }
 
 export interface UpdateMediaMetadataPayload {
@@ -433,6 +484,9 @@ export interface UpdateMediaMetadataPayload {
     location?: string;
     tags?: string[];
     visibility?: 'private' | 'family';
+    lockRule?: MediaLockRule;
+    lockReleaseAt?: string | null;
+    lockTargetUserIds?: string[];
     newFiles?: File[];
     removeFileIds?: string[];
 }
@@ -865,6 +919,15 @@ export const mediaApi = {
         if (payload.visibility) {
             formData.append('visibility', payload.visibility.toUpperCase());
         }
+        if (payload.lockRule) {
+            formData.append('lockRule', payload.lockRule.toUpperCase());
+        }
+        if (payload.lockReleaseAt !== undefined) {
+            formData.append('lockReleaseAt', payload.lockReleaseAt || '');
+        }
+        if (payload.lockTargetUserIds !== undefined) {
+            formData.append('lockTargetUserIds', JSON.stringify(payload.lockTargetUserIds || []));
+        }
 
         formData.append(
             'metadata',
@@ -906,6 +969,15 @@ export const mediaApi = {
             }
             if (payload.visibility !== undefined) {
                 formData.append('visibility', payload.visibility.toUpperCase());
+            }
+            if (payload.lockRule !== undefined) {
+                formData.append('lockRule', payload.lockRule.toUpperCase());
+            }
+            if (payload.lockReleaseAt !== undefined) {
+                formData.append('lockReleaseAt', payload.lockReleaseAt || '');
+            }
+            if (payload.lockTargetUserIds !== undefined) {
+                formData.append('lockTargetUserIds', JSON.stringify(payload.lockTargetUserIds || []));
             }
 
             const metadataPatch: Record<string, unknown> = {};
@@ -953,6 +1025,15 @@ export const mediaApi = {
         }
         if (payload.visibility !== undefined) {
             requestBody.visibility = payload.visibility.toUpperCase();
+        }
+        if (payload.lockRule !== undefined) {
+            requestBody.lockRule = payload.lockRule.toUpperCase();
+        }
+        if (payload.lockReleaseAt !== undefined) {
+            requestBody.lockReleaseAt = payload.lockReleaseAt;
+        }
+        if (payload.lockTargetUserIds !== undefined) {
+            requestBody.lockTargetUserIds = payload.lockTargetUserIds;
         }
 
         const nextMetadata: Record<string, unknown> = {};

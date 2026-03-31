@@ -7,11 +7,11 @@ from core.middleware import get_current_user
 from .models import AuditLog
 # Import models we want to track
 from vaults.models import FamilyVault, Membership, Invite
-from media.models import MediaItem
+from media.models import MediaItem, MediaItemLockTarget
 from genealogy.models import PersonProfile, Relationship
 
 # List of models to audit
-AUDIT_MODELS = [FamilyVault, Membership, Invite, MediaItem, PersonProfile, Relationship]
+AUDIT_MODELS = [FamilyVault, Membership, Invite, MediaItem, MediaItemLockTarget, PersonProfile, Relationship]
 
 def get_vault_id(instance):
     """Helper to extract vault_id from various model types"""

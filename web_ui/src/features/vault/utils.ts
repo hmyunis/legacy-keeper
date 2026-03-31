@@ -3,8 +3,10 @@ import type { PaginatedMediaResult } from '@/services/mediaApi';
 import {
   MediaExifStatus,
   MediaFaceDetectionStatus,
+  MediaLockRule,
   MediaType,
   type MediaItem,
+  UserRole,
 } from '@/types';
 
 export type VaultTab = 'all' | 'favorites';
@@ -45,6 +47,15 @@ export interface VaultUploadState {
   tags: string;
   story: string;
   visibility: 'private' | 'family';
+  lockRule: MediaLockRule;
+  lockReleaseAt: string;
+  lockTargetUserIds: string[];
+}
+
+export interface VaultLockTargetCandidate {
+  userId: string;
+  fullName: string;
+  email: string;
 }
 
 const EXIF_RUNNING_STATUSES = new Set<MediaExifStatus>([
@@ -194,6 +205,53 @@ export const buildVaultMediaQueryParams = (input: {
     dateFrom: toDateParam(filters.startDate),
     dateTo: toDateParam(filters.endDate),
   };
+};
+
+export const excludeLockAuthorFromCandidates = (
+  candidates: VaultLockTargetCandidate[],
+  authorUserId?: string | null,
+): VaultLockTargetCandidate[] => {
+  const normalizedAuthorId = String(authorUserId || '').trim();
+  if (!normalizedAuthorId) return candidates;
+  return candidates.filter(
+    (candidate) => String(candidate.userId || '').trim() !== normalizedAuthorId,
+  );
+};
+
+export const canManageMediaActions = (input: {
+  role?: UserRole | null;
+  currentUserId?: string | null;
+  uploaderId?: string | null;
+  uploadTimestamp?: string | null;
+  safetyWindowMinutes?: number | null;
+  nowMs?: number;
+}): boolean => {
+  const {
+    role,
+    currentUserId,
+    uploaderId,
+    uploadTimestamp,
+    safetyWindowMinutes,
+    nowMs = Date.now(),
+  } = input;
+
+  if (!role) return false;
+  if (role === UserRole.ADMIN) return true;
+  if (role !== UserRole.CONTRIBUTOR) return false;
+
+  const normalizedCurrentUserId = String(currentUserId || '').trim();
+  const normalizedUploaderId = String(uploaderId || '').trim();
+  if (!normalizedCurrentUserId || normalizedCurrentUserId !== normalizedUploaderId) {
+    return false;
+  }
+
+  if (typeof safetyWindowMinutes !== 'number') return true;
+
+  const createdAt = new Date(String(uploadTimestamp || ''));
+  if (Number.isNaN(createdAt.getTime())) return true;
+
+  const elapsedMinutes = (nowMs - createdAt.getTime()) / 60000;
+  return elapsedMinutes <= Math.max(safetyWindowMinutes, 0);
 };
 
 export const flattenVaultMedia = (

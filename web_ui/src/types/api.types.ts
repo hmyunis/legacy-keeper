@@ -92,6 +92,18 @@ export interface ApiMediaItem {
   isFavorite?: boolean;
   mediaType: MediaType;
   visibility?: 'PRIVATE' | 'FAMILY';
+  lockRule?: 'NONE' | 'TIME' | 'TARGETED' | 'TIME_AND_TARGET' | 'TIME_OR_TARGET';
+  lockReleaseAt?: string | null;
+  lockTargetUserIds?: string[] | null;
+  lockTargetUsers?:
+    | Array<{
+        id: string;
+        fullName?: string | null;
+        full_name?: string | null;
+        email?: string | null;
+      }>
+    | null;
+  isTimeLocked?: boolean;
   title?: string;
   description?: string;
   dateTaken?: string | null;
@@ -407,6 +419,9 @@ export interface CreateMediaRequest {
   dateTaken?: string;
   mediaType: MediaType;
   visibility?: 'PRIVATE' | 'FAMILY';
+  lockRule?: 'NONE' | 'TIME' | 'TARGETED' | 'TIME_AND_TARGET' | 'TIME_OR_TARGET';
+  lockReleaseAt?: string | null;
+  lockTargetUserIds?: string[];
   metadata?: {
     location?: string;
     tags?: string[];
@@ -418,6 +433,9 @@ export interface UpdateMediaRequest {
   description?: string;
   dateTaken?: string;
   visibility?: 'PRIVATE' | 'FAMILY';
+  lockRule?: 'NONE' | 'TIME' | 'TARGETED' | 'TIME_AND_TARGET' | 'TIME_OR_TARGET';
+  lockReleaseAt?: string | null;
+  lockTargetUserIds?: string[];
   metadata?: {
     location?: string;
     tags?: string[];
