@@ -158,6 +158,12 @@ To verify readiness, ensure these files exist in `MEDIA_RESTORATION_MODEL_DIR`:
 
 For Docker, place the files in `/app/models/colorization` inside the `media_worker` container. If your runtime has no outbound internet, download the files manually.
 
+## Testing
+
+```bash
+docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings backend pytest
+```
+
 ## VAPID Keys (Push Notifications)
 
 ### Docker
