@@ -1,4 +1,4 @@
-import { useState, useRef, Suspense, useMemo, useEffect } from 'react';
+import { useState, useRef, Suspense, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   UploadSimple, MagicWand, X, ArrowRight, CheckCircle,
@@ -8,10 +8,10 @@ import { Environment, Text, Float, OrbitControls, useTexture, SpotLight, Grid } 
 import { sileo } from 'sileo';
 import * as THREE from 'three';
 import { Button } from '../components/ui/Button';
-import { VAULT_MEMORY_CLUSTERS, type VaultMemory } from '../features/vault/vaultMockData';
 import MemoryCard from '../components/vault/MemoryCard';
 import { Breadcrumbs } from '../components/ui/Breadcrumbs';
-import { useUploadMemory } from '../features/vault/hooks/useVault';
+import { useUploadMemory, useVaultClusters, useVaultMemories } from '../features/vault/hooks/useVault';
+import type { VaultMemory } from '../features/vault/types';
 import { pollTask } from '../lib/tasks';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -86,10 +86,10 @@ function OrbitingCluster({
   isFaded,
   onSelect,
 }: {
-  cluster: (typeof VAULT_MEMORY_CLUSTERS)[number];
+  cluster: any;
   radius: number;
   isFaded: boolean;
-  onSelect: (memory: VaultMemory) => void;
+  onSelect: (memory: any) => void;
 }) {
   const x = Math.sin(cluster.angle) * radius;
   const z = Math.cos(cluster.angle) * radius;
@@ -132,21 +132,21 @@ function OrbitingCluster({
   );
 }
 
-function VaultScene({ 
-  onSelectMemory, 
-  activeCategory 
-}: { 
-  onSelectMemory: (mem: VaultMemory) => void;
+function VaultScene({
+  clusters,
+  onSelectMemory,
+  activeCategory
+}: {
+  clusters: any[];
+  onSelectMemory: (mem: any) => void;
   activeCategory: string;
 }) {
   const groupRef = useRef<THREE.Group>(null);
 
   useFrame((_, delta) => {
     if (activeCategory !== 'All' && groupRef.current) {
-      // Swivel the entire structure so the chosen cluster directly faces the camera (z-axis)
-      const targetAngle = VAULT_MEMORY_CLUSTERS.find(c => c.name === activeCategory)?.angle || 0;
+      const targetAngle = clusters.find(c => c.name === activeCategory)?.angle || 0;
       let diff = -targetAngle - groupRef.current.rotation.y;
-      // Resolve shortest angular path
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       groupRef.current.rotation.y += diff * 3 * delta;
     }
@@ -157,7 +157,7 @@ function VaultScene({
       <fog attach="fog" args={['#141211', 12, 45]} />
       <ambientLight intensity={0.6} />
       <Environment preset="city" />
-      
+
       <Grid
         position={[0, -8, 0]}
         args={[100, 100]}
@@ -174,26 +174,25 @@ function VaultScene({
       />
 
       <group ref={groupRef}>
-        {VAULT_MEMORY_CLUSTERS.map((cluster) => (
-          <OrbitingCluster 
-            key={cluster.name} 
-            cluster={cluster} 
-            radius={ORBIT_RADIUS} 
-            onSelect={onSelectMemory} 
+        {clusters.map((cluster) => (
+          <OrbitingCluster
+            key={cluster.name}
+            cluster={cluster}
+            radius={ORBIT_RADIUS}
+            onSelect={onSelectMemory}
             isFaded={activeCategory !== 'All' && activeCategory !== cluster.name}
           />
         ))}
       </group>
-      
-      {/* AutoRotate disabled when focusing a specific category */}
-      <OrbitControls 
-        enablePan={false} 
-        enableZoom={true} 
-        maxDistance={35} 
-        minDistance={6} 
-        autoRotate={activeCategory === 'All'} 
+
+      <OrbitControls
+        enablePan={false}
+        enableZoom={true}
+        maxDistance={35}
+        minDistance={6}
+        autoRotate={activeCategory === 'All'}
         autoRotateSpeed={0.4}
-        maxPolarAngle={Math.PI / 2 - 0.05} // Prevent camera from dropping below grid
+        maxPolarAngle={Math.PI / 2 - 0.05}
       />
     </>
   );
@@ -210,31 +209,18 @@ export default function Vault() {
   const [searchQuery, setSearchQuery] = useState('');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const categories = ['All', ...VAULT_MEMORY_CLUSTERS.map(c => c.name)];
+  const { data: dynamicClusters = [] } = useVaultClusters();
+  const { data: allMemories = [] } = useVaultMemories();
 
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'g') {
-        const next = viewMode === '3D' ? '2D' : '3D';
-        setViewMode(next);
-        sileo.info({
-          title: "Perspective Switched",
-          description: `Now viewing in ${next === '3D' ? 'Orbital' : 'Archive'} mode.`
-        });
-      }
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [viewMode]);
+  const categories = ['All', ...dynamicClusters.map((c: any) => c.name)];
 
-  const allMemories = useMemo(() => VAULT_MEMORY_CLUSTERS.flatMap(c => c.memories), []);
   const filteredMemories = useMemo(() => {
-    return allMemories.filter(m => {
-      const clusterMatch = activeCategory === 'All' || VAULT_MEMORY_CLUSTERS.find(c => c.name === activeCategory)?.memories.includes(m);
-      const searchMatch = !searchQuery || `${m.title} ${m.location} ${m.caption} ${m.tags.join(' ')}`.toLowerCase().includes(searchQuery.toLowerCase());
+    return allMemories.filter((m: any) => {
+      const clusterMatch = activeCategory === 'All' || dynamicClusters.find((c: any) => c.name === activeCategory)?.memories.includes(m);
+      const searchMatch = !searchQuery || `${m.title} ${m.location || ''} ${m.ai_caption || ''}`.toLowerCase().includes(searchQuery.toLowerCase());
       return clusterMatch && searchMatch;
     });
-  }, [allMemories, activeCategory, searchQuery]);
+  }, [allMemories, activeCategory, searchQuery, dynamicClusters]);
 
   const handleFiles = async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
@@ -318,7 +304,7 @@ export default function Vault() {
               </div>
             }>
               <Canvas camera={{ position: [0, 5, 22], fov: 50, near: 0.1, far: 100 }}>
-                <VaultScene onSelectMemory={setSelectedMemory} activeCategory={activeCategory} />
+                <VaultScene clusters={dynamicClusters} onSelectMemory={setSelectedMemory} activeCategory={activeCategory} />
               </Canvas>
             </Suspense>
           </div>

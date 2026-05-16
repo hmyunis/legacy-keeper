@@ -30,28 +30,52 @@ services:
       - "9001:9001"
 
   web:
-    build: .
+    build: ./backend
     command: gunicorn --bind 0.0.0.0:8000 legacy_keeper.wsgi:application
     volumes:
-      - .:/app
+      - ./backend:/app
+      - static_volume:/app/static
     env_file:
-      - backend/.env.docker
+      - ./backend/.env.docker
     depends_on:
       - db
       - redis
       - minio
 
   celery:
-    build: .
+    build: ./backend
     command: celery -A legacy_keeper worker -l INFO -Q high_priority,default,low_priority
     volumes:
-      - .:/app
+      - ./backend:/app
     env_file:
-      - backend/.env.docker
+      - ./backend/.env.docker
     depends_on:
       - db
       - redis
       - minio
+
+  celery-beat:
+    build: ./backend
+    command: celery -A legacy_keeper beat -l INFO
+    volumes:
+      - ./backend:/app
+    env_file:
+      - ./backend/.env.docker
+    depends_on:
+      - db
+      - redis
+
+  frontend:
+    build: ./frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://localhost/api
+    depends_on:
+      - web
 
   nginx:
     image: nginx:alpine
@@ -62,6 +86,7 @@ services:
       - static_volume:/app/static
     depends_on:
       - web
+      - frontend
 
 volumes:
   db_data:

@@ -6,6 +6,7 @@ import { Environment, Float, Sparkles, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { sileo } from 'sileo';
 import { Button } from '../components/ui/Button';
+import { useCapsules, useSealCapsule } from '../features/capsules/hooks/useCapsules';
 
 const ShatteringSeal = ({ isShattered }: { isShattered: boolean }) => {
   const fragments = useMemo(() => Array.from({ length: 25 }).map(() => ({
@@ -135,6 +136,12 @@ export default function Capsules() {
   const [ceremonyStatus, setCeremonyStatus] = useState<'idle' | 'shattering' | 'opened'>('idle');
   const [createStep, setCreateStep] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [capsuleTitle, setCapsuleTitle] = useState('');
+  const [unlockDate, setUnlockDate] = useState('');
+  const [capsuleMessage, setCapsuleMessage] = useState('');
+
+  useCapsules();
+  const sealMutation = useSealCapsule();
 
   const triggerUnlock = () => {
     setView('unlocking');
@@ -151,13 +158,25 @@ export default function Capsules() {
     }
   };
 
-  const handleSealCapsule = () => {
-    setCreateStep(4);
-    setTimeout(() => {
-      sileo.success({ title: "Vault Locked", description: "Capsule secured until December 2028." });
-      setView('gallery');
-      setCreateStep(1);
-    }, 4500);
+  const handleSealCapsule = async () => {
+    try {
+      await sealMutation.mutateAsync({
+        title: capsuleTitle || "My Capsule",
+        unlock_date: unlockDate || "2028-12-01T00:00:00Z",
+        message: capsuleMessage
+      });
+      setCreateStep(4);
+      setTimeout(() => {
+        sileo.success({ title: "Vault Locked", description: "Capsule secured." });
+        setView('gallery');
+        setCreateStep(1);
+        setCapsuleTitle('');
+        setUnlockDate('');
+        setCapsuleMessage('');
+      }, 4500);
+    } catch (err) {
+      sileo.error({ title: "Error", description: "Failed to seal capsule." });
+    }
   };
 
   const handleBrowseUpload = () => {
@@ -256,13 +275,13 @@ export default function Capsules() {
                       <div className="space-y-6 pt-4">
                         <div>
                           <label className="font-ui text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--clr-dust)] mb-2 block">Capsule Title</label>
-                          <input type="text" placeholder="e.g. Letters to the Future" className="w-full bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-[var(--radius-pill)] px-6 py-4 font-ui text-[16px] text-[var(--clr-ink)] outline-none focus:border-[var(--clr-gold)] shadow-inner" />
+                          <input type="text" placeholder="e.g. Letters to the Future" className="w-full bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-[var(--radius-pill)] px-6 py-4 font-ui text-[16px] text-[var(--clr-ink)] outline-none focus:border-[var(--clr-gold)] shadow-inner" value={capsuleTitle} onChange={e => setCapsuleTitle(e.target.value)} />
                         </div>
                         <div>
                           <label className="font-ui text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--clr-dust)] mb-2 block">Unlock Date</label>
                           <div className="relative">
                             <CalendarBlank size={20} className="absolute left-6 top-1/2 -translate-y-1/2 text-[var(--clr-gold)]" />
-                            <input type="date" className="w-full bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-[var(--radius-pill)] pl-14 pr-6 py-4 font-ui text-[16px] text-[var(--clr-ink)] outline-none focus:border-[var(--clr-gold)] shadow-inner" />
+                            <input type="date" className="w-full bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-[var(--radius-pill)] pl-14 pr-6 py-4 font-ui text-[16px] text-[var(--clr-ink)] outline-none focus:border-[var(--clr-gold)] shadow-inner" value={unlockDate} onChange={e => setUnlockDate(e.target.value)} />
                           </div>
                         </div>
                       </div>
@@ -308,6 +327,8 @@ export default function Capsules() {
                           className="w-full h-full min-h-[400px] bg-transparent border-none outline-none resize-none font-script text-[36px] text-[var(--clr-ink)] pl-8 leading-[32px] pt-[4px]"
                           placeholder="My dearest family..."
                           autoFocus
+                          value={capsuleMessage}
+                          onChange={e => setCapsuleMessage(e.target.value)}
                         />
                      </div>
 

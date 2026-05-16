@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y \
     cmake \
     pkg-config \
     libx11-dev \
-    libatlas-base-dev \
+    libopenblas-dev \
+    liblapack-dev \
     libgtk-3-dev \
     libboost-python-dev \
     libpq-dev \

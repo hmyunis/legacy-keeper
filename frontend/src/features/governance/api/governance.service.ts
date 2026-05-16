@@ -1,4 +1,4 @@
-import axiosClient from '../../../lib/axios';
+import axiosClient from "../../../services/axiosClient";
 
 export const governanceService = {
   getMembers: async (vaultId: string) => {
