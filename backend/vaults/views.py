@@ -1,4 +1,5 @@
 import datetime
+import random
 from rest_framework import generics, views, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -9,6 +10,7 @@ from pgvector.django import CosineDistance
 
 from .models import Memory, Capsule
 from core.models import VaultMember
+from lineage.models import Person
 from .serializers import MemorySerializer, CapsuleSerializer
 from tasks.ai_pipeline import process_memory_task
 from tasks.restoration import restore_memory_task
@@ -103,3 +105,37 @@ class CapsuleListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         vault_id = self.kwargs['vault_id']
         serializer.save(vault_id=vault_id, sealed_by=self.request.user, status='LOCKED')
+
+class DashboardSummaryView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, vault_id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
+
+        today = timezone.now()
+        memories_today = Memory.objects.filter(
+            vault_id=vault_id,
+            date__month=today.month,
+            date__day=today.day
+        )
+
+        on_this_day = None
+        if memories_today.exists():
+            on_this_day = MemorySerializer(random.choice(memories_today)).data
+
+        upcoming = Capsule.objects.filter(
+            vault_id=vault_id,
+            status='LOCKED',
+            unlock_date__gt=today
+        ).order_by('unlock_date').first()
+
+        return Response({
+            "curatorName": request.user.full_name.split(' ')[0],
+            "memoryCount": Memory.objects.filter(vault_id=vault_id).count(),
+            "kinCount": Person.objects.filter(vault_id=vault_id).count(),
+            "onThisDay": on_this_day,
+            "upcomingCapsule": {
+                "title": upcoming.title,
+                "unlockDate": upcoming.unlock_date,
+            } if upcoming else None
+        })

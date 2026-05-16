@@ -6,7 +6,7 @@ from decouple import config
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/auth/', include('core.urls')),
+    path('api/', include('core.urls')),
     path('api/vaults/', include('vaults.urls')),
     path('api/vaults/', include('lineage.urls')),
     path('api/tasks/', include('tasks.urls')),

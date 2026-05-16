@@ -5,6 +5,11 @@ import { TornEdge } from '../components/ui/TornEdge';
 import { Button } from '../components/ui/Button';
 import MemoryCard from '../components/vault/MemoryCard';
 import { VAULT_MEMORY_CLUSTERS } from '../features/vault/vaultMockData';
+import { useParams } from '@tanstack/react-router';
+import { useGenerateStory } from '../features/chronicles/hooks/useChronicles';
+import { pollTask } from '../lib/tasks';
+import { useQueryClient } from '@tanstack/react-query';
+import { sileo } from 'sileo';
 
 const MOCK_STORY_CHUNKS = [
   "Born in the walled city of Harar in 1942, Abebe's early life was framed by the vibrant markets and the scent of roasted coffee. ",
@@ -31,20 +36,39 @@ export default function PersonProfile() {
   // Flatten mock memories for the exhibition hall
   const allMemories = VAULT_MEMORY_CLUSTERS.flatMap(c => c.memories).slice(0, 9);
 
-  const generateChronicle = () => {
-    setIsGenerating(true);
-    setStory('');
-    setIsComplete(false);
+  const generateChronicle = async () => {
+    const { personId } = useParams({ from: '/person/$personId' });
+    const generateStoryMutation = useGenerateStory();
+    const queryClient = useQueryClient();
 
-    let currentText = '';
-    const fullText = MOCK_STORY_CHUNKS.join('\n\n');
+    try {
+      setIsGenerating(true);
+      setStory('');
+      setIsComplete(false);
+
+      const { task_id } = await generateStoryMutation.mutateAsync(personId);
+
+      await sileo.promise(pollTask(task_id), {
+        loading: { title: "Story Weaver is thinking...", description: "Consulting artifacts and memories..." },
+        success: (result) => {
+          queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
+          animateTypewriter(result?.biography || "No story could be woven.");
+          return { title: "Chronicle Woven", description: "The biography has been added to the archives." };
+        },
+        error: { title: "Story Weaver Failed", description: "Ensure Ollama is running and Llama3 is pulled." }
+      });
+
+    } catch (error) {
+      setIsGenerating(false);
+    }
+  };
+
+  const animateTypewriter = (text: string) => {
     let i = 0;
-
     const interval = setInterval(() => {
-      currentText += fullText.charAt(i);
-      setStory(currentText);
+      setStory((prev) => text.slice(0, i + 1));
       i++;
-      if (i >= fullText.length) {
+      if (i >= text.length) {
         clearInterval(interval);
         setIsGenerating(false);
         setIsComplete(true);

@@ -3,23 +3,26 @@ import { AuthLayout } from '../components/auth/AuthLayout';
 import { Button } from '../components/ui/Button';
 import { sileo } from 'sileo';
 import { useNavigate } from '@tanstack/react-router';
+import { useVerifyEmail } from '../features/auth/hooks/useAuth';
 
 export default function VerifyEmail() {
   const [code, setCode] = useState('');
   const navigate = useNavigate();
+  const verifyMutation = useVerifyEmail();
 
   const handleVerify = (e: React.FormEvent) => {
     e.preventDefault();
-    if (code.length < 4) return sileo.error({ title: "Incomplete", description: "Please enter your 8-digit key." });
+    if (code.length < 4) return sileo.error({ title: "Incomplete", description: "Please enter your 9-digit key." });
 
-    const p = new Promise(res => setTimeout(res, 1000));
-    sileo.promise(p, {
+    const promise = verifyMutation.mutateAsync(code);
+
+    sileo.promise(promise, {
       loading: { title: "Validating Key..." },
       success: () => {
         navigate({ to: '/onboarding' });
         return { title: "Vault Activated", description: "Access granted to the museum." };
       },
-      error: { title: "Invalid Key" }
+      error: { title: "Invalid or Expired Key", description: "Please check your email and try again." }
     });
   };
 

@@ -2,8 +2,7 @@ import { useState, useRef, Suspense, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   UploadSimple, MagicWand, X, ArrowRight, CheckCircle,
-  Binoculars, Vault as VaultIcon, MagnifyingGlass, Faders, CaretDown
-} from '@phosphor-icons/react';
+  Binoculars, Vault as VaultIcon, MagnifyingGlass} from '@phosphor-icons/react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Text, Float, OrbitControls, useTexture, SpotLight, Grid } from '@react-three/drei';
 import { sileo } from 'sileo';
@@ -12,6 +11,9 @@ import { Button } from '../components/ui/Button';
 import { VAULT_MEMORY_CLUSTERS, type VaultMemory } from '../features/vault/vaultMockData';
 import MemoryCard from '../components/vault/MemoryCard';
 import { Breadcrumbs } from '../components/ui/Breadcrumbs';
+import { useUploadMemory } from '../features/vault/hooks/useVault';
+import { pollTask } from '../lib/tasks';
+import { useQueryClient } from '@tanstack/react-query';
 
 const ORBIT_RADIUS = 16;
 
@@ -234,24 +236,38 @@ export default function Vault() {
     });
   }, [allMemories, activeCategory, searchQuery]);
 
-  const handleFiles = (files: FileList | File[]) => {
-    const newItems = Array.from(files).map((file, i) => ({
-      id: `up-${Date.now()}-${i}`, name: file.name, size: (file.size / (1024 * 1024)).toFixed(1) + ' MB', progress: 0, status: 'PROCESSING'
-    }));
-    setUploadQueue(prev => [...prev, ...newItems]);
-    newItems.forEach(item => {
-      let prog = 0;
-      const interval = setInterval(() => {
-        prog += 15;
-        if (prog >= 100) {
-          clearInterval(interval);
-          setUploadQueue(curr => curr.map(q => q.id === item.id ? { ...q, progress: 100, status: 'READY' } : q));
-          setShowAIReviewBanner(true);
-        } else {
-          setUploadQueue(curr => curr.map(q => q.id === item.id ? { ...q, progress: prog } : q));
-        }
-      }, 200);
-    });
+  const handleFiles = async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    const uploadMutation = useUploadMemory();
+    const queryClient = useQueryClient();
+
+    for (const file of fileArray) {
+      const tempId = `up-${Date.now()}`;
+      setUploadQueue(prev => [...prev, {
+        id: tempId,
+        name: file.name,
+        size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+        progress: 10,
+        status: 'PROCESSING'
+      }]);
+
+      try {
+        const { task_id } = await uploadMutation.mutateAsync({ file });
+
+        await sileo.promise(pollTask(task_id), {
+          loading: { title: `Processing ${file.name}`, description: "AI is analyzing faces & vibes..." },
+          success: (res) => {
+            setUploadQueue(curr => curr.map(q => q.id === tempId ? { ...q, progress: 100, status: 'READY' } : q));
+            queryClient.invalidateQueries({ queryKey: ['vaultClusters'] });
+            return { title: "Preservation Complete", description: `${file.name} is now in the archive.` };
+          },
+          error: { title: "AI Pipeline Error", description: "Failed to process the image metadata." }
+        });
+
+      } catch (err) {
+        setUploadQueue(curr => curr.map(q => q.id === tempId ? { ...q, status: 'FAILED' } : q));
+      }
+    }
   };
 
   const vaultHeader = (

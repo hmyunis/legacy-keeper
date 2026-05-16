@@ -7,4 +7,5 @@ urlpatterns = [
     path('<uuid:vault_id>/memories/<uuid:id>/restore/', views.MemoryRestoreView.as_view(), name='memory-restore'),
     path('<uuid:vault_id>/search/vibe/', views.VibeSearchView.as_view(), name='vibe-search'),
     path('<uuid:vault_id>/capsules/', views.CapsuleListCreateView.as_view(), name='capsules'),
+    path('<uuid:vault_id>/dashboard/summary/', views.DashboardSummaryView.as_view(), name='dashboard-summary'),
 ]

@@ -4,6 +4,8 @@ import { Vault, UserPlus, CheckCircle, ArrowRight, Camera } from '@phosphor-icon
 import { Button } from '../components/ui/Button';
 import { useNavigate } from '@tanstack/react-router';
 import { sileo } from 'sileo';
+import { useInitVault, useFirstRelative } from '../features/auth/hooks/useAuth';
+import { useAuthStore } from '../stores/authStore';
 
 export default function Onboarding() {
   const [step, setStep] = useState(1);
@@ -12,15 +14,55 @@ export default function Onboarding() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+  const initVaultMutation = useInitVault();
+  const firstRelativeMutation = useFirstRelative();
+  const setAuthStore = useAuthStore(s => s.login);
+  const { currentUser, accessToken, refreshToken } = useAuthStore();
 
-  const nextStep = () => {
-    if (step === 1 && !vaultName.trim()) {
-      return sileo.error({ title: "Name Required", description: "Your museum needs a name to proceed." });
+  const nextStep = async () => {
+    try {
+      if (step === 1) {
+        if (!vaultName.trim()) {
+          return sileo.error({ title: "Name Required", description: "Your museum needs a name to proceed." });
+        }
+        const res = await sileo.promise(initVaultMutation.mutateAsync(vaultName), {
+          loading: { title: "Forging Vault..." },
+          success: { title: "Vault Established" },
+          error: { title: "Failed to create vault" }
+        });
+
+        if (currentUser && accessToken && refreshToken) {
+          setAuthStore({ user: currentUser, accessToken, refreshToken, activeVaultId: res.vaultId });
+        }
+        setStep(2);
+        return;
+      }
+
+      if (step === 2) {
+        if (!relativeName.trim()) {
+          return sileo.error({ title: "Identity Required", description: "Please identify your first relative." });
+        }
+        const vaultId = useAuthStore.getState().activeVaultId;
+        if (!vaultId) return sileo.error({ title: "Error", description: "Vault ID missing." });
+
+        await sileo.promise(firstRelativeMutation.mutateAsync({
+          vaultId,
+          name: relativeName,
+          birthYear: '1900',
+          relationship: 'Myself'
+        }), {
+          loading: { title: "Grafting Lineage..." },
+          success: { title: "Lineage Rooted" },
+          error: { title: "Failed to save relative" }
+        });
+        setStep(3);
+        return;
+      }
+
+      setStep(s => s + 1);
+    } catch (e) {
+      console.error(e);
     }
-    if (step === 2 && !relativeName.trim()) {
-      return sileo.error({ title: "Identity Required", description: "Please identify your first relative." });
-    }
-    setStep(s => s + 1);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -37,7 +79,6 @@ export default function Onboarding() {
 
   return (
     <div className="min-h-screen bg-[var(--clr-charcoal)] text-[var(--clr-linen)] flex flex-col relative overflow-hidden">
-      {/* Progress Dots */}
       <div className="absolute top-12 left-0 right-0 z-20 flex justify-center items-center gap-4">
         {[1, 2, 3, 4].map(i => (
           <div key={i} className="flex items-center gap-4">
@@ -56,12 +97,12 @@ export default function Onboarding() {
               </div>
               <h1 className="font-display text-[2.5rem] tracking-widest uppercase">Name Your Vault</h1>
               <p className="font-script text-[44px] text-[var(--clr-gold)] leading-none">"Give your family a home"</p>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={vaultName}
                 onChange={(e) => setVaultName(e.target.value)}
-                placeholder="e.g. The Kebede Family Museum" 
-                className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-8 py-5 text-xl font-ui text-center outline-none focus:border-[var(--clr-gold)] shadow-[var(--shadow-inset)]" 
+                placeholder="e.g. The Kebede Family Museum"
+                className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-8 py-5 text-xl font-ui text-center outline-none focus:border-[var(--clr-gold)] shadow-[var(--shadow-inset)]"
               />
               <Button variant="primary" onClick={nextStep} className="w-full py-5">CONTINUE <ArrowRight /></Button>
             </motion.div>
@@ -90,7 +131,7 @@ export default function Onboarding() {
 
           {step === 3 && (
             <motion.div key="s3" initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8 }} className="max-w-xl text-center space-y-8">
-              <div 
+              <div
                 onClick={() => fileInputRef.current?.click()}
                 className="relative border-2 border-dashed border-[rgba(184,143,91,0.4)] bg-[var(--clr-soot)] rounded-[var(--radius-lg)] p-12 flex flex-col items-center group cursor-pointer hover:border-[var(--clr-gold)] transition-colors overflow-hidden"
               >
@@ -133,7 +174,6 @@ export default function Onboarding() {
         </AnimatePresence>
       </main>
 
-      {/* Background Ambience */}
       <div className="absolute inset-0 z-0 opacity-20 pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]" />
     </div>
   );

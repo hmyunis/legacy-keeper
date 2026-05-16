@@ -49,3 +49,20 @@ class GenerateChronicleView(views.APIView):
 
         task = generate_chronicle_task.delay(str(person.id))
         return Response({"task_id": task.id}, status=status.HTTP_202_ACCEPTED)
+
+class PersonProfileView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, vault_id, id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
+        person = get_object_or_404(Person, id=id, vault_id=vault_id)
+
+        return Response({
+            "id": str(person.id),
+            "name": person.name,
+            "biography": person.biography,
+            "role": person.role,
+            "birthYear": person.birth_year,
+            "deathYear": person.death_year,
+            "memoryCount": person.detected_faces.count(),
+        })

@@ -7,6 +7,7 @@ import { Float, Sparkles, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import { TornEdge } from '../components/ui/TornEdge';
 import MemoryDetailModal from '../features/vault/MemoryDetailModal';
+import { useDashboardSummary } from '../features/dashboard/hooks/useDashboard';
 
 const HERO_CHARCOAL = '#141211';
 
@@ -95,11 +96,13 @@ function DashboardHero({
   textY,
   bgX,
   bgY,
+  summary,
 }: {
   textX: ReturnType<typeof useTransform<number, number>>;
   textY: ReturnType<typeof useTransform<number, number>>;
   bgX: ReturnType<typeof useTransform<number, number>>;
   bgY: ReturnType<typeof useTransform<number, number>>;
+  summary: any;
 }) {
   return (
     <section className="dashboard-hero relative w-full min-h-[75vh] flex items-center bg-[var(--clr-charcoal)] overflow-hidden pt-12 pb-32 px-[clamp(24px,5vw,80px)] isolate">
@@ -127,14 +130,14 @@ function DashboardHero({
         >
           <p className="font-ui text-[11px] uppercase text-[var(--clr-gold)] tracking-[0.2em] mb-4 font-bold drop-shadow-md">
             <span className="w-2 h-2 rounded-full bg-[var(--clr-gold)] inline-block mr-2 animate-pulse" />
-            Good Evening, Abebe
+            Good Evening, {summary?.curatorName || 'Curator'}
           </p>
           <h1 className="font-display font-extrabold text-[clamp(2.5rem,6vw,4.5rem)] text-[var(--clr-linen)] leading-[1.05] tracking-wide mb-2 drop-shadow-lg">
             THE KEBEDE <br className="hidden md:block" />
             FAMILY VAULT
           </h1>
           <p className="font-script text-[56px] md:text-[72px] text-[var(--clr-gold-light)] leading-[1] mb-12 drop-shadow-md">
-            &ldquo;156 memories preserved&rdquo;
+            &ldquo;{summary?.memoryCount || 0} memories preserved&rdquo;
           </p>
 
           <div className="flex items-center gap-4 bg-[rgba(255,255,255,0.03)] border border-[rgba(184,143,91,0.2)] w-max px-4 py-2.5 rounded-full backdrop-blur-sm shadow-lg">
@@ -144,7 +147,7 @@ function DashboardHero({
               <img src="https://ui-avatars.com/api/?name=Yohannes&background=3A5F7A&color=fff" alt="" className="w-12 h-12 rounded-full border-[3px] border-[var(--clr-charcoal)] shadow-md relative z-10" />
             </div>
             <span className="font-ui text-[11px] text-[var(--clr-fog)] uppercase tracking-widest font-bold pr-2">
-              Abebe, Fatima + 3 kin
+              {summary?.curatorName || 'You'}{summary?.kinCount ? ` + ${summary.kinCount} kin` : ''}
             </span>
           </div>
         </motion.div>
@@ -161,6 +164,7 @@ export default function Dashboard() {
   const [isHovered, setIsHovered] = useState(false);
   const [selectedMemory, setSelectedMemory] = useState<any>(null);
   const navigate = useNavigate();
+  const { data: summary } = useDashboardSummary();
 
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
@@ -181,7 +185,7 @@ export default function Dashboard() {
     mouseY.set(y);
   };
 
-  const onThisDayMemory = {
+  const onThisDayMemory = summary?.onThisDay || {
     title: "Summer in the Hills",
     date: "July 15, 1994",
     location: "Entoto Park",
@@ -199,7 +203,7 @@ export default function Dashboard() {
         memory={selectedMemory}
       />
 
-      <DashboardHero textX={textX} textY={textY} bgX={bgX} bgY={bgY} />
+      <DashboardHero textX={textX} textY={textY} bgX={bgX} bgY={bgY} summary={summary} />
 
       <div className="flex-1 bg-[var(--clr-parchment)] flex flex-col relative w-full zone-light">
 
