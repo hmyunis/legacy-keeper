@@ -1,25 +1,25 @@
 import { createRouter, createRoute, createRootRoute, Outlet } from '@tanstack/react-router';
 import { PublicLayout } from './components/layout/PublicLayout';
 import { AppLayout } from './components/layout/AppLayout';
-import { requireAuth, redirectIfAuthenticated } from './features/auth/utils/routeGuards';
+import { requireAuth, redirectIfAuthenticated } from './lib/routeGuards';
 import Landing from './pages/Landing';
-import AuthPage from './features/auth/pages/AuthPage';
-import MuseumPage from './features/museum/pages/MuseumPage';
-import DashboardPage from './features/dashboard/pages/DashboardPage';
-import VaultPage from './features/vault/pages/VaultPage';
-import FamilyTreePage from './features/family-tree/pages/FamilyTreePage';
-import PersonProfilePage from './features/chronicles/pages/PersonProfilePage';
-import TimelinePage from './features/chronicles/pages/TimelinePage';
-import SearchPage from './features/search/pages/SearchPage';
-import ForgotPasswordPage from './features/auth/pages/ForgotPasswordPage';
-import ResetPasswordPage from './features/auth/pages/ResetPasswordPage';
-import VerifyEmailPage from './features/auth/pages/VerifyEmailPage';
+import Auth from './pages/Auth';
+import Museum from './pages/Museum';
+import Dashboard from './pages/Dashboard';
+import Vault from './pages/Vault';
+import FamilyTree from './pages/FamilyTree';
+import PersonProfile from './pages/PersonProfile';
+import Timeline from './pages/Timeline';
+import Capsules from './pages/Capsules';
+import Search from './pages/Search';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import VerifyEmail from './pages/VerifyEmail';
 import Onboarding from './pages/Onboarding';
-import HelpPage from './features/help/pages/HelpPage';
-import LogsPage from './features/logs/pages/LogsPage';
-import SettingsPage from './features/settings/pages/SettingsPage';
-import CapsulesPage from './features/capsules/pages/CapsulesPage';
-import MembersPage from './features/governance/pages/MembersPage';
+import Help from './pages/Help';
+import Logs from './pages/Logs';
+import Members from './pages/Members';
+import Settings from './pages/Settings';
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
@@ -55,7 +55,7 @@ const indexRoute = createRoute({
 const authRoute = createRoute({
   getParentRoute: () => publicLayoutRoute,
   path: 'auth',
-  component: AuthPage,
+  component: Auth,
   beforeLoad: redirectIfAuthenticated,
   validateSearch: (search: Record<string, unknown>): { redirect?: string } => ({
     redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
@@ -65,21 +65,21 @@ const authRoute = createRoute({
 const forgotPasswordRoute = createRoute({
   getParentRoute: () => publicLayoutRoute,
   path: 'forgot-password',
-  component: ForgotPasswordPage,
+  component: ForgotPassword,
   beforeLoad: redirectIfAuthenticated,
 });
 
 const resetPasswordRoute = createRoute({
   getParentRoute: () => publicLayoutRoute,
   path: 'reset-password',
-  component: ResetPasswordPage,
+  component: ResetPassword,
   beforeLoad: redirectIfAuthenticated,
 });
 
 const verifyEmailRoute = createRoute({
   getParentRoute: () => publicLayoutRoute,
   path: 'verify-email',
-  component: VerifyEmailPage,
+  component: VerifyEmail,
   beforeLoad: redirectIfAuthenticated,
 });
 
@@ -88,67 +88,67 @@ const verifyEmailRoute = createRoute({
 const dashboardRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'dashboard',
-  component: DashboardPage,
+  component: Dashboard,
 });
 
 const vaultRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'vault',
-  component: VaultPage,
+  component: Vault,
 });
 
 const treeRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'tree',
-  component: FamilyTreePage,
+  component: FamilyTree,
 });
 
 const personRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'person/$personId',
-  component: PersonProfilePage,
+  component: PersonProfile,
 });
 
 const timelineRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'timeline',
-  component: TimelinePage,
+  component: Timeline,
 });
 
 const capsulesRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'capsules',
-  component: CapsulesPage,
+  component: Capsules,
 });
 
 const searchRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'search',
-  component: SearchPage,
+  component: Search,
 });
 
 const helpRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'help',
-  component: HelpPage,
+  component: Help,
 });
 
 const logsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'logs',
-  component: LogsPage,
+  component: Logs,
 });
 
 const membersRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'members',
-  component: MembersPage,
+  component: Members,
 });
 
 const settingsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'settings',
-  component: SettingsPage,
+  component: Settings,
 });
 
 // ── Fullscreen immersive (no shell navbar) ────────────────────────────────
@@ -156,7 +156,7 @@ const settingsRoute = createRoute({
 const museumRoute = createRoute({
   getParentRoute: () => fullscreenLayoutRoute,
   path: 'museum',
-  component: MuseumPage,
+  component: Museum,
   beforeLoad: requireAuth,
 });
 

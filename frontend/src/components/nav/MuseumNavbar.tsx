@@ -17,7 +17,7 @@ import {
   Compass,
   ArrowRight
 } from '@phosphor-icons/react';
-import { useAuthStore } from '../../features/auth/stores/authStore';
+import { useAuthStore } from '../../stores/authStore';
 
 export type NavMode = 'public' | 'app';
 
@@ -362,8 +362,8 @@ function IdentityDrawer({ onClose }: { onClose: () => void }) {
              </Link>
           </div>
         </div>
-        <div className="mt-auto p-4 border-t border-[var(--clr-aged)] bg-[rgba(20,18,17,0.02)]">
-          <button onClick={() => { logout(); onClose(); navigate({ to: '/auth' }); }} className="flex items-center justify-center gap-3 w-full py-4 rounded-full border-2 border-[var(--clr-danger)] text-[var(--clr-danger)] font-ui text-[11px] font-bold uppercase tracking-widest hover:bg-[var(--clr-danger)] hover:text-white transition-all shadow-md"><SignOut size={18} weight="bold" /> Depart Museum</button>
+        <div className="mt-auto p-10 border-t border-[var(--clr-aged)] bg-[rgba(20,18,17,0.02)]">
+          <button onClick={() => { logout(); onClose(); navigate({ to: '/auth' }); }} className="flex items-center justify-center gap-3 w-full py-5 rounded-full border-2 border-[var(--clr-danger)] text-[var(--clr-danger)] font-ui text-[11px] font-bold uppercase tracking-widest hover:bg-[var(--clr-danger)] hover:text-white transition-all shadow-md"><SignOut size={18} weight="bold" /> Depart Museum</button>
         </div>
       </motion.div>
     </div>
