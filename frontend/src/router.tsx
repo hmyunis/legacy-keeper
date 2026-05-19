@@ -1,7 +1,7 @@
 import { createRouter, createRoute, createRootRoute, Outlet } from '@tanstack/react-router';
 import { PublicLayout } from './components/layout/PublicLayout';
 import { AppLayout } from './components/layout/AppLayout';
-import { requireAuth, redirectIfAuthenticated } from './lib/routeGuards';
+import { requireAuth, redirectIfAuthenticated, requirePendingVerification, requireAdmin } from './lib/routeGuards';
 import Landing from './pages/Landing';
 import Auth from './pages/Auth';
 import Museum from './pages/Museum';
@@ -20,6 +20,7 @@ import Help from './pages/Help';
 import Logs from './pages/Logs';
 import Members from './pages/Members';
 import Settings from './pages/Settings';
+import NotFound from './pages/NotFound';
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
@@ -74,13 +75,16 @@ const resetPasswordRoute = createRoute({
   path: 'reset-password',
   component: ResetPassword,
   beforeLoad: redirectIfAuthenticated,
+  validateSearch: (search: Record<string, unknown>): { email?: string } => ({
+    email: typeof search.email === 'string' ? search.email : undefined,
+  }),
 });
 
 const verifyEmailRoute = createRoute({
   getParentRoute: () => publicLayoutRoute,
   path: 'verify-email',
   component: VerifyEmail,
-  beforeLoad: redirectIfAuthenticated,
+  beforeLoad: requirePendingVerification,
 });
 
 // ── Protected app ─────────────────────────────────────────────────────────
@@ -137,18 +141,21 @@ const logsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'logs',
   component: Logs,
+  beforeLoad: requireAdmin,
 });
 
 const membersRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'members',
   component: Members,
+  beforeLoad: requireAdmin,
 });
 
 const settingsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: 'settings',
   component: Settings,
+  beforeLoad: requireAdmin,
 });
 
 // ── Fullscreen immersive (no shell navbar) ────────────────────────────────
@@ -167,7 +174,14 @@ const onboardingRoute = createRoute({
   beforeLoad: requireAuth,
 });
 
+const notFoundRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '*',
+  component: NotFound,
+});
+
 const routeTree = rootRoute.addChildren([
+  notFoundRoute,
   publicLayoutRoute.addChildren([
     indexRoute,
     authRoute,

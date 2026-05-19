@@ -12,4 +12,7 @@ export interface PersonProfile {
   birthYear: string;
   deathYear?: string;
   memoryCount: number;
+  memories: VaultMemory[];
+  kinship: { id: string; name: string; role: string; avatar: string }[];
+  active_story_task_id: string | null;
 }

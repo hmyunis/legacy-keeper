@@ -8,6 +8,8 @@ import * as THREE from 'three';
 import { TornEdge } from '../components/ui/TornEdge';
 import MemoryDetailModal from '../features/vault/MemoryDetailModal';
 import { useDashboardSummary } from '../features/dashboard/hooks/useDashboard';
+import { useMembers } from '../features/governance/hooks/useGovernance';
+import { useAuthStore } from '../stores/authStore';
 
 const HERO_CHARCOAL = '#141211';
 
@@ -97,12 +99,14 @@ function DashboardHero({
   bgX,
   bgY,
   summary,
+  members,
 }: {
   textX: ReturnType<typeof useTransform<number, number>>;
   textY: ReturnType<typeof useTransform<number, number>>;
   bgX: ReturnType<typeof useTransform<number, number>>;
   bgY: ReturnType<typeof useTransform<number, number>>;
   summary: any;
+  members: any[];
 }) {
   return (
     <section className="dashboard-hero relative w-full min-h-[75vh] flex items-center bg-[var(--clr-charcoal)] overflow-hidden pt-12 pb-32 px-[clamp(24px,5vw,80px)] isolate">
@@ -115,10 +119,20 @@ function DashboardHero({
           aria-hidden
         />
         <div className="grid grid-cols-4 gap-2 opacity-20 sepia-[0.5] scale-110">
-          <img src="https://images.unsplash.com/photo-1542038784456-1ea8e935640e?w=600&q=80" alt="" className="w-full h-64 object-cover" />
-          <img src="https://images.unsplash.com/photo-1582213782179-e0d53f98f2ca?w=600&q=80" alt="" className="w-full h-64 object-cover translate-y-12" />
-          <img src="https://images.unsplash.com/photo-1511895426328-dc8714191300?w=600&q=80" alt="" className="w-full h-64 object-cover" />
-          <img src="https://images.unsplash.com/photo-1532274402911-5a369e4c4bb5?w=600&q=80" alt="" className="w-full h-64 object-cover -translate-y-8" />
+          {(summary?.heroImages || []).length > 0 ? (
+            summary.heroImages.map((url: string, i: number) => (
+              <img
+                key={i}
+                src={url}
+                alt=""
+                className={`w-full h-64 object-cover ${i % 2 === 0 ? 'translate-y-12' : '-translate-y-8'}`}
+              />
+            ))
+          ) : (
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className={`w-full h-64 bg-[var(--clr-soot)] ${i % 2 === 0 ? 'translate-y-12' : '-translate-y-8'}`} />
+            ))
+          )}
         </div>
       </motion.div>
 
@@ -133,8 +147,7 @@ function DashboardHero({
             Good Evening, {summary?.curatorName || 'Curator'}
           </p>
           <h1 className="font-display font-extrabold text-[clamp(2.5rem,6vw,4.5rem)] text-[var(--clr-linen)] leading-[1.05] tracking-wide mb-2 drop-shadow-lg">
-            THE KEBEDE <br className="hidden md:block" />
-            FAMILY VAULT
+            {summary?.vaultName ? summary.vaultName.toUpperCase() : 'FAMILY VAULT'}
           </h1>
           <p className="font-script text-[56px] md:text-[72px] text-[var(--clr-gold-light)] leading-[1] mb-12 drop-shadow-md">
             &ldquo;{summary?.memoryCount || 0} memories preserved&rdquo;
@@ -142,12 +155,18 @@ function DashboardHero({
 
           <div className="flex items-center gap-4 bg-[rgba(255,255,255,0.03)] border border-[rgba(184,143,91,0.2)] w-max px-4 py-2.5 rounded-full backdrop-blur-sm shadow-lg">
             <div className="flex -space-x-4">
-              <img src="https://ui-avatars.com/api/?name=Abebe&background=B88F5B&color=fff" alt="" className="w-12 h-12 rounded-full border-[3px] border-[var(--clr-charcoal)] shadow-md relative z-30" />
-              <img src="https://ui-avatars.com/api/?name=Fatima&background=DBCFB5&color=2A2522" alt="" className="w-12 h-12 rounded-full border-[3px] border-[var(--clr-charcoal)] shadow-md relative z-20" />
-              <img src="https://ui-avatars.com/api/?name=Yohannes&background=3A5F7A&color=fff" alt="" className="w-12 h-12 rounded-full border-[3px] border-[var(--clr-charcoal)] shadow-md relative z-10" />
+              {members?.slice(0, 3).map((member: any, i: number) => (
+                <img
+                  key={member.id}
+                  src={member.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name || '')}&background=B88F5B&color=fff`}
+                  alt={member.name}
+                  className="w-12 h-12 rounded-full border-[3px] border-[var(--clr-charcoal)] shadow-md relative"
+                  style={{ zIndex: 30 - i }}
+                />
+              ))}
             </div>
             <span className="font-ui text-[11px] text-[var(--clr-fog)] uppercase tracking-widest font-bold pr-2">
-              {summary?.curatorName || 'You'}{summary?.kinCount ? ` + ${summary.kinCount} kin` : ''}
+              {members.length > 1 ? `${(members[0]?.name || 'Curator').split(' ')[0]} + ${members.length - 1} kin` : 'Just You'}
             </span>
           </div>
         </motion.div>
@@ -165,6 +184,10 @@ export default function Dashboard() {
   const [selectedMemory, setSelectedMemory] = useState<any>(null);
   const navigate = useNavigate();
   const { data: summary } = useDashboardSummary();
+  const { data: members = [] } = useMembers();
+  const { currentUser } = useAuthStore();
+  const canContribute = currentUser?.role === 'ADMIN' || currentUser?.role === 'CONTRIBUTOR';
+  const isAdmin = currentUser?.role === 'ADMIN';
 
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
@@ -185,14 +208,13 @@ export default function Dashboard() {
     mouseY.set(y);
   };
 
-  const onThisDayMemory = summary?.onThisDay || {
-    title: "Summer in the Hills",
-    date: "July 15, 1994",
-    location: "Entoto Park",
-    url: "https://images.unsplash.com/photo-1511895426328-dc8714191300?q=80&w=800",
-    aiCaption: "Thirty years ago today, the family gathered at Entoto Park for Abebe's 50th birthday. The sun was shining, and everyone brought their favorite dishes.",
-    people: ["Abebe Kebede", "Fatima Haile"]
-  };
+  const onThisDayMemory = summary?.onThisDay;
+  const upcomingCapsule = summary?.upcomingCapsule;
+  const upcomingUnlockDate = upcomingCapsule?.unlockDate ? new Date(upcomingCapsule.unlockDate) : null;
+  const msUntilUnlock = upcomingUnlockDate ? upcomingUnlockDate.getTime() - Date.now() : 0;
+  const hasUpcomingCapsule = msUntilUnlock > 0;
+  const daysUntilUnlock = hasUpcomingCapsule ? Math.floor(msUntilUnlock / (1000 * 60 * 60 * 24)) : 0;
+  const hoursUntilUnlock = hasUpcomingCapsule ? Math.floor((msUntilUnlock / (1000 * 60 * 60)) % 24) : 0;
 
   return (
     <div className="min-h-screen bg-[var(--clr-charcoal)] flex flex-col relative overflow-hidden" onMouseMove={handleMouseMove}>
@@ -203,7 +225,7 @@ export default function Dashboard() {
         memory={selectedMemory}
       />
 
-      <DashboardHero textX={textX} textY={textY} bgX={bgX} bgY={bgY} summary={summary} />
+      <DashboardHero textX={textX} textY={textY} bgX={bgX} bgY={bgY} summary={summary} members={members} />
 
       <div className="flex-1 bg-[var(--clr-parchment)] flex flex-col relative w-full zone-light">
 
@@ -215,15 +237,21 @@ export default function Dashboard() {
               initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.8, type: 'spring' }}
               className="bg-[rgba(20,18,17,0.88)] backdrop-blur-xl border border-[rgba(184,143,91,0.4)] rounded-full px-3 py-3 flex flex-wrap justify-center gap-3 shadow-[0_16px_40px_rgba(20,18,17,0.7)]"
             >
-              <Link to="/vault" className="flex items-center gap-2 px-6 py-3 rounded-full bg-gradient-to-r from-[var(--clr-gold-light)] to-[var(--clr-gold-dark)] text-[var(--clr-charcoal)] font-ui font-extrabold text-[10px] uppercase tracking-widest hover:brightness-110 shadow-[var(--shadow-gold)] transition-all hover:scale-105 active:scale-95">
-                <UploadSimple size={18} weight="bold" /> Upload Exhibit
-              </Link>
-              <button onClick={() => navigate({ to: '/members' })} className="flex items-center gap-2 px-6 py-3 rounded-full border border-[var(--clr-gold)] text-[var(--clr-gold-light)] font-ui font-bold text-[10px] uppercase tracking-widest hover:bg-[rgba(184,143,91,0.15)] transition-all hover:scale-105 active:scale-95">
-                <UserPlus size={18} weight="bold" /> Add Kin
-              </button>
-              <Link to="/capsules" className="hidden sm:flex items-center gap-2 px-6 py-3 rounded-full border border-[var(--clr-gold)] text-[var(--clr-gold-light)] font-ui font-bold text-[10px] uppercase tracking-widest hover:bg-[rgba(184,143,91,0.15)] transition-all hover:scale-105 active:scale-95">
-                <Timer size={18} weight="bold" /> Seal Capsule
-              </Link>
+              {canContribute && (
+                <Link to="/vault" className="flex items-center gap-2 px-6 py-3 rounded-full bg-gradient-to-r from-[var(--clr-gold-light)] to-[var(--clr-gold-dark)] text-[var(--clr-charcoal)] font-ui font-extrabold text-[10px] uppercase tracking-widest hover:brightness-110 shadow-[var(--shadow-gold)] transition-all hover:scale-105 active:scale-95">
+                  <UploadSimple size={18} weight="bold" /> Upload Exhibit
+                </Link>
+              )}
+              {isAdmin && (
+                <button onClick={() => navigate({ to: '/members' })} className="flex items-center gap-2 px-6 py-3 rounded-full border border-[var(--clr-gold)] text-[var(--clr-gold-light)] font-ui font-bold text-[10px] uppercase tracking-widest hover:bg-[rgba(184,143,91,0.15)] transition-all hover:scale-105 active:scale-95">
+                  <UserPlus size={18} weight="bold" /> Add Kin
+                </button>
+              )}
+              {canContribute && (
+                <Link to="/capsules" className="hidden sm:flex items-center gap-2 px-6 py-3 rounded-full border border-[var(--clr-gold)] text-[var(--clr-gold-light)] font-ui font-bold text-[10px] uppercase tracking-widest hover:bg-[rgba(184,143,91,0.15)] transition-all hover:scale-105 active:scale-95">
+                  <Timer size={18} weight="bold" /> Seal Capsule
+                </Link>
+              )}
               <Link to="/search" className="flex items-center gap-2 px-6 py-3 rounded-full border border-[var(--clr-gold)] text-[var(--clr-gold-light)] font-ui font-bold text-[10px] uppercase tracking-widest hover:bg-[rgba(184,143,91,0.15)] transition-all hover:scale-105 active:scale-95">
                 <MagnifyingGlass size={18} weight="bold" /> Search
               </Link>
@@ -238,38 +266,44 @@ export default function Dashboard() {
               <div>
                 <div className="flex justify-between items-end mb-8">
                   <h2 className="font-display font-bold text-[1.75rem] text-[var(--clr-ink)] tracking-widest uppercase">On This Day</h2>
-                  <span className="font-ui text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--clr-gold-dark)]">July 15</span>
+                  <span className="font-ui text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--clr-gold-dark)]">{new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric'})}</span>
                 </div>
 
-                <motion.div
-                  onClick={() => setSelectedMemory(onThisDayMemory)}
-                  whileHover={{ y: -8 }}
-                  className="bg-[var(--clr-linen)] rounded-[var(--radius-lg)] shadow-[var(--shadow-md)] border border-[var(--clr-aged)] flex flex-col sm:flex-row overflow-hidden group cursor-pointer hover:border-[var(--clr-gold)] transition-colors duration-500"
-                >
-                  <div className="sm:w-1/2 overflow-hidden relative">
-                    <div className="absolute inset-0 bg-[var(--clr-charcoal)] opacity-20 group-hover:opacity-0 transition-opacity duration-700 z-10" />
-                    <img src="https://images.unsplash.com/photo-1511895426328-dc8714191300?q=80&w=800" className="w-full h-full min-h-[300px] object-cover sepia-[0.4] group-hover:sepia-0 group-hover:scale-105 transition-all duration-1000" />
-                    <div className="absolute bottom-4 left-4 z-20 w-12 h-12 bg-[rgba(20,18,17,0.6)] backdrop-blur-md rounded-full flex items-center justify-center text-[var(--clr-gold)] border border-[rgba(184,143,91,0.5)] opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 transition-all duration-500">
-                      <PlayCircle size={24} weight="fill" />
+                {onThisDayMemory ? (
+                  <motion.div
+                    onClick={() => setSelectedMemory(onThisDayMemory)}
+                    whileHover={{ y: -8 }}
+                    className="bg-[var(--clr-linen)] rounded-[var(--radius-lg)] shadow-[var(--shadow-md)] border border-[var(--clr-aged)] flex flex-col sm:flex-row overflow-hidden group cursor-pointer hover:border-[var(--clr-gold)] transition-colors duration-500"
+                  >
+                    <div className="sm:w-1/2 overflow-hidden relative">
+                      <div className="absolute inset-0 bg-[var(--clr-charcoal)] opacity-20 group-hover:opacity-0 transition-opacity duration-700 z-10" />
+                      <img src={onThisDayMemory.url || onThisDayMemory.original_file} className="w-full h-full min-h-[300px] object-cover sepia-[0.4] group-hover:sepia-0 group-hover:scale-105 transition-all duration-1000" />
+                      <div className="absolute bottom-4 left-4 z-20 w-12 h-12 bg-[rgba(20,18,17,0.6)] backdrop-blur-md rounded-full flex items-center justify-center text-[var(--clr-gold)] border border-[rgba(184,143,91,0.5)] opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 transition-all duration-500">
+                        <PlayCircle size={24} weight="fill" />
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="p-8 sm:w-1/2 flex flex-col justify-center relative bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]">
-                    <p className="font-ui text-[10px] uppercase font-bold text-[var(--clr-dust)] tracking-[0.2em] mb-2">1994 &middot; Entoto Park</p>
-                    <h3 className="font-display font-bold text-[2rem] text-[var(--clr-ink)] leading-tight mb-2 group-hover:text-[var(--clr-gold-dark)] transition-colors">Summer in the Hills</h3>
-                    <p className="font-script text-[44px] text-[var(--clr-dust)] leading-[0.5] mb-8">"A picnic to remember"</p>
+                    <div className="p-8 sm:w-1/2 flex flex-col justify-center relative bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]">
+                      <p className="font-ui text-[10px] uppercase font-bold text-[var(--clr-dust)] tracking-[0.2em] mb-2">{onThisDayMemory.year || 'Unknown Year'} &middot; {onThisDayMemory.location}</p>
+                      <h3 className="font-display font-bold text-[2rem] text-[var(--clr-ink)] leading-tight mb-2 group-hover:text-[var(--clr-gold-dark)] transition-colors">{onThisDayMemory.title}</h3>
 
-                    <p className="font-ui text-[14px] text-[var(--clr-ink)] leading-[1.8] mb-8 font-medium">
-                      Thirty years ago today, the family gathered at Entoto Park for Abebe's 50th birthday. The sun was shining, and everyone brought their favorite dishes.
-                    </p>
+                      <p className="font-ui text-[14px] text-[var(--clr-ink)] leading-[1.8] mt-4 mb-8 font-medium line-clamp-4">
+                        {onThisDayMemory.ai_caption || "An artifact from your past, preserved in the vault."}
+                      </p>
 
-                    <div className="flex items-center gap-2 mt-auto">
-                       <span className="font-ui text-[9px] uppercase tracking-widest font-bold text-[var(--clr-dust)] px-4 py-2 border border-[var(--clr-aged)] rounded-full bg-[var(--clr-paper)] group-hover:border-[var(--clr-gold)] group-hover:text-[var(--clr-gold-dark)] transition-colors">
-                         View Exhibition →
-                       </span>
+                      <div className="flex items-center gap-2 mt-auto">
+                         <span className="font-ui text-[9px] uppercase tracking-widest font-bold text-[var(--clr-dust)] px-4 py-2 border border-[var(--clr-aged)] rounded-full bg-[var(--clr-paper)] group-hover:border-[var(--clr-gold)] group-hover:text-[var(--clr-gold-dark)] transition-colors">
+                           View Exhibition →
+                         </span>
+                      </div>
                     </div>
+                  </motion.div>
+                ) : (
+                  <div className="bg-[var(--clr-paper)] border border-[var(--clr-aged)] border-dashed rounded-[var(--radius-lg)] p-12 text-center">
+                    <p className="font-script text-[36px] text-[var(--clr-dust)] leading-none mb-2">"A quiet day in history"</p>
+                    <p className="font-ui text-[13px] text-[var(--clr-ink)]">No memories were recorded in the archive on this date.</p>
                   </div>
-                </motion.div>
+                )}
               </div>
             </div>
 
@@ -313,22 +347,36 @@ export default function Dashboard() {
 
                   <div className="flex items-center gap-3 mb-4 relative z-10">
                     <Timer size={20} className="text-[var(--clr-gold)] animate-pulse" weight="fill"/>
-                    <h3 className="font-ui text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--clr-gold)]">Unlocking Soon</h3>
+                    <h3 className="font-ui text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--clr-gold)]">
+                      {hasUpcomingCapsule ? 'Unlocking Soon' : 'No Pending Capsules'}
+                    </h3>
                   </div>
 
-                  <p className="font-display font-semibold text-[1.5rem] mb-6 relative z-10 tracking-wide leading-tight">Wedding<br/>Anniversary</p>
+                  <p className="font-display font-semibold text-[1.5rem] mb-6 relative z-10 tracking-wide leading-tight">
+                    {hasUpcomingCapsule ? upcomingCapsule.title : 'Create a new time capsule'}
+                  </p>
 
-                  <div className="flex gap-6 relative z-10 border-t border-[rgba(184,143,91,0.2)] pt-6">
-                    <div>
-                      <span className="block font-display font-extrabold text-[2rem] text-[var(--clr-gold-light)] leading-none mb-1">12</span>
-                      <span className="font-ui text-[9px] uppercase tracking-[0.2em] font-bold text-[var(--clr-fog)]">Days</span>
+                  {hasUpcomingCapsule ? (
+                    <div className="flex gap-6 relative z-10 border-t border-[rgba(184,143,91,0.2)] pt-6">
+                      <div>
+                        <span className="block font-display font-extrabold text-[2rem] text-[var(--clr-gold-light)] leading-none mb-1">
+                          {String(daysUntilUnlock).padStart(2, '0')}
+                        </span>
+                        <span className="font-ui text-[9px] uppercase tracking-[0.2em] font-bold text-[var(--clr-fog)]">Days</span>
+                      </div>
+                      <div className="w-px h-10 bg-[rgba(184,143,91,0.2)]" />
+                      <div>
+                        <span className="block font-display font-extrabold text-[2rem] text-[var(--clr-gold-light)] leading-none mb-1">
+                          {String(hoursUntilUnlock).padStart(2, '0')}
+                        </span>
+                        <span className="font-ui text-[9px] uppercase tracking-[0.2em] font-bold text-[var(--clr-fog)]">Hours</span>
+                      </div>
                     </div>
-                    <div className="w-px h-10 bg-[rgba(184,143,91,0.2)]" />
-                    <div>
-                      <span className="block font-display font-extrabold text-[2rem] text-[var(--clr-gold-light)] leading-none mb-1">04</span>
-                      <span className="font-ui text-[9px] uppercase tracking-[0.2em] font-bold text-[var(--clr-fog)]">Hours</span>
+                  ) : (
+                    <div className="font-ui text-[11px] uppercase tracking-[0.2em] font-bold text-[var(--clr-fog)] border-t border-[rgba(184,143,91,0.2)] pt-6 relative z-10">
+                      Nothing scheduled yet
                     </div>
-                  </div>
+                  )}
                 </motion.div>
               </Link>
 

@@ -1,10 +1,11 @@
 import axiosClient from '../../../services/axiosClient';
-import type { TimelineEvent } from '../types';
+import { extractData, extractList } from '../../../services/responseExtractor';
+import type { TimelineEvent, PersonProfile } from '../types';
 
 export const chroniclesService = {
-  getPersonProfile: async (vaultId: string, personId: string) => {
+  getPersonProfile: async (vaultId: string, personId: string): Promise<PersonProfile> => {
     const response = await axiosClient.get(`/vaults/${vaultId}/lineage/person/${personId}/profile/`);
-    return response.data;
+    return extractData<PersonProfile>(response);
   },
 
   generateStory: async (vaultId: string, personId: string): Promise<{ task_id: string }> => {
@@ -16,6 +17,6 @@ export const chroniclesService = {
 
   getTimeline: async (vaultId: string): Promise<TimelineEvent[]> => {
     const response = await axiosClient.get(`/vaults/${vaultId}/memories/`);
-    return response.data.results || response.data;
+    return extractList<TimelineEvent>(response);
   },
 };

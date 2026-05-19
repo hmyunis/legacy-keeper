@@ -29,9 +29,21 @@ services:
       - "9000:9000"
       - "9001:9001"
 
+  minio-init:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin) do echo '...waiting for minio...' && sleep 1; done;
+      /usr/bin/mc mb -p local/legacykeeper || true;
+      /usr/bin/mc anonymous set public local/legacykeeper;
+      exit 0;
+      "
+
   web:
     build: ./backend
-    command: gunicorn --bind 0.0.0.0:8000 legacy_keeper.wsgi:application
+    command: gunicorn --bind 0.0.0.0:8000 --workers 2 --threads 4 --worker-class gthread --timeout 600 --graceful-timeout 120 --keep-alive 75 legacy_keeper.wsgi:application
     volumes:
       - ./backend:/app
       - static_volume:/app/static
@@ -41,10 +53,17 @@ services:
       - db
       - redis
       - minio
+      - minio-init
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('127.0.0.1',8000),3); s.close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
 
   celery:
     build: ./backend
-    command: celery -A legacy_keeper worker -l INFO -Q high_priority,default,low_priority
+    command: celery -A legacy_keeper.celery:app worker -l INFO -Q high_priority,default,low_priority
     volumes:
       - ./backend:/app
     env_file:
@@ -53,10 +72,11 @@ services:
       - db
       - redis
       - minio
+      - minio-init
 
   celery-beat:
     build: ./backend
-    command: celery -A legacy_keeper beat -l INFO
+    command: celery -A legacy_keeper.celery:app beat -l INFO
     volumes:
       - ./backend:/app
     env_file:
@@ -85,8 +105,10 @@ services:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
       - static_volume:/app/static
     depends_on:
-      - web
-      - frontend
+      web:
+        condition: service_healthy
+      frontend:
+        condition: service_started
 
 volumes:
   db_data:

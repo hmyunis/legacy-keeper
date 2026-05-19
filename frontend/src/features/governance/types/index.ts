@@ -17,4 +17,6 @@ export interface ActionLog {
   user?: {
     full_name: string;
   };
+  target_id?: string;
+  target_type?: 'PERSON' | 'MEMORY' | 'SYSTEM';
 }

@@ -9,7 +9,11 @@ export default function Timeline() {
   const { data: memories = [] } = useVaultMemories();
 
   const groupedData = [...memories]
-    .sort((a, b) => parseInt(a.year || '0') - parseInt(b.year || '0'))
+    .sort((a, b) => {
+      const dateA = new Date(a.date || `${a.year}-01-01`).getTime();
+      const dateB = new Date(b.date || `${b.year}-01-01`).getTime();
+      return dateA - dateB;
+    })
     .reduce((acc, mem) => {
       if (!mem.year) return acc;
       const decade = Math.floor(parseInt(mem.year) / 10) * 10 + 's';

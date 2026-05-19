@@ -1,91 +1,93 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { MagicWand, DownloadSimple, ShareNetwork, Sparkle, TreeStructure, Quotes } from '@phosphor-icons/react';
 import { TornEdge } from '../components/ui/TornEdge';
 import { Button } from '../components/ui/Button';
 import MemoryCard from '../components/vault/MemoryCard';
-import { VAULT_MEMORY_CLUSTERS } from '../features/vault/vaultMockData';
 import { useParams } from '@tanstack/react-router';
 import { useGenerateStory } from '../features/chronicles/hooks/useChronicles';
 import { pollTask } from '../lib/tasks';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { sileo } from 'sileo';
-
-const MOCK_STORY_CHUNKS = [
-  "Born in the walled city of Harar in 1942, Abebe's early life was framed by the vibrant markets and the scent of roasted coffee. ",
-  "He moved to Addis Ababa in the late 1960s, seeking education and opportunity, carrying nothing but a leather suitcase and his father's old watch. ",
-  "The memories preserved in this vault reveal a man who cherished family above all. In the summer of 1994, during his 50th birthday at Entoto Park, his smile outshone the sun—a moment captured perfectly by his son, Yohannes. ",
-  "Abebe was not just a patriarch; he was the archivist of his generation's history, leaving behind a legacy of resilience, laughter, and an unbreakable bond with his roots."
-];
-
-const KINSHIP = [
-  { id: 2, name: 'Fatima', role: 'Wife', avatar: 'https://ui-avatars.com/api/?name=Fatima&background=DBCFB5&color=2A2522' },
-  { id: 3, name: 'Yohannes', role: 'Son', avatar: 'https://ui-avatars.com/api/?name=Yohannes&background=3A5F7A&color=fff' },
-  { id: 4, name: 'Sara', role: 'Daughter', avatar: 'https://ui-avatars.com/api/?name=Sara&background=4A7C59&color=fff' },
-  { id: 5, name: 'Dawit', role: 'Grandson', avatar: 'https://ui-avatars.com/api/?name=Dawit&background=A0622A&color=fff' },
-  { id: 6, name: 'Lia', role: 'Granddaughter', avatar: 'https://ui-avatars.com/api/?name=Lia&background=8B3A3A&color=fff' },
-];
+import { chroniclesService } from '../features/chronicles/api/chronicles.service';
+import type { PersonProfile } from '../features/chronicles/types';
+import { useAuthStore } from '../stores/authStore';
+import axiosClient from '../services/axiosClient';
 
 export default function PersonProfile() {
   const [activeTab, setActiveTab] = useState<'CHRONICLE' | 'CONNECTIONS' | 'MEMORIES'>('CHRONICLE');
-
   const [isGenerating, setIsGenerating] = useState(false);
-  const [story, setStory] = useState('');
   const [isComplete, setIsComplete] = useState(false);
+  const [isEditingBio, setIsEditingBio] = useState(false);
+  const [isSavingBio, setIsSavingBio] = useState(false);
+  const [editedBio, setEditedBio] = useState('');
 
-  // Flatten mock memories for the exhibition hall
-  const allMemories = VAULT_MEMORY_CLUSTERS.flatMap(c => c.memories).slice(0, 9);
+  const { personId } = useParams({ strict: false });
+  const vaultId = useAuthStore(s => s.activeVaultId);
+  const queryClient = useQueryClient();
+  const generateStoryMutation = useGenerateStory();
 
-  const generateChronicle = async () => {
-    const { personId } = useParams({ from: '/person/$personId' });
-    const generateStoryMutation = useGenerateStory();
-    const queryClient = useQueryClient();
+  const { data: profile } = useQuery<PersonProfile>({
+    queryKey: ['personProfile', personId],
+    queryFn: () => chroniclesService.getPersonProfile(vaultId!, personId as string),
+    enabled: !!vaultId && !!personId,
+  });
 
+  useEffect(() => {
+    if (profile?.active_story_task_id && !isGenerating) {
+      handlePoll(profile.active_story_task_id);
+    }
+  }, [profile?.active_story_task_id]);
+
+  const handlePoll = async (taskId: string) => {
+    setIsGenerating(true);
     try {
-      setIsGenerating(true);
-      setStory('');
-      setIsComplete(false);
-
-      const { task_id } = await generateStoryMutation.mutateAsync(personId);
-
-      await sileo.promise(pollTask(task_id), {
-        loading: { title: "Story Weaver is thinking...", description: "Consulting artifacts and memories..." },
-        success: (result) => {
-          queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
-          animateTypewriter(result?.biography || "No story could be woven.");
-          return { title: "Chronicle Woven", description: "The biography has been added to the archives." };
-        },
-        error: { title: "Story Weaver Failed", description: "Ensure Ollama is running and Llama3 is pulled." }
-      });
-
-    } catch (error) {
+      await pollTask(taskId);
+      queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
       setIsGenerating(false);
+      setIsComplete(true);
+      sileo.success({ title: "Story Woven", description: "The chronicle is ready." });
+    } catch (e) {
+      setIsGenerating(false);
+      sileo.error({ title: "Story Weaver Failed", description: "The curator was unable to finish the biography." });
     }
   };
 
-  const animateTypewriter = (text: string) => {
-    let i = 0;
-    const interval = setInterval(() => {
-      setStory((prev) => text.slice(0, i + 1));
-      i++;
-      if (i >= text.length) {
-        clearInterval(interval);
-        setIsGenerating(false);
-        setIsComplete(true);
+  const generateChronicle = async () => {
+    const res = await generateStoryMutation.mutateAsync(personId as string);
+    handlePoll(res.task_id);
+  };
+
+  if (!profile) return null;
+
+  const story = profile.biography || '';
+  const allMemories = profile.memories || [];
+  const KINSHIP = profile.kinship || [];
+
+  const saveBio = async () => {
+    setIsSavingBio(true);
+    await sileo.promise(
+      axiosClient.patch(`/vaults/${vaultId}/lineage/person/${personId}/`, { biography: editedBio }),
+      {
+        loading: { title: "Preserving Chronicle..." },
+        success: () => {
+          setIsEditingBio(false);
+          queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
+          return { title: "Chronicle Saved" };
+        },
+        error: { title: "Failed to save chronicle" }
       }
-    }, 15);
+    ).finally(() => setIsSavingBio(false));
   };
 
   return (
-    // Pull the wrapper up underneath the navbar with a negative margin 
     <div className="min-h-screen bg-[var(--clr-parchment)] flex flex-col zone-light overflow-x-hidden -mt-[var(--shell-offset-top)]">
-      
-      {/* Anchor the top padding to compensate for the overlap, cleanly clearing the logo */}
+
       <section className="bg-[var(--clr-charcoal)] relative overflow-hidden pt-[calc(var(--shell-offset-top)+64px)] pb-32 px-[clamp(24px,5vw,80px)]">
         <div className="absolute inset-0 z-0 pointer-events-none">
           <motion.img
             initial={{ scale: 1 }} animate={{ scale: 1.1 }} transition={{ duration: 20, repeat: Infinity, repeatType: 'reverse' }}
-            src="https://images.unsplash.com/photo-1542038784456-1ea8e935640e?q=80&w=1200"
+            src={allMemories[0]?.url || "https://images.unsplash.com/photo-1542038784456-1ea8e935640e?q=80&w=1200"}
             className="w-full h-full object-cover opacity-[0.08] sepia-[0.6] origin-center"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-[var(--clr-charcoal)] via-[rgba(20,18,17,0.4)] to-transparent" />
@@ -95,31 +97,30 @@ export default function PersonProfile() {
           <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.8 }} className="relative group cursor-pointer">
             <div className="absolute inset-0 rounded-full bg-[var(--clr-gold)] blur-xl opacity-20 group-hover:opacity-40 transition-opacity duration-700" />
             <img
-              src="https://ui-avatars.com/api/?name=Abebe&background=B88F5B&color=fff&size=256"
+              src={`https://ui-avatars.com/api/?name=${profile.name.replace(' ', '+')}&background=B88F5B&color=fff&size=256`}
               className="w-[180px] h-[180px] md:w-[220px] md:h-[220px] rounded-full border-[3px] border-[var(--clr-gold)] shadow-[var(--shadow-gold)] object-cover relative z-10"
-              alt="Abebe Kebede"
+              alt={profile.name}
             />
           </motion.div>
 
           <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ duration: 0.8, delay: 0.2 }} className="flex-1 text-center md:text-left">
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-[rgba(184,143,91,0.15)] border border-[var(--clr-gold)] rounded-full text-[var(--clr-gold)] font-ui text-[9px] uppercase font-bold tracking-[0.2em] mb-4">
-              Family Patriarch
+              {profile.role}
             </div>
             <h1 className="font-display font-extrabold text-[clamp(2.5rem,5vw,4.5rem)] text-[var(--clr-linen)] leading-[1.0] tracking-wide">
-              ABEBE KEBEDE
+              {profile.name.toUpperCase()}
             </h1>
             <p className="font-script text-[48px] md:text-[56px] text-[var(--clr-gold-light)] leading-[0.6] mt-4 mb-6">
-              "A man of extraordinary memory"
+              "A life preserved in memory"
             </p>
             <p className="font-ui text-[14px] text-[var(--clr-fog)] mb-0 md:max-w-[80%] leading-relaxed font-medium">
-              Born March 12, 1942 &middot; Harar, Ethiopia<br/>
-              Passed October 3, 2019 &middot; Addis Ababa, Ethiopia &middot; Age 77
+              {profile.birthYear && `Born ${profile.birthYear}`}{profile.birthYear && profile.deathYear && ' \u00b7 '}{profile.deathYear && `Passed ${profile.deathYear}`}
             </p>
           </motion.div>
 
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6 }} className="hidden lg:flex flex-col gap-4 shrink-0">
             <div className="bg-[rgba(255,255,255,0.03)] border border-[rgba(184,143,91,0.3)] px-8 py-5 rounded-[var(--radius-lg)] text-center backdrop-blur-sm">
-              <span className="block font-display text-[2rem] text-[var(--clr-linen)] leading-none mb-1">{allMemories.length}</span>
+              <span className="block font-display text-[2rem] text-[var(--clr-linen)] leading-none mb-1">{profile.memoryCount}</span>
               <span className="font-ui text-[10px] uppercase tracking-[0.2em] text-[var(--clr-gold)] font-bold">Memories</span>
             </div>
           </motion.div>
@@ -168,16 +169,26 @@ export default function PersonProfile() {
 
                 <div className="text-center mb-16 relative z-10">
                   <p className="font-script text-[56px] text-[var(--clr-gold-dark)] leading-[0.5]">"The Life of"</p>
-                  <h2 className="font-display font-extrabold text-[2.75rem] tracking-[0.1em] text-[var(--clr-ink)] mt-6 leading-none">ABEBE KEBEDE</h2>
-                  <p className="font-ui text-[10px] uppercase font-bold tracking-[0.25em] text-[var(--clr-dust)] mt-4">1942 — 2019</p>
+                  <h2 className="font-display font-extrabold text-[2.75rem] tracking-[0.1em] text-[var(--clr-ink)] mt-6 leading-none">{profile.name.toUpperCase()}</h2>
+                  <p className="font-ui text-[10px] uppercase font-bold tracking-[0.25em] text-[var(--clr-dust)] mt-4">{profile.birthYear || '?'}{profile.deathYear ? ` \u2014 ${profile.deathYear}` : ''}</p>
                   <div className="w-16 h-[2px] bg-[var(--clr-gold)] mx-auto mt-8 opacity-60" />
                 </div>
 
                 <div className="font-ui text-[16px] text-[var(--clr-ink)] leading-[2.0] relative z-10 text-justify">
-                  <span className="float-left text-[5rem] font-display font-bold text-[var(--clr-gold-dark)] leading-[0.8] pr-3 pt-3 drop-shadow-sm">
-                    {story.charAt(0)}
-                  </span>
-                  <span className="whitespace-pre-wrap">{story.slice(1)}</span>
+                  {isEditingBio ? (
+                    <textarea
+                      value={editedBio}
+                      onChange={e => setEditedBio(e.target.value)}
+                      className="w-full min-h-[300px] p-6 bg-transparent font-ui leading-relaxed"
+                    />
+                  ) : (
+                    <>
+                      <span className="float-left text-[5rem] font-display font-bold text-[var(--clr-gold-dark)] leading-[0.8] pr-3 pt-3 drop-shadow-sm">
+                        {story.charAt(0)}
+                      </span>
+                      <span className="whitespace-pre-wrap">{story.slice(1)}</span>
+                    </>
+                  )}
                   {isGenerating && <span className="inline-block w-2.5 h-5 bg-[var(--clr-gold)] animate-pulse ml-1 align-middle" />}
                 </div>
 
@@ -185,8 +196,7 @@ export default function PersonProfile() {
                   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }} className="mt-20 pt-8 border-t border-[rgba(184,143,91,0.3)]">
 
                     <div className="mb-16 p-3 bg-white border border-[var(--clr-aged)] shadow-md rotate-[-2deg] max-w-[400px] mx-auto hover:rotate-0 transition-transform duration-500 cursor-pointer">
-                      <img src="https://images.unsplash.com/photo-1542038784456-1ea8e935640e?q=80&w=600" className="w-full h-auto sepia-[0.3]" alt="Memory insert" />
-                      <p className="font-script text-[32px] text-center text-[var(--clr-dust)] mt-4 leading-none">"Summer of '94"</p>
+                      <img src={allMemories[0]?.url || "https://images.unsplash.com/photo-1542038784456-1ea8e935640e?q=80&w=600"} className="w-full h-auto sepia-[0.3]" alt="Memory insert" />
                     </div>
 
                     <div className="flex flex-col md:flex-row justify-between items-center gap-6">
@@ -197,6 +207,9 @@ export default function PersonProfile() {
                         </p>
                       </div>
                       <div className="flex gap-4">
+                        <Button variant="ghost" className="px-6 py-2.5 text-[10px]" disabled={isSavingBio} onClick={() => isEditingBio ? saveBio() : (setEditedBio(story), setIsEditingBio(true))}>
+                          {isSavingBio ? "SAVING..." : (isEditingBio ? "SAVE STORY" : "EDIT STORY")}
+                        </Button>
                         <Button variant="ghost" className="px-6 py-2.5 text-[10px]"><ShareNetwork size={16} /> Share</Button>
                         <Button variant="ghost" className="px-6 py-2.5 text-[10px]"><DownloadSimple size={16} /> PDF</Button>
                       </div>
@@ -227,14 +240,14 @@ export default function PersonProfile() {
                 className="absolute z-20 flex flex-col items-center"
               >
                 <div className="w-[100px] h-[100px] rounded-full border-[3px] border-[var(--clr-gold)] shadow-[var(--shadow-gold)] bg-white overflow-hidden">
-                  <img src="https://ui-avatars.com/api/?name=Abebe&background=B88F5B&color=fff&size=128" className="w-full h-full object-cover" alt="" />
+                  <img src={`https://ui-avatars.com/api/?name=${profile.name.replace(' ', '+')}&background=B88F5B&color=fff&size=128`} className="w-full h-full object-cover" alt="" />
                 </div>
                 <div className="bg-[var(--clr-charcoal)] text-[var(--clr-linen)] px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest mt-3 shadow-md">
-                  Abebe
+                  {profile.name}
                 </div>
               </motion.div>
 
-              {KINSHIP.map((kin, i) => {
+              {KINSHIP.map((kin: any, i: number) => {
                 const angle = (i / KINSHIP.length) * Math.PI * 2;
                 const radius = 160;
                 const x = Math.cos(angle) * radius;
@@ -277,13 +290,13 @@ export default function PersonProfile() {
         )}
 
         {activeTab === 'MEMORIES' && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}
             className="columns-1 md:columns-2 lg:columns-3 gap-[var(--space-6)] space-y-[var(--space-6)] py-4"
           >
-            {allMemories.map((mem) => (
+            {allMemories.map((mem: any) => (
                <div key={mem.id} className="break-inside-avoid shadow-sm hover:shadow-md transition-shadow rounded-lg">
-                 <MemoryCard memory={{ ...mem, tags: mem.tags.slice(0,2) }} />
+                 <MemoryCard memory={{ ...mem, tags: mem.tags?.slice(0,2) || [] }} />
                </div>
             ))}
           </motion.div>

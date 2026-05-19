@@ -13,10 +13,22 @@ export const useVerifyEmail = () => {
   return useMutation({ mutationFn: authService.verifyEmail });
 };
 
+export const useResendVerification = () => {
+  return useMutation({ mutationFn: authService.resendVerificationEmail });
+};
+
 export const useInitVault = () => {
   return useMutation({ mutationFn: authService.initVault });
 };
 
 export const useFirstRelative = () => {
   return useMutation({ mutationFn: authService.firstRelative });
+};
+
+export const useRequestPasswordReset = () => {
+  return useMutation({ mutationFn: authService.requestPasswordReset });
+};
+
+export const useConfirmPasswordReset = () => {
+  return useMutation({ mutationFn: authService.confirmPasswordReset });
 };

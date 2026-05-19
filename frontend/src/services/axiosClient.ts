@@ -24,4 +24,38 @@ axiosClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
+axiosClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      const { refreshToken, currentUser, activeVaultId, login, logout } = useAuthStore.getState();
+
+      if (refreshToken) {
+        try {
+          const response = await axios.post(`${appEnv.apiBaseUrl}auth/token/refresh/`, {
+            refresh: refreshToken
+          });
+
+          login({
+            user: currentUser!,
+            accessToken: response.data.access,
+            refreshToken: response.data.refresh || refreshToken,
+            activeVaultId
+          });
+
+          originalRequest.headers['Authorization'] = `Bearer ${response.data.access}`;
+          return axiosClient(originalRequest);
+        } catch (refreshError) {
+          logout();
+          window.location.href = '/auth';
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default axiosClient;

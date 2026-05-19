@@ -3,6 +3,7 @@ export interface Person {
   name: string;
   role: string;
   photo?: string;
+  birthYear?: string;
   deathYear?: string;
   biography?: string;
 }

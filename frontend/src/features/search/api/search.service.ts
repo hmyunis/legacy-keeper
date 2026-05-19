@@ -1,4 +1,5 @@
 import axiosClient from '../../../services/axiosClient';
+import { extractList } from '../../../services/responseExtractor';
 import type { VaultMemory } from '../../vault/types';
 
 export const searchService = {
@@ -6,6 +7,6 @@ export const searchService = {
     const response = await axiosClient.get(`/vaults/${vaultId}/search/vibe/`, {
       params: { q: query }
     });
-    return response.data;
+    return extractList<VaultMemory>(response);
   }
 };

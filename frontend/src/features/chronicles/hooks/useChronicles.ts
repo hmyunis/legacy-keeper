@@ -12,8 +12,11 @@ export const useTimeline = () => {
 };
 
 export const useGenerateStory = () => {
-  const vaultId = useAuthStore((s) => s.activeVaultId);
   return useMutation({
-    mutationFn: (personId: string) => chroniclesService.generateStory(vaultId!, personId),
+    mutationFn: (personId: string) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return chroniclesService.generateStory(vaultId, personId);
+    },
   });
 };

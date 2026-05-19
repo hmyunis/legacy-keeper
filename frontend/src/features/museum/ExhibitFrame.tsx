@@ -24,7 +24,12 @@ export default function ExhibitFrame({ position, title, location, year, url, onC
   }, []);
 
   useFrame((state) => {
-    if (meshRef.current) {
+    if (!meshRef.current) return;
+
+    const distance = state.camera.position.distanceTo(meshRef.current.position);
+    meshRef.current.visible = distance < 25;
+
+    if (meshRef.current.visible) {
       const targetScale = hovered ? 1.05 : 1;
       meshRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
       meshRef.current.position.y = position.y + Math.sin(state.clock.elapsedTime + position.x) * 0.05;

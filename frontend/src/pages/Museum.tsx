@@ -1,7 +1,6 @@
 import { Suspense, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { ScrollControls } from '@react-three/drei';
-import { Link } from '@tanstack/react-router';
 import { motion, AnimatePresence } from 'framer-motion';
 import MuseumHall, { type ExhibitData } from '../features/museum/MuseumHall';
 import MemoryDetailModal from '../features/vault/MemoryDetailModal';
@@ -37,7 +36,9 @@ export default function Museum() {
       </Suspense>
 
       <div className="absolute top-8 right-8 z-10 pointer-events-auto">
-        <Link to="/" className="px-5 py-2 border border-[rgba(184,143,91,0.3)] rounded-full text-[11px] uppercase tracking-widest text-[var(--clr-fog)] hover:text-[var(--clr-linen)] hover:border-[var(--clr-gold)] backdrop-blur-md bg-[rgba(20,18,17,0.5)]">LEAVE MUSEUM</Link>
+        <button onClick={() => window.history.back()} className="px-5 py-2 border border-[rgba(184,143,91,0.3)] rounded-full text-[11px] uppercase tracking-widest text-[var(--clr-fog)] hover:text-[var(--clr-linen)] hover:border-[var(--clr-gold)] backdrop-blur-md bg-[rgba(20,18,17,0.5)] cursor-pointer transition-colors">
+          LEAVE MUSEUM
+        </button>
       </div>
 
       <div className="absolute top-8 left-8 z-10 pointer-events-none">

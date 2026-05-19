@@ -1,7 +1,9 @@
 import logging
 import requests
 from celery import shared_task
-from lineage.models import Person
+from django.conf import settings
+from django.db.models import Q
+from lineage.models import Person, KinshipEdge
 from vaults.models import Memory
 
 logger = logging.getLogger(__name__)
@@ -11,34 +13,55 @@ def generate_chronicle_task(self, person_id):
     try:
         person = Person.objects.get(id=person_id)
 
-        memories = Memory.objects.filter(detected_faces__person=person).order_by('year')
+        memories = Memory.objects.filter(
+            Q(detected_faces__person=person) |
+            Q(title__icontains=person.name) |
+            Q(tags__contains=[person.name])
+        ).distinct().order_by('year')
 
-        event_list = []
-        for mem in memories:
-            event_list.append(f"In {mem.year or 'an unknown year'} at {mem.location}: {mem.ai_caption}")
+        kin_links = KinshipEdge.objects.filter(Q(from_person=person) | Q(to_person=person))
+        family_context = []
+        for edge in kin_links:
+            rel = edge.to_person if edge.from_person == person else edge.from_person
+            family_context.append(f"{rel.name} ({edge.relationship_type})")
 
-        events_str = " | ".join(event_list)
+        event_list = [f"In {m.year or 'an unknown year'} at {m.location}: {m.ai_caption}" for m in memories]
 
-        prompt = (
-            f"Write a moving, 4-paragraph biographical chronicle for {person.name}, "
-            f"born in {person.birth_year or 'unknown'}, passed in {person.death_year or 'unknown'}. "
-            f"Use these events from their life: {events_str}. "
-            "Focus on family resilience, warmth, and legacy. Do not use generic filler."
-        )
+        if not event_list:
+            prompt = (
+                f"Write a 2-paragraph speculative biography for {person.name}, a member of the family lineage. "
+                f"Focus on the mystery of time and the importance of preserving names. "
+                f"Context: Family includes {', '.join(family_context)}."
+            )
+        else:
+            prompt = (
+                f"Write a moving, 4-paragraph biographical chronicle for {person.name}. "
+                f"Timeline of events: {' | '.join(event_list)}. "
+                f"Important family members mentioned: {', '.join(family_context)}. "
+                "The tone must be museum-quality, warm, and prestigious. Do not use corporate filler words."
+            )
 
-        ollama_res = requests.post('http://localhost:11434/api/generate', json={
+        ollama_res = requests.post(f"{settings.OLLAMA_URL}/api/generate", json={
             "model": "llama3.1:8b",
             "prompt": prompt,
             "stream": False
-        }, timeout=60)
+        }, timeout=90)
 
         if ollama_res.status_code == 200:
+            person = Person.objects.get(id=person_id)
             person.biography = ollama_res.json().get("response", "").strip()
+            person.active_story_task_id = None
             person.save()
             return {"status": "READY", "person_id": str(person.id)}
-        else:
-            raise Exception(f"Ollama returned {ollama_res.status_code}")
+
+        raise Exception("AI Engine Timeout")
 
     except Exception as e:
+        try:
+            person = Person.objects.get(id=person_id)
+            person.active_story_task_id = None
+            person.save()
+        except:
+            pass
         logger.error(f"Failed to generate chronicle for person {person_id}: {str(e)}")
         raise e

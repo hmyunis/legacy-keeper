@@ -17,13 +17,28 @@ export const authService = {
     return response.data;
   },
 
+  resendVerificationEmail: async (): Promise<void> => {
+    const response = await axiosClient.post('/auth/verify-email/resend/', {});
+    return response.data;
+  },
+
   initVault: async (vaultName: string): Promise<{ vaultId: string; name: string }> => {
     const response = await axiosClient.post('/auth/onboarding/init-vault/', { vaultName });
     return response.data;
   },
 
-  firstRelative: async (data: { vaultId: string; name: string; birthYear: string; relationship: string }): Promise<{ personId: string }> => {
+  firstRelative: async (data: { vaultId: string; name: string; birthYear: string; relationship: string }): Promise<{
+    personId: string
+  }> => {
     const response = await axiosClient.post('/auth/onboarding/first-relative/', data);
     return response.data;
+  },
+
+  requestPasswordReset: async (email: string): Promise<void> => {
+    await axiosClient.post('/auth/password-reset/request/', { email });
+  },
+
+  confirmPasswordReset: async (data: any): Promise<void> => {
+    await axiosClient.post('/auth/password-reset/confirm/', data);
   }
 };

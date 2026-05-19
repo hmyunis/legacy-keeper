@@ -15,9 +15,15 @@ import {
   Gear,
   Sparkle,
   Compass,
-  ArrowRight
+  ArrowRight,
+  ShieldCheck,
+  CaretLeft,
+  CaretRight
 } from '@phosphor-icons/react';
 import { useAuthStore } from '../../stores/authStore';
+import { useLogs } from '../../features/governance/hooks/useGovernance';
+import { formatDistanceToNow } from 'date-fns';
+import { useDebouncedValue } from '../../lib/debounce';
 
 export type NavMode = 'public' | 'app';
 
@@ -66,11 +72,6 @@ const WINGS = [
     bg: 'https://images.unsplash.com/photo-1606760227091-3dd870d97f1d?q=80&w=2000',
     desc: 'Ceremonial vessels for the future. Seal photos and letters with a digital wax stamp, intended for eyes years from now.'
   },
-];
-
-const DUMMY_NOTIFS = [
-  { id: 1, icon: Sparkle, color: 'var(--clr-gold)', title: 'AI Restoration Complete', body: '3 artifacts from "Wedding 1954" have been restored.', time: '10 mins ago' },
-  { id: 2, icon: TreeStructure, color: 'var(--clr-success)', title: 'Lineage Expanded', body: 'Yohannes K. joined the family tree.', time: '2 hours ago' },
 ];
 
 export function MuseumNavbar({ mode }: MuseumNavbarProps) {
@@ -123,6 +124,11 @@ export function MuseumNavbar({ mode }: MuseumNavbarProps) {
 
 function PersistentControls({ mode, onOpenWings, onOpenNotifs, onOpenProfile }: any) {
   const [isCompassHovered, setIsCompassHovered] = useState(false);
+  const [hoveredWing, setHoveredWing] = useState<string | null>(null);
+  const [publicDropdownOpen, setPublicDropdownOpen] = useState(false);
+
+  const { currentUser, logout } = useAuthStore();
+  const profileAvatar = currentUser?.avatar || `https://ui-avatars.com/api/?name=${(currentUser?.fullName || 'Curator').replace(/ /g, '+')}&background=B88F5B&color=fff`;
 
   return (
     <div className="fixed inset-0 z-[45] pointer-events-none flex flex-col justify-between p-[clamp(20px,4vw,40px)]">
@@ -138,7 +144,7 @@ function PersistentControls({ mode, onOpenWings, onOpenNotifs, onOpenProfile }: 
           </div>
         </Link>
 
-        {mode === 'public' && (
+        {mode === 'public' && !currentUser && (
           <Link to="/auth" className="pointer-events-auto">
             <motion.span
               whileHover={{ scale: 1.05 }}
@@ -147,6 +153,33 @@ function PersistentControls({ mode, onOpenWings, onOpenNotifs, onOpenProfile }: 
               Sign In
             </motion.span>
           </Link>
+        )}
+
+        {mode === 'public' && currentUser && (
+          <div className="relative pointer-events-auto">
+            <motion.button
+              onClick={() => setPublicDropdownOpen(!publicDropdownOpen)}
+              whileHover={{ scale: 1.05 }}
+              className="w-12 h-12 rounded-full border border-[var(--clr-gold)] overflow-hidden shadow-lg cursor-pointer"
+            >
+              <img src={profileAvatar} alt="Avatar" className="w-full h-full object-cover" />
+            </motion.button>
+
+            <AnimatePresence>
+              {publicDropdownOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="absolute top-14 right-0 mt-2 w-48 bg-[rgba(20,18,17,0.9)] backdrop-blur-xl border border-[rgba(184,143,91,0.3)] rounded-2xl shadow-2xl py-2 flex flex-col z-50 overflow-hidden"
+                >
+                  <Link to="/dashboard" className="px-5 py-3 text-left font-ui text-[11px] font-bold uppercase tracking-widest text-[var(--clr-linen)] hover:bg-[var(--clr-gold)] hover:text-[var(--clr-charcoal)] transition-colors">The Grand Hall</Link>
+                  <div className="w-full h-[1px] bg-[rgba(184,143,91,0.2)] my-1" />
+                  <button onClick={() => { logout(); setPublicDropdownOpen(false); }} className="px-5 py-3 text-left font-ui text-[11px] font-bold uppercase tracking-widest text-[var(--clr-danger)] hover:bg-[var(--clr-danger)] hover:text-white transition-colors">Depart Museum</button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         )}
 
         {mode === 'app' && (
@@ -161,7 +194,7 @@ function PersistentControls({ mode, onOpenWings, onOpenNotifs, onOpenProfile }: 
               <div className="absolute top-3.5 right-3.5 w-1.5 h-1.5 bg-[var(--clr-gold)] rounded-full" />
             </motion.button>
             <motion.button onClick={onOpenProfile} whileHover={{ scale: 1.05 }} className="w-12 h-12 rounded-full border border-[var(--clr-gold)] overflow-hidden shadow-lg">
-              <img src="https://ui-avatars.com/api/?name=Abebe&background=B88F5B&color=fff" alt="Avatar" className="w-full h-full object-cover" />
+              <img src={profileAvatar} alt="Avatar" className="w-full h-full object-cover" />
             </motion.button>
           </div>
         )}
@@ -169,11 +202,7 @@ function PersistentControls({ mode, onOpenWings, onOpenNotifs, onOpenProfile }: 
 
       {mode === 'app' && (
         <div className="flex justify-start w-full mt-auto pointer-events-none">
-          <div
-            className="group relative flex flex-col items-start gap-3 pointer-events-auto"
-            onMouseEnter={() => setIsCompassHovered(true)}
-            onMouseLeave={() => setIsCompassHovered(false)}
-          >
+          <div className="relative flex flex-col items-start gap-3 pointer-events-auto">
             <AnimatePresence>
               {isCompassHovered && (
                 <motion.div
@@ -187,13 +216,15 @@ function PersistentControls({ mode, onOpenWings, onOpenNotifs, onOpenProfile }: 
                     <Link
                       key={wing.path}
                       to={wing.path}
+                      onMouseEnter={() => setHoveredWing(wing.path)}
+                      onMouseLeave={() => setHoveredWing(null)}
                       onClick={(e) => e.stopPropagation()}
                       className="group/wing flex items-center bg-[rgba(20,18,17,0.85)] backdrop-blur-md h-14 rounded-full border border-[rgba(184,143,91,0.3)] hover:bg-[var(--clr-gold)] hover:border-[var(--clr-gold)] hover:text-[var(--clr-charcoal)] text-[var(--clr-linen)] transition-colors overflow-hidden shadow-lg"
                     >
                       <div className="w-14 h-14 shrink-0 flex items-center justify-center">
                         <wing.icon size={20} weight="fill" />
                       </div>
-                      <div className="max-w-0 opacity-0 group-hover/wing:max-w-[160px] group-hover/wing:opacity-100 transition-all duration-300 ease-[var(--ease-out)]">
+                      <div className={`transition-all duration-300 ease-[var(--ease-out)] overflow-hidden ${hoveredWing === wing.path ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                         <span className="font-ui text-[10px] font-bold uppercase tracking-widest whitespace-nowrap pr-6 block">
                           {wing.label}
                         </span>
@@ -206,7 +237,9 @@ function PersistentControls({ mode, onOpenWings, onOpenNotifs, onOpenProfile }: 
 
             <motion.button
               onClick={onOpenWings}
-              className="relative flex items-center bg-[rgba(20,18,17,0.92)] border border-[rgba(184,143,91,0.4)] backdrop-blur-xl rounded-full shadow-[0_12px_40px_rgba(0,0,0,0.6)] overflow-hidden h-14 w-14 justify-center hover:border-[var(--clr-gold)] transition-colors z-10"
+              onMouseEnter={() => setIsCompassHovered(true)}
+              onMouseLeave={() => setIsCompassHovered(false)}
+              className="relative flex items-center bg-[rgba(20,18,17,0.92)] border border-[rgba(184,143,91,0.4)] backdrop-blur-xl rounded-full shadow-[0_12px_40px_rgba(0,0,0,0.6)] overflow-hidden h-14 w-14 justify-center hover:border-[var(--clr-gold)] transition-colors z-10 cursor-pointer"
             >
               <div className="absolute inset-2 rounded-full bg-[var(--clr-gold)] shadow-[var(--shadow-gold)]" />
               <motion.div
@@ -312,22 +345,90 @@ function CinematicDirectory({ onClose }: { onClose: () => void }) {
 }
 
 function RegistryDrawer({ onClose }: { onClose: () => void }) {
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
+
+  const { data, isLoading } = useLogs({ page, q: debouncedSearch });
+  const logs = data?.results || [];
+  const totalCount = data?.count || 0;
+  const totalPages = Math.ceil(totalCount / 10) || 1;
+
   return (
     <div className="fixed inset-0 z-[200] flex justify-end">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={onClose} />
       <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 250 }} className="relative w-full max-w-[420px] h-full bg-[var(--clr-charcoal)] border-l border-[rgba(184,143,91,0.3)] flex flex-col shadow-[-20px_0_60px_rgba(0,0,0,0.8)]">
-        <div className="p-10 border-b border-[rgba(184,143,91,0.15)] flex justify-between items-center bg-gradient-to-b from-[rgba(184,143,91,0.05)] to-transparent">
-          <div><div className="flex items-center gap-2 text-[var(--clr-gold)] mb-1"><Scroll size={18} weight="fill" /><span className="font-ui text-[9px] uppercase font-bold tracking-[0.2em]">The Archives</span></div><h2 className="font-display text-[1.75rem] text-[var(--clr-linen)] uppercase tracking-widest">Registry</h2></div>
-          <button onClick={onClose} className="w-10 h-10 rounded-full border border-[var(--clr-gold)] text-[var(--clr-gold)] flex items-center justify-center hover:bg-[var(--clr-gold)] hover:text-black transition-all"><X size={18} /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-8 space-y-4 no-scrollbar">
-          {DUMMY_NOTIFS.map((notif) => (
-            <div key={notif.id} className="bg-[rgba(255,255,255,0.03)] border border-[rgba(184,143,91,0.15)] rounded-2xl p-6 hover:border-[var(--clr-gold)] transition-all cursor-pointer flex gap-5">
-              <div className="w-12 h-12 rounded-full flex items-center justify-center bg-[rgba(20,18,17,0.8)] shrink-0 border border-[rgba(255,255,255,0.05)] shadow-inner" style={{ color: notif.color }}><notif.icon size={20} weight="fill" /></div>
-              <div><h4 className="font-display font-semibold text-[15px] text-[var(--clr-linen)] leading-tight mb-1">{notif.title}</h4><p className="font-ui text-[12px] text-[var(--clr-fog)] leading-relaxed mb-3">{notif.body}</p><p className="font-ui text-[9px] uppercase font-bold tracking-widest text-[var(--clr-gold-dark)]">{notif.time}</p></div>
+
+        <div className="p-8 border-b border-[rgba(184,143,91,0.15)] bg-gradient-to-b from-[rgba(184,143,91,0.05)] to-transparent">
+          <div className="flex justify-between items-center mb-6">
+            <div>
+              <div className="flex items-center gap-2 text-[var(--clr-gold)] mb-1">
+                <Scroll size={18} weight="fill" />
+                <span className="font-ui text-[9px] uppercase font-bold tracking-[0.2em]">The Archives</span>
+              </div>
+              <h2 className="font-display text-[1.75rem] text-[var(--clr-linen)] uppercase tracking-widest leading-none">Registry</h2>
             </div>
-          ))}
+            <button onClick={onClose} className="w-10 h-10 rounded-full border border-[var(--clr-gold)] text-[var(--clr-gold)] flex items-center justify-center hover:bg-[var(--clr-gold)] hover:text-black transition-all cursor-pointer"><X size={18} /></button>
+          </div>
+
+          <div className="relative">
+            <MagnifyingGlass className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--clr-gold)]" size={16} />
+            <input
+              type="text"
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1); }}
+              placeholder="Search logs..."
+              className="w-full bg-[rgba(0,0,0,0.3)] border border-[rgba(184,143,91,0.3)] rounded-full pl-10 pr-4 py-2.5 font-ui text-[12px] text-[var(--clr-linen)] outline-none focus:border-[var(--clr-gold)] transition-colors"
+            />
+          </div>
         </div>
+
+        <div className="flex-1 overflow-y-auto p-8 space-y-4 no-scrollbar">
+          {isLoading ? (
+            <div className="flex justify-center py-10"><Sparkle size={24} className="text-[var(--clr-gold)] animate-spin" /></div>
+          ) : logs.length > 0 ? (
+            logs.map((log: any, i: number) => (
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }} key={log.id} className="bg-[rgba(255,255,255,0.03)] border border-[rgba(184,143,91,0.15)] rounded-2xl p-5 hover:border-[var(--clr-gold)] transition-all flex gap-4">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center bg-[rgba(20,18,17,0.8)] shrink-0 border border-[rgba(255,255,255,0.05)] shadow-inner text-[var(--clr-gold)]">
+                  {log.action_type === 'security' ? <ShieldCheck size={18} weight="fill" /> : <Sparkle size={18} weight="fill" />}
+                </div>
+                <div>
+                  <h4 className="font-display font-semibold text-[14px] text-[var(--clr-linen)] leading-tight mb-1">{log.user}</h4>
+                  <p className="font-ui text-[12px] text-[var(--clr-fog)] leading-relaxed mb-2">{log.description}</p>
+                  <p className="font-ui text-[9px] uppercase font-bold tracking-widest text-[var(--clr-gold-dark)]">
+                    {formatDistanceToNow(new Date(log.created_at), { addSuffix: true })}
+                  </p>
+                </div>
+              </motion.div>
+            ))
+          ) : (
+            <div className="text-center py-12 opacity-50">
+              <Scroll size={48} className="mx-auto mb-4 text-[var(--clr-gold)]" />
+              <p className="font-ui text-[12px] text-[var(--clr-linen)]">No registry entries found.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-[rgba(184,143,91,0.15)] flex justify-between items-center bg-[rgba(20,18,17,0.5)]">
+           <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="w-8 h-8 rounded-full border border-[rgba(184,143,91,0.3)] flex items-center justify-center text-[var(--clr-gold)] hover:bg-[var(--clr-gold)] hover:text-black transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+           >
+              <CaretLeft size={14} weight="bold" />
+           </button>
+           <span className="font-ui text-[10px] font-bold tracking-widest text-[var(--clr-fog)] uppercase">
+              Page {page} of {totalPages}
+           </span>
+           <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages || totalPages === 0}
+              className="w-8 h-8 rounded-full border border-[rgba(184,143,91,0.3)] flex items-center justify-center text-[var(--clr-gold)] hover:bg-[var(--clr-gold)] hover:text-black transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+           >
+              <CaretRight size={14} weight="bold" />
+           </button>
+        </div>
+
       </motion.div>
     </div>
   );
@@ -336,35 +437,56 @@ function RegistryDrawer({ onClose }: { onClose: () => void }) {
 function IdentityDrawer({ onClose }: { onClose: () => void }) {
   const { currentUser, logout } = useAuthStore();
   const navigate = useNavigate();
+
+  const displayName = currentUser?.fullName || 'Curator';
+  const displayEmail = currentUser?.email || 'curator@legacykeeper.app';
+  const avatarUrl = currentUser?.avatar || `https://ui-avatars.com/api/?name=${displayName.replace(/ /g, '+')}&background=B88F5B&color=fff&size=128`;
+  const isAdmin = currentUser?.role === 'ADMIN';
+
   return (
     <div className="fixed inset-0 z-[200] flex justify-end">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={onClose} />
       <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 250 }} className="relative w-full max-w-[400px] h-full bg-[var(--clr-parchment)] border-l border-[var(--clr-aged)] flex flex-col shadow-[-20px_0_60px_rgba(0,0,0,0.5)]">
-        <div className="p-10 border-b border-[var(--clr-aged)] flex justify-between items-start bg-[rgba(20,18,17,0.03)]">
-          <div className="w-24 h-24 rounded-full border-4 border-[var(--clr-gold)] shadow-xl overflow-hidden"><img src="https://ui-avatars.com/api/?name=Abebe&background=B88F5B&color=fff&size=128" alt="User" className="w-full h-full object-cover" /></div>
-          <button onClick={onClose} className="w-10 h-10 rounded-full border border-[var(--clr-aged)] text-[var(--clr-ink)] flex items-center justify-center hover:bg-[var(--clr-gold)] hover:text-white transition-all bg-[var(--clr-paper)] shadow-md"><X size={18} /></button>
-        </div>
-        <div className="p-10">
-          <h2 className="font-display font-bold text-[2rem] text-[var(--clr-ink)] uppercase tracking-wide mb-1 leading-none">{currentUser?.fullName || 'Abebe Kebede'}</h2>
-          <p className="font-ui text-[13px] text-[var(--clr-dust)] font-medium mb-10">{currentUser?.email || 'curator@familyvault.com'}</p>
-          <div className="space-y-3">
-             <Link to="/settings" onClick={onClose} className="flex items-center gap-4 px-6 py-5 rounded-2xl border border-transparent hover:border-[var(--clr-gold)] hover:bg-white hover:shadow-md transition-all group">
-               <Gear size={22} className="text-[var(--clr-dust)] group-hover:text-[var(--clr-gold)]" /><span className="font-ui text-[12px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">Vault Settings</span>
-             </Link>
-             <Link to="/members" onClick={onClose} className="flex items-center gap-4 px-6 py-5 rounded-2xl border border-transparent hover:border-[var(--clr-gold)] hover:bg-white hover:shadow-md transition-all group">
-               <TreeStructure size={22} className="text-[var(--clr-dust)] group-hover:text-[var(--clr-gold)]" /><span className="font-ui text-[12px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">Manage Kinship</span>
-             </Link>
-             <Link to="/logs" onClick={onClose} className="flex items-center gap-4 px-6 py-5 rounded-2xl border border-transparent hover:border-[var(--clr-gold)] hover:bg-white hover:shadow-md transition-all group">
-               <Scroll size={22} className="text-[var(--clr-dust)] group-hover:text-[var(--clr-gold)]" /><span className="font-ui text-[12px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">Vault Registry</span>
-             </Link>
-             <Link to="/help" onClick={onClose} className="flex items-center gap-4 px-6 py-5 rounded-2xl border border-transparent hover:border-[var(--clr-gold)] hover:bg-white hover:shadow-md transition-all group">
-               <Compass size={22} className="text-[var(--clr-dust)] group-hover:text-[var(--clr-gold)]" /><span className="font-ui text-[12px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">Museum Guidebook</span>
-             </Link>
+
+        <div className="p-8 border-b border-[var(--clr-aged)] flex justify-between items-start bg-[rgba(20,18,17,0.03)]">
+          <div className="relative">
+            <div className="w-20 h-20 rounded-full border-[3px] border-[var(--clr-gold)] shadow-lg overflow-hidden">
+              <img src={avatarUrl} alt="User" className="w-full h-full object-cover" />
+            </div>
+            <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-[var(--clr-gold)] text-white text-[9px] font-bold px-3 py-0.5 rounded-full uppercase tracking-widest shadow-md whitespace-nowrap">
+              {currentUser?.role || 'Curator'}
+            </div>
+          </div>
+          <div className="flex gap-2">
+             <button onClick={() => { logout(); onClose(); navigate({ to: '/auth' }); }} className="w-10 h-10 rounded-full border border-[var(--clr-danger)] text-[var(--clr-danger)] flex items-center justify-center hover:bg-[var(--clr-danger)] hover:text-white transition-all shadow-sm cursor-pointer" title="Depart Museum"><SignOut size={18} weight="bold" /></button>
+             <button onClick={onClose} className="w-10 h-10 rounded-full border border-[var(--clr-aged)] text-[var(--clr-ink)] flex items-center justify-center hover:bg-[var(--clr-gold)] hover:text-white transition-all bg-[var(--clr-paper)] shadow-sm cursor-pointer" title="Close"><X size={18} /></button>
           </div>
         </div>
-        <div className="mt-auto p-4 border-t border-[var(--clr-aged)] bg-[rgba(20,18,17,0.02)]">
-          <button onClick={() => { logout(); onClose(); navigate({ to: '/auth' }); }} className="flex items-center justify-center gap-3 w-full py-4 rounded-full border-2 border-[var(--clr-danger)] text-[var(--clr-danger)] font-ui text-[11px] font-bold uppercase tracking-widest hover:bg-[var(--clr-danger)] hover:text-white transition-all shadow-md"><SignOut size={18} weight="bold" /> Depart Museum</button>
+
+        <div className="p-10 pb-4">
+          <h2 className="font-display font-bold text-[2rem] text-[var(--clr-ink)] uppercase tracking-wide mb-1 leading-none truncate w-full" title={displayName}>{displayName}</h2>
+          <p className="font-ui text-[13px] text-[var(--clr-dust)] font-medium mb-10 truncate w-full" title={displayEmail}>{displayEmail}</p>
+
+          <div className="space-y-3">
+            {isAdmin && (
+              <>
+                <Link to="/settings" onClick={onClose} className="flex items-center gap-4 px-6 py-5 rounded-2xl border border-transparent hover:border-[var(--clr-gold)] hover:bg-white hover:shadow-md transition-all group">
+                  <Gear size={22} className="text-[var(--clr-dust)] group-hover:text-[var(--clr-gold)]" /><span className="font-ui text-[12px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">Vault Settings</span>
+                </Link>
+                <Link to="/members" onClick={onClose} className="flex items-center gap-4 px-6 py-5 rounded-2xl border border-transparent hover:border-[var(--clr-gold)] hover:bg-white hover:shadow-md transition-all group">
+                  <TreeStructure size={22} className="text-[var(--clr-dust)] group-hover:text-[var(--clr-gold)]" /><span className="font-ui text-[12px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">Manage Kinship</span>
+                </Link>
+                <Link to="/logs" onClick={onClose} className="flex items-center gap-4 px-6 py-5 rounded-2xl border border-transparent hover:border-[var(--clr-gold)] hover:bg-white hover:shadow-md transition-all group">
+                  <Scroll size={22} className="text-[var(--clr-dust)] group-hover:text-[var(--clr-gold)]" /><span className="font-ui text-[12px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">Vault Registry</span>
+                </Link>
+              </>
+            )}
+            <Link to="/help" onClick={onClose} className="flex items-center gap-4 px-6 py-5 rounded-2xl border border-transparent hover:border-[var(--clr-gold)] hover:bg-white hover:shadow-md transition-all group">
+              <Compass size={22} className="text-[var(--clr-dust)] group-hover:text-[var(--clr-gold)]" /><span className="font-ui text-[12px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">Museum Guidebook</span>
+            </Link>
+          </div>
         </div>
+
       </motion.div>
     </div>
   );

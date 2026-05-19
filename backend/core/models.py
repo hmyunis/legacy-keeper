@@ -5,10 +5,11 @@ from django.utils.translation import gettext_lazy as _
 
 class User(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    username = None  # Remove username field
+    username = None
     email = models.EmailField(_('email address'), unique=True)
     full_name = models.CharField(max_length=255)
     is_verified = models.BooleanField(default=False)
+    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['full_name']
@@ -59,6 +60,8 @@ class ActionLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     action_type = models.CharField(max_length=50)
     description = models.TextField()
+    target_id = models.UUIDField(null=True, blank=True)
+    target_type = models.CharField(max_length=20, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class PushSubscription(models.Model):
@@ -67,3 +70,11 @@ class PushSubscription(models.Model):
     p256dh = models.CharField(max_length=200)
     auth = models.CharField(max_length=200)
     created_at = models.DateTimeField(auto_now_add=True)
+
+def get_accessible_vault_ids(vault_id):
+    from django.db.models import Q
+    pacts = LineagePact.objects.filter(
+        Q(requester_vault_id=vault_id) | Q(target_vault_id=vault_id),
+        status='ACCEPTED'
+    )
+    return [vault_id] + [p.target_vault_id if str(p.requester_vault_id) == str(vault_id) else p.requester_vault_id for p in pacts]

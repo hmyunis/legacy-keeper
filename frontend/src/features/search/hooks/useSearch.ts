@@ -3,8 +3,11 @@ import { searchService } from '../api/search.service';
 import { useAuthStore } from '../../../stores/authStore';
 
 export const useVibeSearch = () => {
-  const vaultId = useAuthStore((s) => s.activeVaultId);
   return useMutation({
-    mutationFn: (query: string) => searchService.vibeSearch(vaultId!, query),
+    mutationFn: (query: string) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return searchService.vibeSearch(vaultId, query);
+    },
   });
 };

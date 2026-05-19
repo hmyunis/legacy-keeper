@@ -6,11 +6,15 @@ import { AuthLayout } from '../components/auth/AuthLayout';
 import { Button } from '../components/ui/Button';
 import { useAuthStore } from '../stores/authStore';
 import { sileo } from 'sileo';
+import { useLogin, useRegister } from '../features/auth/hooks/useAuth';
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+
   const navigate = useNavigate();
   const redirectTo = useRouterState({
     select: (s) => {
@@ -18,35 +22,52 @@ export default function Auth() {
       return search.redirect;
     },
   });
+  
   const login = useAuthStore((s) => s.login);
+  const loginMutation = useLogin();
+  const registerMutation = useRegister();
+  
+  const isLoading = loginMutation.isPending || registerMutation.isPending;
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
 
-    const authPromise = new Promise((resolve) => setTimeout(resolve, 1500));
-
-    const p = new Promise((resolve) => setTimeout(resolve, 1500));
-
-    sileo.promise(p, {
-      loading: { title: isLogin ? "Accessing Vault..." : "Establishing Lineage..." },
-      success: () => {
-        login({
-          user: { id: '1', fullName: 'Guest Curator', email: 'guest@legacykeeper.app', role: 'curator' },
-          accessToken: 'demo-access',
-          refreshToken: 'demo-refresh',
-        });
-
-        const destination = isLogin ? "/dashboard" : "/onboarding";
-        void navigate({ to: destination });
-
-        return {
-          title: isLogin ? "Welcome Back" : "Welcome, Curator",
-          description: "Your session is now cryptographically secured."
-        };
-      },
-      error: { title: "Access Denied", description: "Invalid credentials provided." }
-    });
+    if (isLogin) {
+      sileo.promise(loginMutation.mutateAsync({ email, password }), {
+        loading: { title: "Accessing Vault..." },
+        success: (data) => {
+          login({
+            user: data.user,
+            accessToken: data.accessToken,
+            refreshToken: data.refreshToken,
+            activeVaultId: (data.user as any).vaultId,
+          });
+          const destination =
+            redirectTo ||
+            (data.user.is_verified
+              ? ((data.user as any).vaultId ? "/dashboard" : "/onboarding")
+              : "/verify-email");
+          void navigate({ to: destination });
+          return { title: "Welcome Back", description: "Your session is now cryptographically secured." };
+        },
+        error: { title: "Access Denied", description: "Invalid credentials provided." }
+      });
+    } else {
+      sileo.promise(registerMutation.mutateAsync({ email, password, fullName }), {
+        loading: { title: "Establishing Lineage..." },
+        success: (data) => {
+          login({
+            user: data.user,
+            accessToken: data.accessToken,
+            refreshToken: data.refreshToken,
+            activeVaultId: (data.user as any).vaultId,
+          });
+          void navigate({ to: '/verify-email' });
+          return { title: "Welcome, Curator", description: "Your account is created. Please verify your email." };
+        },
+        error: { title: "Registration Failed", description: "Email may already be in use." }
+      });
+    }
   };
 
   return (
@@ -65,18 +86,27 @@ export default function Auth() {
             <input
               type="text"
               placeholder="Full Name"
+              value={fullName}
+              onChange={e => setFullName(e.target.value)}
+              required
               className="w-full px-6 py-4 rounded-full bg-[rgba(0,0,0,0.3)] text-[var(--clr-linen)] font-ui text-[16px] placeholder-[var(--clr-fog)] outline-none border border-[rgba(184,143,91,0.3)] focus:border-[var(--clr-gold)] transition-all"
             />
           )}
           <input
             type="email"
             placeholder="Email Address"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            required
             className="w-full px-6 py-4 rounded-full bg-[rgba(0,0,0,0.3)] text-[var(--clr-linen)] font-ui text-[16px] placeholder-[var(--clr-fog)] outline-none border border-[rgba(184,143,91,0.3)] focus:border-[var(--clr-gold)] transition-all"
           />
           <div className="relative">
             <input
               type={showPassword ? "text" : "password"}
               placeholder="Password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              required
               className="w-full px-6 py-4 rounded-full bg-[rgba(0,0,0,0.3)] text-[var(--clr-linen)] font-ui text-[16px] placeholder-[var(--clr-fog)] outline-none border border-[rgba(184,143,91,0.3)] focus:border-[var(--clr-gold)] transition-all"
             />
             <button

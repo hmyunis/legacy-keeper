@@ -1,12 +1,15 @@
 import { useState, useRef, useMemo, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LockKey, Envelope, Sparkle, X, CalendarBlank, PenNib, Image as ImageIcon } from '@phosphor-icons/react';
+import { LockKey, Envelope, Sparkle, X, PenNib, Image as ImageIcon } from '@phosphor-icons/react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, Sparkles, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { sileo } from 'sileo';
+import { useAuthStore } from '../stores/authStore';
 import { Button } from '../components/ui/Button';
-import { useCapsules, useSealCapsule } from '../features/capsules/hooks/useCapsules';
+import { CustomDatePicker } from '../components/ui/CustomDatePicker';
+import { useCapsules, useSealCapsule, useUploadMemory } from '../features/capsules/hooks/useCapsules';
+import axiosClient from '../services/axiosClient';
 
 const ShatteringSeal = ({ isShattered }: { isShattered: boolean }) => {
   const fragments = useMemo(() => Array.from({ length: 25 }).map(() => ({
@@ -53,37 +56,44 @@ const ShatteringSeal = ({ isShattered }: { isShattered: boolean }) => {
   );
 };
 
-const FloatingMemories = ({ isOpened }: { isOpened: boolean }) => {
-  const texture1 = useTexture('https://images.unsplash.com/photo-1542038784456-1ea8e935640e?q=80&w=400');
-  const texture2 = useTexture('https://images.unsplash.com/photo-1582213782179-e0d53f98f2ca?q=80&w=400');
+const FloatingMemories = ({ isOpened, imageUrls }: { isOpened: boolean, imageUrls: string[] }) => {
   const groupRef = useRef<THREE.Group>(null);
+
+  const textures = useTexture(imageUrls.length > 0 ? imageUrls : ['/placeholder.jpg']);
 
   useFrame((state) => {
     if (isOpened && groupRef.current) {
-      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, 2.5, 0.02);
-      groupRef.current.position.z = THREE.MathUtils.lerp(groupRef.current.position.z, 1.5, 0.02);
-      groupRef.current.children[0].rotation.y = Math.sin(state.clock.elapsedTime * 0.5) * 0.2;
-      groupRef.current.children[1].rotation.y = Math.sin(state.clock.elapsedTime * 0.3 + 1) * 0.2;
+      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, 3.5, 0.03);
+      groupRef.current.position.z = THREE.MathUtils.lerp(groupRef.current.position.z, 2.0, 0.03);
+
+      groupRef.current.children.forEach((child, i) => {
+        child.rotation.y = Math.sin(state.clock.elapsedTime * 0.5 + i) * 0.15;
+        child.position.x = (i - (imageUrls.length - 1) / 2) * 1.8;
+        child.position.y = Math.sin(state.clock.elapsedTime * 0.8 + i) * 0.2;
+      });
     }
   });
 
-  if (!isOpened) return null;
+  if (!isOpened || imageUrls.length === 0) return null;
 
   return (
-    <group ref={groupRef} position={[0, -1, 0]}>
-      <mesh position={[-0.9, 0, 0]} rotation={[0, 0.2, 0.1]} castShadow>
-        <planeGeometry args={[1.4, 1.8]} />
-        <meshStandardMaterial map={texture1} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh position={[0.9, 0.5, -0.5]} rotation={[0, -0.2, -0.1]} castShadow>
-        <planeGeometry args={[1.4, 1.8]} />
-        <meshStandardMaterial map={texture2} side={THREE.DoubleSide} />
-      </mesh>
+    <group ref={groupRef} position={[0, -2, 0]}>
+      {imageUrls.map((url, i) => (
+        <mesh key={url}>
+          <planeGeometry args={[1.5, 2]} />
+          <meshStandardMaterial
+            map={Array.isArray(textures) ? textures[i] : textures}
+            side={THREE.DoubleSide}
+            transparent
+            opacity={1}
+          />
+        </mesh>
+      ))}
     </group>
   );
 };
 
-const Capsule3D = ({ status, onClick }: { status: 'idle' | 'shattering' | 'opened', onClick?: () => void }) => {
+const Capsule3D = ({ status, onClick, memoryUrls = [] }: { status: 'idle' | 'shattering' | 'opened', onClick?: () => void, memoryUrls?: string[] }) => {
   const topRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
 
@@ -125,7 +135,7 @@ const Capsule3D = ({ status, onClick }: { status: 'idle' | 'shattering' | 'opene
         </mesh>
 
         <ShatteringSeal isShattered={status !== 'idle'} />
-        <FloatingMemories isOpened={status === 'opened'} />
+        <FloatingMemories isOpened={status === 'opened'} imageUrls={memoryUrls} />
       </group>
     </Float>
   );
@@ -135,47 +145,77 @@ export default function Capsules() {
   const [view, setView] = useState<'gallery' | 'create' | 'unlocking'>('gallery');
   const [ceremonyStatus, setCeremonyStatus] = useState<'idle' | 'shattering' | 'opened'>('idle');
   const [createStep, setCreateStep] = useState(1);
+  const [activeCapsule, setActiveCapsule] = useState<any>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [capsuleTitle, setCapsuleTitle] = useState('');
   const [unlockDate, setUnlockDate] = useState('');
   const [capsuleMessage, setCapsuleMessage] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [isSealing, setIsSealing] = useState(false);
 
-  useCapsules();
+  const activeVaultId = useAuthStore(s => s.activeVaultId);
+  const currentUser = useAuthStore(s => s.currentUser);
+  const canContribute = currentUser?.role === 'ADMIN' || currentUser?.role === 'CONTRIBUTOR';
+  const { data: capsules = [] } = useCapsules();
   const sealMutation = useSealCapsule();
+  const uploadMutation = useUploadMemory();
 
-  const triggerUnlock = () => {
+  const triggerUnlock = (capsule: any) => {
+    setActiveCapsule(capsule);
     setView('unlocking');
     setCeremonyStatus('idle');
   };
 
-  const handleCeremonyClick = () => {
+  const handleCeremonyClick = async () => {
     if (ceremonyStatus === 'idle') {
       setCeremonyStatus('shattering');
-      setTimeout(() => {
+      setTimeout(async () => {
         setCeremonyStatus('opened');
-        sileo.success({ title: "Seal Broken", description: "The time-locked artifacts are now visible." });
+        if (activeCapsule) {
+          await axiosClient.post(`/vaults/${activeVaultId}/capsules/${activeCapsule.id}/open/`);
+        }
+        sileo.success({ title: "Seal Broken" });
       }, 600);
     }
   };
 
   const handleSealCapsule = async () => {
+    if (!unlockDate) {
+        sileo.error({ title: "Date Missing", description: "You must choose a future date for the seal to hold." });
+        return;
+    }
+
+    setIsSealing(true);
+
     try {
+      const memoryIds = [];
+      for (const file of selectedFiles) {
+         const res = await uploadMutation.mutateAsync({ file, title: `${capsuleTitle} Secret` }) as any;
+         memoryIds.push(res.memory_id);
+      }
+
       await sealMutation.mutateAsync({
-        title: capsuleTitle || "My Capsule",
-        unlock_date: unlockDate || "2028-12-01T00:00:00Z",
-        message: capsuleMessage
+        title: capsuleTitle || "Untitled Capsule",
+        unlock_date: new Date(unlockDate).toISOString(),
+        message: capsuleMessage,
+        memory_ids: memoryIds
       });
+
       setCreateStep(4);
+
       setTimeout(() => {
-        sileo.success({ title: "Vault Locked", description: "Capsule secured." });
+        sileo.success({ title: "Artifacts Isolated", description: "Contents are now cryptographically locked." });
         setView('gallery');
         setCreateStep(1);
-        setCapsuleTitle('');
-        setUnlockDate('');
-        setCapsuleMessage('');
-      }, 4500);
+        setSelectedFiles([]);
+        setPreviewUrls([]);
+      }, 5000);
     } catch (err) {
-      sileo.error({ title: "Error", description: "Failed to seal capsule." });
+      sileo.error({ title: "Seal Failed", description: "The timeline could not be secured." });
+    } finally {
+      setIsSealing(false);
     }
   };
 
@@ -185,7 +225,13 @@ export default function Capsules() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      sileo.success({ title: "Artifacts Queued", description: `${e.target.files.length} artifact(s) added to tray.` });
+      const files = Array.from(e.target.files);
+      setSelectedFiles(prev => [...prev, ...files]);
+
+      const urls = files.map(f => URL.createObjectURL(f));
+      setPreviewUrls(prev => [...prev, ...urls]);
+
+      sileo.success({ title: "Artifacts Queued", description: `${files.length} artifact(s) added to tray.` });
     }
   };
 
@@ -205,42 +251,52 @@ export default function Capsules() {
             <div className="text-center mb-16 pt-8">
               <h1 className="font-display font-semibold text-[var(--type-h1)] tracking-[0.03em] uppercase text-[var(--clr-linen)]">SEALED IN TIME</h1>
               <p className="font-script text-[44px] text-[var(--clr-gold)] leading-[0.5] mt-4">"Moments waiting to be opened"</p>
-              <Button variant="primary" className="mt-12 shadow-[var(--shadow-gold)]" onClick={() => setView('create')}>
-                + CREATE CAPSULE
-              </Button>
+              {canContribute && (
+                <Button variant="primary" className="mt-12 shadow-[var(--shadow-gold)]" onClick={() => setView('create')}>
+                  + CREATE CAPSULE
+                </Button>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              <div className="bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.2)] rounded-[var(--radius-lg)] p-8 text-center flex flex-col items-center justify-between min-h-[380px] relative overflow-hidden group hover:border-[rgba(184,143,91,0.5)] transition-all duration-500 shadow-[var(--shadow-md)]">
-                <div className="w-24 h-24 bg-[var(--clr-danger)] rounded-full flex items-center justify-center text-white mb-6 shadow-[0_0_32px_rgba(139,58,58,0.4)] group-hover:scale-110 transition-transform duration-500">
-                  <LockKey size={36} weight="fill" />
-                </div>
-                <div className="flex-1 flex flex-col justify-center">
-                  <h3 className="font-display font-bold text-[1.75rem] mb-2 text-[var(--clr-linen)] tracking-wide">Abebe's 80th</h3>
-                  <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-fog)] mb-6 font-bold">SEALED UNTIL DEC 2028</p>
-                </div>
-                <div className="w-full bg-[rgba(0,0,0,0.4)] rounded-[var(--radius-md)] p-4 border border-[rgba(255,255,255,0.05)]">
-                  <span className="font-display text-[2.5rem] text-[var(--clr-gold)] mr-2 leading-none">942</span>
-                  <span className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-fog)]">Days Left</span>
-                </div>
-              </div>
+              {capsules.map((capsule: any) => {
+                const isLapsed = new Date(capsule.unlock_date) <= new Date() && capsule.status === 'LOCKED';
+                const canOpen = capsule.status === 'OPENED' || isLapsed;
+                const daysRemaining = Math.max(0, Math.ceil((new Date(capsule.unlock_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
 
-              <div className="bg-[var(--clr-soot)] border-2 border-[var(--clr-gold)] rounded-[var(--radius-lg)] p-8 text-center flex flex-col items-center justify-between min-h-[380px] relative overflow-hidden group shadow-[var(--shadow-gold)]">
-                <div className="absolute inset-0 bg-[var(--clr-gold)] opacity-[0.03] animate-pulse" />
-                <div
-                  className="w-24 h-24 bg-[var(--clr-gold)] rounded-full flex items-center justify-center text-[var(--clr-charcoal)] mb-6 shadow-[0_0_40px_rgba(184,143,91,0.6)] cursor-pointer hover:scale-110 transition-transform duration-300 relative z-10"
-                  onClick={triggerUnlock}
-                >
-                  <Envelope size={36} weight="fill" />
-                </div>
-                <div className="flex-1 flex flex-col justify-center relative z-10">
-                  <h3 className="font-display font-bold text-[1.75rem] mb-2 text-[var(--clr-linen)] tracking-wide">Graduation Day</h3>
-                  <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-gold)] mb-6 font-bold animate-pulse">READY TO OPEN</p>
-                </div>
-                <Button variant="primary" className="w-full relative z-10" onClick={triggerUnlock}>
-                  REVEAL NOW
-                </Button>
-              </div>
+                return canOpen ? (
+                  <div key={capsule.id} className="bg-[var(--clr-soot)] border-2 border-[var(--clr-gold)] rounded-[var(--radius-lg)] p-8 text-center flex flex-col items-center justify-between min-h-[380px] relative overflow-hidden group shadow-[var(--shadow-gold)]">
+                    <div className="absolute inset-0 bg-[var(--clr-gold)] opacity-[0.03] animate-pulse" />
+                    <div
+                      className="w-24 h-24 bg-[var(--clr-gold)] rounded-full flex items-center justify-center text-[var(--clr-charcoal)] mb-6 shadow-[0_0_40px_rgba(184,143,91,0.6)] cursor-pointer hover:scale-110 transition-transform duration-300 relative z-10"
+                      onClick={() => triggerUnlock(capsule)}
+                    >
+                      <Envelope size={36} weight="fill" />
+                    </div>
+                    <div className="flex-1 flex flex-col justify-center relative z-10">
+                      <h3 className="font-display font-bold text-[1.75rem] mb-2 text-[var(--clr-linen)] tracking-wide">{capsule.title}</h3>
+                      <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-gold)] mb-6 font-bold animate-pulse">{capsule.status === 'OPENED' ? 'OPENED' : isLapsed ? 'READY TO OPEN' : 'READY TO OPEN'}</p>
+                    </div>
+                    <Button variant="primary" className="w-full relative z-10" onClick={() => triggerUnlock(capsule)}>
+                      REVEAL NOW
+                    </Button>
+                  </div>
+                ) : (
+                  <div key={capsule.id} className="bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.2)] rounded-[var(--radius-lg)] p-8 text-center flex flex-col items-center justify-between min-h-[380px] relative overflow-hidden group hover:border-[rgba(184,143,91,0.5)] transition-all duration-500 shadow-[var(--shadow-md)]">
+                    <div className="w-24 h-24 bg-[var(--clr-danger)] rounded-full flex items-center justify-center text-white mb-6 shadow-[0_0_32px_rgba(139,58,58,0.4)] group-hover:scale-110 transition-transform duration-500">
+                      <LockKey size={36} weight="fill" />
+                    </div>
+                    <div className="flex-1 flex flex-col justify-center">
+                      <h3 className="font-display font-bold text-[1.75rem] mb-2 text-[var(--clr-linen)] tracking-wide">{capsule.title}</h3>
+                      <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-fog)] mb-6 font-bold">SEALED UNTIL {new Date(capsule.unlock_date).toLocaleDateString()}</p>
+                    </div>
+                    <div className="w-full bg-[rgba(0,0,0,0.4)] rounded-[var(--radius-md)] p-4 border border-[rgba(255,255,255,0.05)]">
+                      <span className="font-display text-[2.5rem] text-[var(--clr-gold)] mr-2 leading-none">{daysRemaining}</span>
+                      <span className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-fog)]">Days Left</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </motion.div>
         )}
@@ -279,10 +335,11 @@ export default function Capsules() {
                         </div>
                         <div>
                           <label className="font-ui text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--clr-dust)] mb-2 block">Unlock Date</label>
-                          <div className="relative">
-                            <CalendarBlank size={20} className="absolute left-6 top-1/2 -translate-y-1/2 text-[var(--clr-gold)]" />
-                            <input type="date" className="w-full bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-[var(--radius-pill)] pl-14 pr-6 py-4 font-ui text-[16px] text-[var(--clr-ink)] outline-none focus:border-[var(--clr-gold)] shadow-inner" value={unlockDate} onChange={e => setUnlockDate(e.target.value)} />
-                          </div>
+                          <CustomDatePicker
+                            value={unlockDate}
+                            onChange={setUnlockDate}
+                            className="w-full"
+                          />
                         </div>
                       </div>
                     </div>
@@ -292,14 +349,16 @@ export default function Capsules() {
                         <h4 className="font-ui text-[12px] font-bold uppercase tracking-[0.15em] text-[var(--clr-ink)] flex items-center gap-2">
                           <ImageIcon size={18} className="text-[var(--clr-gold-dark)]"/> Contents Tray
                         </h4>
-                        <span className="font-ui text-[11px] text-[var(--clr-dust)]">2 Items Selected</span>
+                        <span className="font-ui text-[11px] text-[var(--clr-dust)]">{selectedFiles.length} Items Selected</span>
                       </div>
 
-                      <div className="flex-1 border-2 border-dashed border-[var(--clr-aged)] rounded-[var(--radius-md)] p-6 bg-[rgba(255,255,255,0.4)] flex flex-wrap gap-4 content-start">
-                        <div className="w-[120px] h-[120px] rounded-md shadow-md border border-[var(--clr-aged)] overflow-hidden relative group">
-                          <img src="https://images.unsplash.com/photo-1542038784456-1ea8e935640e?w=200" className="w-full h-full object-cover sepia-[0.3]" />
-                        </div>
-                        <div onClick={handleBrowseUpload} className="w-[120px] h-[120px] rounded-md border border-[var(--clr-aged)] bg-[var(--clr-linen)] flex flex-col items-center justify-center cursor-pointer hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)] transition-colors text-[var(--clr-dust)] shadow-sm">
+                      <div className="flex-1 border-2 border-dashed border-[var(--clr-aged)] rounded-[var(--radius-md)] p-6 bg-[rgba(255,255,255,0.4)] flex flex-wrap gap-4 content-start overflow-y-auto">
+                        {previewUrls.map((url, i) => (
+                          <div key={i} className="w-[120px] h-[120px] rounded-md shadow-md border border-[var(--clr-aged)] overflow-hidden relative group">
+                            <img src={url} className="w-full h-full object-cover sepia-[0.3]" />
+                          </div>
+                        ))}
+                        <div onClick={handleBrowseUpload} className="w-[120px] h-[120px] rounded-md border border-[var(--clr-aged)] bg-[var(--clr-linen)] flex flex-col items-center justify-center cursor-pointer hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)] transition-colors text-[var(--clr-dust)] shadow-sm shrink-0">
                           <span className="text-3xl mb-1">+</span>
                           <span className="font-ui text-[9px] uppercase tracking-widest font-bold">Browse</span>
                         </div>
@@ -334,7 +393,9 @@ export default function Capsules() {
 
                      <div className="mt-10 flex justify-between items-center">
                        <button onClick={() => setCreateStep(1)} className="font-ui text-[11px] uppercase font-bold text-[var(--clr-dust)] tracking-widest hover:text-[var(--clr-ink)]">← Go Back</button>
-                       <Button variant="primary" onClick={handleSealCapsule} className="px-12 shadow-[var(--shadow-gold)]">SEAL THE CAPSULE</Button>
+                       <Button variant="primary" onClick={handleSealCapsule} className="px-12 shadow-[var(--shadow-gold)]" disabled={isSealing}>
+                          {isSealing ? 'SEALING CAPSULE...' : 'SEAL THE CAPSULE'}
+                        </Button>
                      </div>
                   </motion.div>
                 )}
@@ -370,7 +431,9 @@ export default function Capsules() {
                        </motion.div>
 
                        <motion.h2 initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.5 }} className="font-display text-[3rem] text-[var(--clr-gold)] uppercase tracking-[0.2em] drop-shadow-md">Sealed.</motion.h2>
-                       <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 2.0 }} className="font-ui text-[12px] text-[var(--clr-fog)] uppercase tracking-widest mt-2">Locked until December 2028</motion.p>
+                       <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 2.0 }} className="font-ui text-[12px] text-[var(--clr-fog)] uppercase tracking-widest mt-2">
+                         {unlockDate ? `Locked until ${new Date(unlockDate).toLocaleDateString()}` : 'Capsule sealed'}
+                       </motion.p>
                     </div>
                   </motion.div>
                 )}
@@ -398,7 +461,7 @@ export default function Capsules() {
 
                 <Suspense fallback={null}>
                   <group position={[0, -1.5, 0]}>
-                    <Capsule3D status={ceremonyStatus} onClick={handleCeremonyClick} />
+                    <Capsule3D status={ceremonyStatus} onClick={handleCeremonyClick} memoryUrls={activeCapsule?.memory_urls || []} />
                   </group>
                 </Suspense>
               </Canvas>
@@ -406,8 +469,8 @@ export default function Capsules() {
 
             <div className="absolute top-10 left-10 right-10 z-20 flex justify-between items-start pointer-events-none">
                <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5, duration: 1 }}>
-                 <p className="font-script text-[56px] text-[var(--clr-gold)] leading-[0.5] mb-4">"A Message From The Past"</p>
-                 <p className="font-display text-[1.25rem] text-[var(--clr-linen)] tracking-widest uppercase">FROM ABEBE &middot; SEALED 1994</p>
+                 <p className="font-script text-[56px] text-[var(--clr-gold)] leading-[0.5] mb-4">"{activeCapsule?.message || 'A preserved message from your vault'}"</p>
+                 <p className="font-display text-[1.25rem] text-[var(--clr-linen)] tracking-widest uppercase">{activeCapsule?.title || 'Time Capsule'} &middot; SEALED {activeCapsule ? new Date(activeCapsule.unlock_date).getFullYear() : '----'}</p>
                </motion.div>
 
                <button onClick={() => setView('gallery')} className="pointer-events-auto text-[var(--clr-fog)] hover:text-[var(--clr-gold)] transition-colors">
@@ -438,7 +501,7 @@ export default function Capsules() {
 
                   <div className="relative z-10 w-full max-w-[800px] mx-auto text-center px-4 pb-[80px] pointer-events-auto">
                     <p className="font-display text-[1.75rem] text-[var(--clr-linen)] leading-[1.6] italic drop-shadow-lg font-medium">
-                      "To whoever finds this, know that this day was the happiest of my life. I hope you are all well, and that our family still gathers here in the garden."
+                      "{activeCapsule?.message || 'This capsule has been opened and its memories are now available in the gallery.'}"
                     </p>
                     <div className="mt-10 flex justify-center gap-4">
                       <Button variant="primary" onClick={() => {

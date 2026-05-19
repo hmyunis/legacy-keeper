@@ -2,20 +2,27 @@ import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Vault, UserPlus, CheckCircle, ArrowRight, Camera } from '@phosphor-icons/react';
 import { Button } from '../components/ui/Button';
+import { CustomSelect } from '../components/ui/CustomSelect';
 import { useNavigate } from '@tanstack/react-router';
 import { sileo } from 'sileo';
 import { useInitVault, useFirstRelative } from '../features/auth/hooks/useAuth';
 import { useAuthStore } from '../stores/authStore';
+import { useUploadMemory } from '../features/vault/hooks/useVault';
 
 export default function Onboarding() {
   const [step, setStep] = useState(1);
   const [vaultName, setVaultName] = useState('');
   const [relativeName, setRelativeName] = useState('');
+  const [birthYear, setBirthYear] = useState('');
+  const [relationship, setRelationship] = useState('Myself');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const initVaultMutation = useInitVault();
   const firstRelativeMutation = useFirstRelative();
+  const uploadMutation = useUploadMemory();
   const setAuthStore = useAuthStore(s => s.login);
   const { currentUser, accessToken, refreshToken } = useAuthStore();
 
@@ -48,14 +55,27 @@ export default function Onboarding() {
         await sileo.promise(firstRelativeMutation.mutateAsync({
           vaultId,
           name: relativeName,
-          birthYear: '1900',
-          relationship: 'Myself'
+          birthYear: birthYear || '1900',
+          relationship: relationship || 'Myself'
         }), {
           loading: { title: "Grafting Lineage..." },
           success: { title: "Lineage Rooted" },
           error: { title: "Failed to save relative" }
         });
         setStep(3);
+        return;
+      }
+
+      if (step === 3) {
+        if (selectedFile) {
+          try {
+            await uploadMutation.mutateAsync({ file: selectedFile });
+            sileo.info({ title: "Processing", description: "Image is being processed."});
+          } catch (err) {
+            console.error(err);
+          }
+        }
+        setStep(4);
         return;
       }
 
@@ -68,6 +88,7 @@ export default function Onboarding() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setSelectedFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setPreviewUrl(reader.result as string);
@@ -101,10 +122,10 @@ export default function Onboarding() {
                 type="text"
                 value={vaultName}
                 onChange={(e) => setVaultName(e.target.value)}
-                placeholder="e.g. The Kebede Family Museum"
+                placeholder="e.g. The Alemu Family Museum"
                 className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-8 py-5 text-xl font-ui text-center outline-none focus:border-[var(--clr-gold)] shadow-[var(--shadow-inset)]"
               />
-              <Button variant="primary" onClick={nextStep} className="w-full py-5">CONTINUE <ArrowRight /></Button>
+              <Button variant="primary" onClick={nextStep} className="w-full py-5" disabled={initVaultMutation.isPending}>CONTINUE <ArrowRight /></Button>
             </motion.div>
           )}
 
@@ -117,15 +138,17 @@ export default function Onboarding() {
               <div className="space-y-4 text-left">
                 <input type="text" value={relativeName} onChange={(e) => setRelativeName(e.target.value)} placeholder="Full Legal Name" className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 font-ui outline-none focus:border-[var(--clr-gold)]" />
                 <div className="grid grid-cols-2 gap-4">
-                   <input type="text" placeholder="Birth Year" className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 font-ui outline-none" />
-                   <select className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 font-ui outline-none appearance-none">
+                   <input type="text" value={birthYear} onChange={e => setBirthYear(e.target.value)} placeholder="Birth Year" className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 font-ui outline-none focus:border-[var(--clr-gold)]" />
+                   <CustomSelect value={relationship} onChange={e => setRelationship(e.target.value)} className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 font-ui outline-none focus:border-[var(--clr-gold)]">
                      <option>Relationship...</option>
-                     <option>Myself</option>
-                     <option>Parent</option>
-                   </select>
+                     <option value="Myself">Myself</option>
+                     <option value="Parent">Parent</option>
+                     <option value="Child">Child</option>
+                     <option value="Spouse">Spouse</option>
+                   </CustomSelect>
                 </div>
               </div>
-              <Button variant="primary" onClick={nextStep} className="w-full py-5">ESTABLISH LINEAGE</Button>
+              <Button variant="primary" onClick={nextStep} className="w-full py-5" disabled={firstRelativeMutation.isPending}>ESTABLISH LINEAGE</Button>
             </motion.div>
           )}
 
@@ -151,8 +174,8 @@ export default function Onboarding() {
                 )}
                 <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept="image/*" />
               </div>
-              <Button variant="primary" onClick={nextStep} className="w-full py-5">
-                {previewUrl ? 'PRESERVE & FINISH' : 'SKIP & FINISH'}
+              <Button variant="primary" onClick={nextStep} className="w-full py-5" disabled={uploadMutation.isPending}>
+                {previewUrl ? (uploadMutation.isPending ? 'PROCESSING...' : 'PRESERVE & FINISH') : 'SKIP & FINISH'}
               </Button>
             </motion.div>
           )}

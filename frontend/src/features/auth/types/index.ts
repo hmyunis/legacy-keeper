@@ -15,6 +15,9 @@ export interface AuthResponse {
     email: string;
     fullName: string;
     role: string;
+    is_verified?: boolean;
+    vaultId?: string;
+    avatar?: string;
   };
   accessToken: string;
   refreshToken: string;

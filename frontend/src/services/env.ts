@@ -10,4 +10,5 @@ const normalizeApiBaseUrl = (value: string) => {
 
 export const appEnv = {
   apiBaseUrl: normalizeApiBaseUrl(readEnv('VITE_API_BASE_URL')),
+  vapidPublicKey: readEnv('VITE_VAPID_PUBLIC_KEY'),
 };

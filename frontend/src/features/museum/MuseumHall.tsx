@@ -27,13 +27,18 @@ export default function MuseumHall({ onDecadeChange, onSelectExhibit, exhibits =
   useFrame(() => {
     if (!groupRef.current) return;
 
-    const zOffset = scroll.offset * 14;
+    const zOffset = scroll.offset * (exhibits.length * 2);
     groupRef.current.position.z = zOffset;
 
-    if (zOffset < 2) onDecadeChange('1950s');
-    else if (zOffset < 6) onDecadeChange('1960s');
-    else if (zOffset < 10) onDecadeChange('1970s');
-    else onDecadeChange('1980s');
+    const activeExhibit = exhibits.find(ex => {
+      const worldZ = ex.position[2] + zOffset;
+      return worldZ > -2 && worldZ < 2;
+    });
+
+    if (activeExhibit && activeExhibit.year) {
+      const decade = `${activeExhibit.year.substring(0, 3)}0s`;
+      onDecadeChange(decade);
+    }
   });
 
   return (

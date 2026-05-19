@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import * as d3 from 'd3-hierarchy';
 import { motion } from 'framer-motion';
-import { User, Plus } from '@phosphor-icons/react';
+import { User, Plus, Sparkle } from '@phosphor-icons/react';
 
 export interface TreeNode {
   id: string;
@@ -11,6 +11,7 @@ export interface TreeNode {
   deathYear?: string;
   invisible?: boolean;
   isGhost?: boolean;
+  biography?: string;
 }
 
 export interface TreeEdge {
@@ -47,9 +48,19 @@ export const TreeCanvas = ({ nodes, edges, onNodeClick, selectedNodeId, isEditMo
       });
     }
 
+    const virtualRootId = "virtual-museum-root";
+    const forestNodes = [
+      { id: virtualRootId, name: "", role: "", invisible: true },
+      ...processedNodes
+    ];
+
     const root = d3.stratify<TreeNode>()
       .id((d) => d.id)
-      .parentId((d) => processedEdges.find((e) => e.to === d.id)?.from || null)(processedNodes);
+      .parentId((d) => {
+        const parent = processedEdges.find((e) => e.to === d.id)?.from;
+        if (!parent && d.id !== virtualRootId) return virtualRootId;
+        return parent || null;
+      })(forestNodes);
 
     const layout = d3.tree<TreeNode>().nodeSize([240, 260])(root);
     const visibleNodes = layout.descendants().filter(d => !d.data.invisible);
@@ -151,7 +162,12 @@ export const TreeCanvas = ({ nodes, edges, onNodeClick, selectedNodeId, isEditMo
                   <div className={`mt-4 text-center px-4 py-2 rounded-[var(--radius-sm)] border backdrop-blur-md transition-all duration-300 ${
                     isSelected ? 'bg-[var(--clr-charcoal)] border-[var(--clr-gold)] text-[var(--clr-linen)] shadow-[var(--shadow-gold)] scale-110 z-20' : 'bg-[rgba(247,244,239,0.85)] border-[var(--clr-aged)] text-[var(--clr-ink)] shadow-[var(--shadow-sm)]'
                   }`}>
-                    <h3 className="font-display font-bold text-[15px] leading-none tracking-wide whitespace-nowrap">{node.data.name}</h3>
+                    <div className="flex items-center justify-center gap-1">
+                      <h3 className="font-display font-bold text-[15px] leading-none tracking-wide whitespace-nowrap">{node.data.name}</h3>
+                      {node.data.biography && (
+                        <Sparkle size={10} weight="fill" className="text-[var(--clr-gold)]" />
+                      )}
+                    </div>
                     <p className={`font-ui text-[9px] uppercase tracking-widest mt-1.5 ${isSelected ? 'text-[var(--clr-gold)]' : 'text-[var(--clr-dust)]'}`}>{node.data.role}</p>
                   </div>
                 </>

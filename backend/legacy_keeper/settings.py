@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from datetime import timedelta
+from urllib.parse import urlsplit
 from decouple import config, Csv
 import dj_database_url
 
@@ -111,9 +112,10 @@ SIMPLE_JWT = {
 }
 
 USE_MINIO = config('USE_MINIO', default=False, cast=bool)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 if USE_MINIO:
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
     AWS_ACCESS_KEY_ID = config('MINIO_ACCESS_KEY')
     AWS_SECRET_ACCESS_KEY = config('MINIO_SECRET_KEY')
     AWS_STORAGE_BUCKET_NAME = config('MINIO_BUCKET_NAME')
@@ -121,10 +123,49 @@ if USE_MINIO:
     AWS_S3_REGION_NAME = 'us-east-1'
     AWS_S3_FILE_OVERWRITE = False
     AWS_DEFAULT_ACL = 'public-read'
+    AWS_QUERYSTRING_AUTH = False
+    AWS_S3_ADDRESSING_STYLE = 'path'
+
+    minio_public_media_url = config('MINIO_PUBLIC_MEDIA_URL', default='http://localhost/media').rstrip('/')
+    parsed_public_media = urlsplit(minio_public_media_url)
+    if parsed_public_media.scheme and parsed_public_media.netloc:
+        AWS_S3_URL_PROTOCOL = f"{parsed_public_media.scheme}:"
+        AWS_S3_CUSTOM_DOMAIN = f"{parsed_public_media.netloc}{parsed_public_media.path}"
+
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
+            'OPTIONS': {
+                'access_key': AWS_ACCESS_KEY_ID,
+                'secret_key': AWS_SECRET_ACCESS_KEY,
+                'bucket_name': AWS_STORAGE_BUCKET_NAME,
+                'endpoint_url': AWS_S3_ENDPOINT_URL,
+                'region_name': AWS_S3_REGION_NAME,
+                'file_overwrite': AWS_S3_FILE_OVERWRITE,
+                'default_acl': AWS_DEFAULT_ACL,
+                'querystring_auth': AWS_QUERYSTRING_AUTH,
+                'addressing_style': AWS_S3_ADDRESSING_STYLE,
+                'custom_domain': AWS_S3_CUSTOM_DOMAIN if 'AWS_S3_CUSTOM_DOMAIN' in locals() else None,
+                'url_protocol': AWS_S3_URL_PROTOCOL if 'AWS_S3_URL_PROTOCOL' in locals() else 'http:',
+            },
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
 else:
-    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
-    MEDIA_URL = '/media/'
-    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+            'OPTIONS': {
+                'location': MEDIA_ROOT,
+                'base_url': MEDIA_URL,
+            },
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
 
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
@@ -135,3 +176,5 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+OLLAMA_URL = config('OLLAMA_URL', default='http://host.docker.internal:11434')

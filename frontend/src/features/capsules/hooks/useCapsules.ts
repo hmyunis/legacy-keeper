@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { capsulesService } from '../api/capsules.service';
+import { vaultService } from '../../vault/api/vault.service';
 import { useAuthStore } from '../../../stores/authStore';
 
 export const useCapsules = () => {
@@ -17,5 +18,12 @@ export const useSealCapsule = () => {
   return useMutation({
     mutationFn: (data: any) => capsulesService.sealCapsule(vaultId!, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['capsules'] }),
+  });
+};
+
+export const useUploadMemory = () => {
+  const vaultId = useAuthStore(s => s.activeVaultId);
+  return useMutation({
+    mutationFn: ({ file, title }: { file: File; title?: string }) => vaultService.uploadMemory(vaultId!, file, title),
   });
 };

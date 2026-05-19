@@ -13,11 +13,13 @@ export const useFamilyTreeData = () => {
 
 export const useGraftBranch = () => {
   const queryClient = useQueryClient();
-  const vaultId = useAuthStore((s) => s.activeVaultId);
 
   return useMutation({
-    mutationFn: (data: { parentId: string | null; name: string; role: string }) =>
-      familyTreeService.graftBranch(vaultId!, data),
+    mutationFn: (data: { parentId: string | null; name: string; role: string; birthYear?: string; deathYear?: string }) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return familyTreeService.graftBranch(vaultId, data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['familyTree'] });
     },

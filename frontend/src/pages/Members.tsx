@@ -3,14 +3,39 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { UsersThree, UserPlus, LinkBreak, ShieldCheck, ArrowsMerge } from '@phosphor-icons/react';
 import { sileo } from 'sileo';
 import { Button } from '../components/ui/Button';
+import { CustomSelect } from '../components/ui/CustomSelect';
 import { useMembers, useGovernanceActions } from '../features/governance/hooks/useGovernance';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import axiosClient from '../services/axiosClient';
+import { extractList } from '../services/responseExtractor';
+import { useAuthStore } from '../stores/authStore';
 
 export default function Members() {
   const [showInvite, setShowInvite] = useState(false);
   const [showPactModal, setShowPactModal] = useState(false);
+  const queryClient = useQueryClient();
+  const activeVaultId = useAuthStore((s) => s.activeVaultId);
 
   const { data: members = [] } = useMembers();
   const { inviteMember, removeMember, requestPact } = useGovernanceActions();
+
+  const { data: allPacts = [] } = useQuery({
+    queryKey: ['allPacts', activeVaultId],
+    queryFn: () => axiosClient.get(`/vaults/${activeVaultId}/pacts/`).then(extractList),
+    enabled: !!activeVaultId,
+  });
+
+  const incomingPacts = allPacts.filter((p: any) => p.is_incoming);
+  const outgoingPacts = allPacts.filter((p: any) => !p.is_incoming);
+
+  const handlePactResponse = async (pactId: string, action: 'ACCEPT' | 'REJECT') => {
+    await sileo.promise(axiosClient.post(`/vaults/${activeVaultId}/pacts/${pactId}/action/`, { action }), {
+      loading: { title: "Processing Pact..." },
+      success: { title: "Pact Updated" },
+      error: { title: "Failed to Update Pact" }
+    });
+    queryClient.invalidateQueries({ queryKey: ['allPacts'] });
+  };
 
   const handleInviteSubmit = async (e: any) => {
     e.preventDefault();
@@ -57,6 +82,38 @@ export default function Members() {
           </div>
         </header>
 
+        {incomingPacts.length > 0 && (
+          <div className="mb-8 p-6 bg-[var(--clr-gold-muted)] border border-[var(--clr-gold)] rounded-2xl">
+            <h4 className="font-display font-bold text-[var(--clr-gold-dark)] mb-4 uppercase tracking-widest">Incoming Requests</h4>
+            {incomingPacts.map((p: any) => (
+              <div key={p.id} className="flex justify-between items-center bg-white/50 p-4 rounded-xl">
+                <p className="font-ui text-sm text-[var(--clr-ink)]">Request to merge trees from <strong>{p.requester_name}</strong></p>
+                <div className="flex gap-2">
+                  <Button variant="primary" className="py-2 px-4 text-[10px]" onClick={() => handlePactResponse(p.id, 'ACCEPT')}>ACCEPT</Button>
+                  <Button variant="ghost" className="py-2 px-4 text-[10px]" onClick={() => handlePactResponse(p.id, 'REJECT')}>DECLINE</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {outgoingPacts.length > 0 && (
+          <div className="mb-12 p-6 bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-2xl">
+            <h4 className="font-ui text-[10px] font-black text-[var(--clr-dust)] mb-4 uppercase tracking-[0.2em]">Sent Requests (Awaiting Response)</h4>
+            {outgoingPacts.map((p: any) => (
+              <div key={p.id} className="flex justify-between items-center opacity-70">
+                <p className="font-ui text-sm text-[var(--clr-ink)]">Request sent to <strong>{p.target_vault_name}</strong></p>
+                <button
+                  onClick={() => handlePactResponse(p.id, 'REJECT')}
+                  className="text-[10px] font-bold text-[var(--clr-danger)] uppercase hover:underline"
+                >
+                  Revoke
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="space-y-4">
           {members.map((member: any, i: number) => (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }} key={member.id} className="bg-[var(--clr-linen)] border border-[var(--clr-aged)] rounded-2xl p-5 flex items-center gap-6 group hover:border-[var(--clr-gold)] transition-all">
@@ -68,7 +125,7 @@ export default function Members() {
               <div className="flex items-center gap-6">
                 <span className={`font-ui text-[10px] font-black tracking-widest px-3 py-1 rounded-full border ${member.role === 'ADMIN' ? 'bg-[var(--clr-gold)] text-white border-[var(--clr-gold)]' : 'bg-[var(--clr-paper)] text-[var(--clr-dust)] border-[var(--clr-aged)]'}`}>{member.role}</span>
                 {member.role !== 'ADMIN' && (
-                  <button onClick={() => handleRemoveMember(member.user.id, member.name)} className="text-[var(--clr-dust)] hover:text-[var(--clr-danger)] opacity-0 group-hover:opacity-100 transition-all"><LinkBreak size={20} /></button>
+                  <button onClick={() => handleRemoveMember(member.id, member.name)} className="text-[var(--clr-dust)] hover:text-[var(--clr-danger)] opacity-0 group-hover:opacity-100 transition-all"><LinkBreak size={20} /></button>
                 )}
               </div>
             </motion.div>
@@ -83,10 +140,10 @@ export default function Members() {
                 <h2 className="font-display text-2xl uppercase tracking-widest mb-6">Invite Relative</h2>
                 <form onSubmit={handleInviteSubmit} className="space-y-4">
                   <input required type="email" name="email" placeholder="Email Address" className="w-full bg-[var(--clr-linen)] border border-[var(--clr-aged)] rounded-full px-6 py-4 outline-none focus:border-[var(--clr-gold)]" />
-                  <select name="role" className="w-full bg-[var(--clr-linen)] border border-[var(--clr-aged)] rounded-full px-6 py-4 outline-none focus:border-[var(--clr-gold)] appearance-none">
+                  <CustomSelect name="role" className="w-full bg-[var(--clr-linen)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 outline-none focus:border-[var(--clr-gold)]">
                     <option value="VIEWER">Viewer (See only)</option>
                     <option value="CONTRIBUTOR">Contributor (Upload & Label)</option>
-                  </select>
+                  </CustomSelect>
                   <Button variant="primary" type="submit" className="w-full" disabled={inviteMember.isPending}>
                     {inviteMember.isPending ? 'SENDING...' : 'SEND INVITATION'}
                   </Button>
