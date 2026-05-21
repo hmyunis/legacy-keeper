@@ -1,16 +1,11 @@
-from decouple import config
 from maileroo import MailerooClient, EmailAddress
 import logging
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-USE_MAILEROO = config('USE_MAILEROO', default=False, cast=bool)
-MAILEROO_API_KEY = config('MAILEROO_API_KEY', default='')
-DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='museum@yourfamily.com')
-DEFAULT_FROM_NAME = config('DEFAULT_FROM_NAME', default='LegacyKeeper Museum')
-
 def send_notification_email(subject: str, html_content: str, plain_content: str, to_email: str, to_name: str = None):
-    if not USE_MAILEROO:
+    if not settings.USE_MAILEROO:
         print("\n" + "="*50)
         print(f"EMAIL INTERCEPTED (DEV MODE) -> {to_email}")
         print(f"Subject: {subject}")
@@ -20,10 +15,10 @@ def send_notification_email(subject: str, html_content: str, plain_content: str,
         return "local-console-intercept"
 
     try:
-        client = MailerooClient(MAILEROO_API_KEY)
+        client = MailerooClient(settings.MAILEROO_API_KEY)
 
         email_data = {
-            "from": EmailAddress(DEFAULT_FROM_EMAIL, DEFAULT_FROM_NAME),
+            "from": EmailAddress(settings.DEFAULT_FROM_EMAIL, settings.DEFAULT_FROM_NAME),
             "to": [EmailAddress(to_email, to_name)],
             "subject": subject,
             "html": html_content,

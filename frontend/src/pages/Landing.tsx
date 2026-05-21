@@ -9,12 +9,13 @@
 import { Link, useNavigate } from '@tanstack/react-router';
 import { Button } from '../components/ui/Button';
 import { TornEdge } from '../components/ui/TornEdge';
-import { motion } from 'framer-motion';
-import { Image, TreeStructure, TextAa, MagicWand } from '@phosphor-icons/react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Image, TreeStructure, TextAa, MagicWand, SignOut, Vault } from '@phosphor-icons/react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Float, Sparkles } from '@react-three/drei';
-import { useRef, useMemo, Suspense, type ReactNode, type CSSProperties } from 'react';
+import { useRef, useMemo, Suspense, useState, type ReactNode, type CSSProperties } from 'react';
 import * as THREE from 'three';
+import { useAuthStore } from '../stores/authStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
@@ -679,6 +680,8 @@ function StatPillar({ value, label }: { value: string; label: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function Landing() {
+  const currentUser = useAuthStore((s) => s.currentUser);
+
   return (
     <>
       {/* ════════════════════════════════════════════════════════════════════
@@ -801,24 +804,41 @@ export default function Landing() {
             transition={{ delay: 1.15, duration: 0.9 }}
             className="flex flex-wrap justify-center gap-5 mb-16"
           >
-            <Link to="/auth">
-              <Button
-                variant="primary"
-                className="text-[13px] px-11 py-[15px]"
-                style={{ boxShadow: '0 6px 28px rgba(184,143,91,0.40), 0 2px 8px rgba(184,143,91,0.18)' }}
-              >
-                START YOUR VAULT
-              </Button>
-            </Link>
-            <Link to="/museum">
-              <Button
-                variant="ghost"
-                className="text-[13px] px-11 py-[15px]"
-                style={{ backdropFilter: 'blur(12px)', background: 'rgba(184,143,91,0.07)' }}
-              >
-                ENTER MUSEUM →
-              </Button>
-            </Link>
+            {currentUser ? (
+              <>
+                <AuthenticatedHeroAccess />
+                <Link to="/museum">
+                  <Button
+                    variant="ghost"
+                    className="text-[13px] px-11 py-[15px]"
+                    style={{ backdropFilter: 'blur(12px)', background: 'rgba(184,143,91,0.07)' }}
+                  >
+                    ENTER MUSEUM →
+                  </Button>
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link to="/auth">
+                  <Button
+                    variant="primary"
+                    className="text-[13px] px-11 py-[15px]"
+                    style={{ boxShadow: '0 6px 28px rgba(184,143,91,0.40), 0 2px 8px rgba(184,143,91,0.18)' }}
+                  >
+                    START YOUR VAULT
+                  </Button>
+                </Link>
+                <Link to="/museum">
+                  <Button
+                    variant="ghost"
+                    className="text-[13px] px-11 py-[15px]"
+                    style={{ backdropFilter: 'blur(12px)', background: 'rgba(184,143,91,0.07)' }}
+                  >
+                    ENTER MUSEUM →
+                  </Button>
+                </Link>
+              </>
+            )}
           </motion.div>
 
           {/* Stats row */}
@@ -1103,5 +1123,54 @@ export default function Landing() {
         </div>
       </section>
     </>
+  );
+}
+
+function AuthenticatedHeroAccess() {
+  const [open, setOpen] = useState(false);
+  const { currentUser, logout } = useAuthStore();
+  const navigate = useNavigate();
+  const avatarUrl = currentUser?.avatar || `https://ui-avatars.com/api/?name=${(currentUser?.fullName || 'Curator').replace(/ /g, '+')}&background=B88F5B&color=fff`;
+
+  return (
+    <div className="relative">
+      <motion.button
+        whileHover={{ scale: 1.04 }}
+        whileTap={{ scale: 0.97 }}
+        onClick={() => setOpen((value) => !value)}
+        className="flex items-center gap-4 rounded-full border border-[rgba(184,143,91,0.5)] bg-[rgba(20,18,17,0.72)] py-2 pl-2 pr-5 text-left shadow-[0_18px_48px_rgba(0,0,0,0.34)] backdrop-blur-md transition-colors hover:border-[#D4A96A] cursor-pointer"
+      >
+        <img src={avatarUrl} alt="Curator" className="w-12 h-12 rounded-full border border-[#B88F5B] object-cover" />
+        <span className="flex flex-col">
+          <span className="font-ui text-[9px] font-black uppercase tracking-[0.2em] text-[#B88F5B]">Welcome back</span>
+          <span className="max-w-[180px] truncate font-display text-[16px] uppercase tracking-wide text-[#F7F4EF]">{currentUser?.fullName || 'Curator'}</span>
+        </span>
+      </motion.button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.98 }}
+            className="absolute left-1/2 top-[calc(100%+12px)] z-30 w-64 -translate-x-1/2 overflow-hidden rounded-2xl border border-[rgba(184,143,91,0.35)] bg-[rgba(20,18,17,0.94)] py-2 text-left shadow-2xl backdrop-blur-xl"
+          >
+            <Link to="/dashboard" className="flex items-center gap-3 px-5 py-3 font-ui text-[11px] font-bold uppercase tracking-widest text-[#F7F4EF] transition-colors hover:bg-[#B88F5B] hover:text-[#141211]">
+              <Vault size={16} weight="fill" /> Grand Hall
+            </Link>
+            <button
+              onClick={() => {
+                logout();
+                setOpen(false);
+                navigate({ to: '/auth' });
+              }}
+              className="flex w-full items-center gap-3 px-5 py-3 text-left font-ui text-[11px] font-bold uppercase tracking-widest text-[#D89A9A] transition-colors hover:bg-[#8B3A3A] hover:text-white"
+            >
+              <SignOut size={16} weight="bold" /> Depart Museum
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

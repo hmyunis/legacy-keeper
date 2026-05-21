@@ -25,3 +25,5 @@ redis_data/
 # OS
 .DS_Store
 Thumbs.db
+
+celerybeat-schedule*

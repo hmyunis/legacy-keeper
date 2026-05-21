@@ -178,3 +178,13 @@ CELERY_TASK_SERIALIZER = 'json'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 OLLAMA_URL = config('OLLAMA_URL', default='http://host.docker.internal:11434')
+OLLAMA_MODEL = config('OLLAMA_MODEL', default='llama3.1:8b')
+
+USE_MAILEROO = config('USE_MAILEROO', default=False, cast=bool)
+MAILEROO_API_KEY = config('MAILEROO_API_KEY', default='')
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='museum@yourfamily.com')
+DEFAULT_FROM_NAME = config('DEFAULT_FROM_NAME', default='LegacyKeeper Museum')
+
+VAPID_PUBLIC_KEY = config('VAPID_PUBLIC_KEY', default='')
+VAPID_PRIVATE_KEY = config('VAPID_PRIVATE_KEY', default='')
+VAPID_ADMIN_EMAIL = config('VAPID_ADMIN_EMAIL', default=DEFAULT_FROM_EMAIL)

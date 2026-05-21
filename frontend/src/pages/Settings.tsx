@@ -70,7 +70,7 @@ export default function Settings() {
     sileo.promise(updateProfileMutation.mutateAsync({ fullName, email }), {
       loading: { title: "Saving..." },
       success: (res) => {
-        login({ user: res.data, accessToken: useAuthStore.getState().accessToken!, refreshToken: useAuthStore.getState().refreshToken!, activeVaultId });
+        login({ user: { ...currentUser, ...res.data }, accessToken: useAuthStore.getState().accessToken!, refreshToken: useAuthStore.getState().refreshToken!, activeVaultId });
         return { title: "Identity Updated", description: "Your profile has been saved." };
       },
       error: { title: "Failed to update profile" }
@@ -210,7 +210,7 @@ export default function Settings() {
                           {
                             loading: { title: "Uploading Identity..." },
                             success: (res) => {
-                              login({ user: res.data, accessToken: useAuthStore.getState().accessToken!, refreshToken: useAuthStore.getState().refreshToken!, activeVaultId });
+                              login({ user: { ...currentUser, ...res.data }, accessToken: useAuthStore.getState().accessToken!, refreshToken: useAuthStore.getState().refreshToken!, activeVaultId });
                               return { title: "Avatar Updated" };
                             },
                             error: { title: "Upload Failed" }

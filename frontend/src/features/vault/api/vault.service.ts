@@ -7,6 +7,13 @@ export interface MemoryFilters {
   decades: string[];
 }
 
+export interface MemoryCollection {
+  id: string | null;
+  name: string;
+  memory_count: number;
+  created_at?: string | null;
+}
+
 export interface MemoryQueryParams {
   q?: string;
   cluster?: string;
@@ -31,7 +38,21 @@ export const vaultService = {
     return extractData<MemoryFilters>(response);
   },
 
-  uploadMemory: async (vaultId: string, file: File, title?: string): Promise<{ task_id: string, memory_id: string }> => {
+  getCollections: async (vaultId: string): Promise<MemoryCollection[]> => {
+    const response = await axiosClient.get(`/vaults/${vaultId}/memories/collections/`);
+    return extractList<MemoryCollection>(response);
+  },
+
+  createCollection: async (vaultId: string, name: string): Promise<MemoryCollection> => {
+    const response = await axiosClient.post(`/vaults/${vaultId}/memories/collections/`, { name });
+    return response.data;
+  },
+
+  deleteCollection: async (vaultId: string, collectionId: string): Promise<void> => {
+    await axiosClient.delete(`/vaults/${vaultId}/memories/collections/${collectionId}/`);
+  },
+
+  uploadMemory: async (vaultId: string, file: File, title?: string): Promise<{ task_id: string | null, memory_id: string }> => {
     const formData = new FormData();
     formData.append('file', file);
     if (title) formData.append('title', title);
@@ -42,6 +63,11 @@ export const vaultService = {
 
   updateMemory: async (vaultId: string, memoryId: string, data: Partial<VaultMemory>): Promise<VaultMemory> => {
     const response = await axiosClient.patch(`/vaults/${vaultId}/memories/${memoryId}/`, data);
+    return response.data;
+  },
+
+  decideSuggestion: async (vaultId: string, memoryId: string, field: string, action: 'accept' | 'reject'): Promise<VaultMemory> => {
+    const response = await axiosClient.post(`/vaults/${vaultId}/memories/${memoryId}/suggestions/${field}/`, { action });
     return response.data;
   },
 

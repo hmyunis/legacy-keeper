@@ -10,18 +10,27 @@ import * as THREE from 'three';
 import { useAuthStore } from '../stores/authStore';
 import { Button } from '../components/ui/Button';
 import { CustomDatePicker } from '../components/ui/CustomDatePicker';
+import { Tooltip } from '../components/ui/Tooltip';
+import { AiMarker } from '../components/ui/AiMarker';
 import MemoryCard from '../components/vault/MemoryCard';
 import MemoryDetailModal from '../features/vault/MemoryDetailModal';
 import { Breadcrumbs } from '../components/ui/Breadcrumbs';
-import { useUploadMemory, useVaultClusters, useFilteredMemories, useMemoryFilters, useUpdateMemory } from '../features/vault/hooks/useVault';
+import { useMemorySuggestionDecision, useUploadMemory, useVaultClusters, useFilteredMemories, useMemoryFilters, useUpdateMemory } from '../features/vault/hooks/useVault';
 import { useDashboardSummary } from '../features/dashboard/hooks/useDashboard';
 import type { VaultMemory } from '../features/vault/types';
 import { pollTask } from '../lib/tasks';
 import { useDebouncedValue } from '../lib/debounce';
 import { useQueryClient } from '@tanstack/react-query';
 import axiosClient from '../services/axiosClient';
+import { getPendingSuggestion, isAiGeneratedTag } from '../features/vault/lib/aiMarkers';
 
 const ORBIT_RADIUS = 16;
+const FRAME_CORNERS = [
+  { key: 'top-left', x: -1.12, y: 1.34, accentX: -0.98, accentY: 1.22, rotate: Math.PI / 4 },
+  { key: 'top-right', x: 1.12, y: 1.34, accentX: 0.98, accentY: 1.22, rotate: -Math.PI / 4 },
+  { key: 'bottom-left', x: -1.12, y: -1.34, accentX: -0.98, accentY: -1.22, rotate: -Math.PI / 4 },
+  { key: 'bottom-right', x: 1.12, y: -1.34, accentX: 0.98, accentY: -1.22, rotate: Math.PI / 4 },
+];
 
 function Memory3DFrame({
   memory,
@@ -60,12 +69,81 @@ function Memory3DFrame({
         onPointerOut={(e) => { e.stopPropagation(); setHovered(false); document.body.style.cursor = 'auto'; }}
         onClick={(e) => { e.stopPropagation(); onClick(memory); }}
       >
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[2.6, 3.2, 0.05]} />
-          <meshStandardMaterial color="#F7F4EF" roughness={0.9} />
+        <mesh castShadow receiveShadow position={[0, 0, -0.03]}>
+          <boxGeometry args={[2.58, 3.08, 0.06]} />
+          <meshStandardMaterial color="#1E1A17" roughness={0.85} metalness={0.05} />
         </mesh>
 
-        <mesh position={[0, 0.3, 0.028]}>
+        <mesh receiveShadow position={[0, -0.02, 0.01]}>
+          <boxGeometry args={[2.36, 2.76, 0.03]} />
+          <meshStandardMaterial color="#E8DFCB" roughness={0.95} metalness={0.02} />
+        </mesh>
+
+        <mesh castShadow position={[0, 1.44, 0.055]}>
+          <boxGeometry args={[2.58, 0.13, 0.1]} />
+          <meshStandardMaterial color="#B88F5B" roughness={0.28} metalness={0.8} />
+        </mesh>
+        <mesh castShadow position={[0, -1.44, 0.055]}>
+          <boxGeometry args={[2.58, 0.13, 0.1]} />
+          <meshStandardMaterial color="#8C6738" roughness={0.32} metalness={0.78} />
+        </mesh>
+        <mesh castShadow position={[-1.22, 0, 0.055]}>
+          <boxGeometry args={[0.13, 2.86, 0.1]} />
+          <meshStandardMaterial color="#9A7340" roughness={0.3} metalness={0.8} />
+        </mesh>
+        <mesh castShadow position={[1.22, 0, 0.055]}>
+          <boxGeometry args={[0.13, 2.86, 0.1]} />
+          <meshStandardMaterial color="#D4A96A" roughness={0.26} metalness={0.82} />
+        </mesh>
+
+        <mesh position={[0, 1.24, 0.12]}>
+          <boxGeometry args={[2.16, 0.035, 0.055]} />
+          <meshStandardMaterial color="#F1D08A" roughness={0.22} metalness={0.88} />
+        </mesh>
+        <mesh position={[0, -1.24, 0.12]}>
+          <boxGeometry args={[2.16, 0.035, 0.055]} />
+          <meshStandardMaterial color="#F1D08A" roughness={0.22} metalness={0.88} />
+        </mesh>
+        <mesh position={[-1.04, 0, 0.12]}>
+          <boxGeometry args={[0.035, 2.42, 0.055]} />
+          <meshStandardMaterial color="#F1D08A" roughness={0.22} metalness={0.88} />
+        </mesh>
+        <mesh position={[1.04, 0, 0.12]}>
+          <boxGeometry args={[0.035, 2.42, 0.055]} />
+          <meshStandardMaterial color="#F1D08A" roughness={0.22} metalness={0.88} />
+        </mesh>
+
+        {FRAME_CORNERS.map((corner) => (
+          <group key={corner.key}>
+            <mesh castShadow position={[corner.x, corner.y, 0.14]}>
+              <torusGeometry args={[0.085, 0.014, 10, 28]} />
+              <meshStandardMaterial color="#F1D08A" roughness={0.2} metalness={0.9} />
+            </mesh>
+            <mesh castShadow position={[corner.x, corner.y, 0.16]}>
+              <sphereGeometry args={[0.032, 12, 12]} />
+              <meshStandardMaterial color="#D4A96A" roughness={0.18} metalness={0.92} />
+            </mesh>
+            <mesh position={[corner.accentX, corner.accentY, 0.145]} rotation={[0, 0, corner.rotate]}>
+              <boxGeometry args={[0.22, 0.022, 0.035]} />
+              <meshStandardMaterial color="#F1D08A" roughness={0.24} metalness={0.88} />
+            </mesh>
+          </group>
+        ))}
+
+        <mesh castShadow position={[0, 1.57, 0.145]}>
+          <sphereGeometry args={[0.05, 12, 12]} />
+          <meshStandardMaterial color="#F1D08A" roughness={0.2} metalness={0.9} />
+        </mesh>
+        <mesh castShadow position={[-0.13, 1.52, 0.135]}>
+          <sphereGeometry args={[0.028, 10, 10]} />
+          <meshStandardMaterial color="#D4A96A" roughness={0.22} metalness={0.88} />
+        </mesh>
+        <mesh castShadow position={[0.13, 1.52, 0.135]}>
+          <sphereGeometry args={[0.028, 10, 10]} />
+          <meshStandardMaterial color="#D4A96A" roughness={0.22} metalness={0.88} />
+        </mesh>
+
+        <mesh position={[0, 0.12, 0.155]}>
           <planeGeometry args={[2.2, 2.2]} />
           <meshBasicMaterial map={texture} toneMapped={false} />
         </mesh>
@@ -91,8 +169,8 @@ function OrbitingCluster({
   const ROWS = 2;
   const count = cluster.memories.length;
   const cols = Math.ceil(count / ROWS);
-  const SPACING_X = 2.9;
-  const SPACING_Y = 3.6;
+  const SPACING_X = 3.05;
+  const SPACING_Y = 3.7;
 
   return (
     <group position={[x, 0, z]} rotation={[0, cluster.angle, 0]}>
@@ -226,7 +304,7 @@ export default function Vault() {
   const [searchInput, setSearchInput] = useState('');
   const [reviewNote, setReviewNote] = useState('');
   const [showFilters, setShowFilters] = useState(false);
-  const [showFavorites, setShowFavorites] = useState(false);
+  const [showFavorites, setShowFavorites] = useState(() => new URLSearchParams(window.location.search).get('favorites') === 'true');
   const [selectedDecade, setSelectedDecade] = useState('');
 
   const debouncedSearch = useDebouncedValue(searchInput, 400);
@@ -241,7 +319,15 @@ export default function Vault() {
   const canContribute = currentUser?.role === 'ADMIN' || currentUser?.role === 'CONTRIBUTOR';
   const uploadMutation = useUploadMemory();
   const updateMutation = useUpdateMemory();
+  const suggestionDecision = useMemorySuggestionDecision();
   const queryClient = useQueryClient();
+
+  const pendingTitleValue = pendingCuration ? getPendingSuggestion(pendingCuration, 'title') : null;
+  const pendingDescriptionValue = pendingCuration ? getPendingSuggestion(pendingCuration, 'description') : null;
+  const pendingTagsValue = pendingCuration ? getPendingSuggestion(pendingCuration, 'tags') : null;
+  const pendingTitleSuggestion = typeof pendingTitleValue === 'string' ? pendingTitleValue : null;
+  const pendingDescriptionSuggestion = typeof pendingDescriptionValue === 'string' ? pendingDescriptionValue : null;
+  const pendingTagSuggestion = Array.isArray(pendingTagsValue) ? pendingTagsValue.map(String).filter(Boolean) : null;
 
   const filterParams = {
     q: debouncedSearch || undefined,
@@ -254,6 +340,16 @@ export default function Vault() {
   const { data: filteredMemories = [], isFetching: isFetchingMemories } = useFilteredMemories(filterParams);
 
   const allCategories = ['All', ...filters.clusters];
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (showFavorites) {
+      url.searchParams.set('favorites', 'true');
+    } else {
+      url.searchParams.delete('favorites');
+    }
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [showFavorites]);
 
   const handleFiles = async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
@@ -273,14 +369,22 @@ export default function Vault() {
       try {
         const { task_id, memory_id } = await uploadMutation.mutateAsync({ file });
 
-        await sileo.promise(pollTask(task_id), {
-          loading: { title: `Processing ${file.name}`, description: "AI is analyzing faces & vibes..." },
-          success: () => {
-            setUploadQueue(curr => curr.map(q => q.id === tempId ? { ...q, progress: 100, status: 'READY' } : q));
-            return { title: "Preservation Complete", description: `${file.name} is now in the archive.` };
-          },
-          error: { title: "AI Pipeline Error", description: "Failed to process the image metadata." }
-        });
+        if (task_id) {
+          const processingPromise = pollTask(task_id).then(() => true).catch(() => false);
+          await sileo.promise(processingPromise, {
+            loading: { title: `Processing ${file.name}`, description: "AI is analyzing faces & context..." },
+            success: (processed) => {
+              setUploadQueue(curr => curr.map(q => q.id === tempId ? { ...q, progress: 100, status: 'READY' } : q));
+              return processed
+                ? { title: "Ready for Review", description: `${file.name} needs curator verification.` }
+                : { title: "Manual Review Ready", description: "AI processing failed, but the memory can still be verified." };
+            },
+            error: { title: "Upload Failed", description: "The memory could not be queued." }
+          });
+        } else {
+          setUploadQueue(curr => curr.map(q => q.id === tempId ? { ...q, progress: 100, status: 'READY' } : q));
+          sileo.info({ title: "Manual Review Ready", description: "AI worker is unavailable, so verify this memory manually." });
+        }
 
         if (!isBatch && memory_id) {
           const fullMemory = await axiosClient.get(`/vaults/${activeVaultId}/memories/${memory_id}/`);
@@ -290,6 +394,7 @@ export default function Vault() {
         }
       } catch (err) {
         setUploadQueue(curr => curr.map(q => q.id === tempId ? { ...q, status: 'FAILED' } : q));
+        setTimeout(() => setUploadQueue(curr => curr.filter(q => q.id !== tempId)), 3500);
       }
     });
 
@@ -329,6 +434,20 @@ export default function Vault() {
     ).finally(() => setIsConfirmingReview(false));
   };
 
+  const handleReviewSuggestionDecision = async (field: string, action: 'accept' | 'reject') => {
+    if (!pendingCuration) return;
+    try {
+      const updated = await suggestionDecision.mutateAsync({ memoryId: pendingCuration.id, field, action });
+      setPendingCuration(updated);
+      sileo.success({
+        title: action === 'accept' ? "Suggestion Accepted" : "Suggestion Dismissed",
+        description: `${field === 'description' ? 'Description' : field} has been ${action === 'accept' ? 'applied' : 'left unchanged'}.`
+      });
+    } catch {
+      sileo.error({ title: "Suggestion Review Failed" });
+    }
+  };
+
   const vaultHeader = (
     <div className={`flex flex-col ${viewMode === '3D' ? 'pointer-events-none' : ''}`}>
       <div className={viewMode === '3D' ? 'pointer-events-auto' : ''}>
@@ -340,9 +459,11 @@ export default function Vault() {
             <VaultIcon size={14} weight="fill" /> Core Repository
           </div>
           <h1 className="font-display font-semibold text-[3.5rem] text-[var(--clr-linen)] tracking-widest uppercase leading-none drop-shadow-2xl">The Archive</h1>
-          <p className="font-script text-[48px] text-[var(--clr-gold)] leading-[1] mt-4 drop-shadow-md">
-            &ldquo;{filteredMemories.length} exhibits curated&rdquo;
-          </p>
+          {viewMode === '2D' && (
+            <p className="font-script text-[48px] text-[var(--clr-gold)] leading-[1] mt-4 drop-shadow-md">
+              &ldquo;{filteredMemories.length} exhibits curated&rdquo;
+            </p>
+          )}
         </motion.div>
 
         <div className={`mt-6 md:mt-0 flex flex-wrap items-center gap-4 ${viewMode === '3D' ? 'pointer-events-auto' : ''}`}>
@@ -514,7 +635,7 @@ export default function Vault() {
                       className="break-inside-avoid shadow-lg rounded-2xl cursor-pointer"
                       onClick={() => setSelectedMemory(mem)}
                     >
-                      <MemoryCard memory={{ id: mem.id, url: mem.url, title: mem.title, location: mem.location, date: mem.date, tags: (mem.tags || []).slice(0, 3), is_favorite: mem.is_favorite }} />
+                      <MemoryCard memory={{ id: mem.id, url: mem.url, title: mem.title, location: mem.location, date: mem.date, tags: (mem.tags || []).slice(0, 3), exif_json: mem.exif_json, is_favorite: mem.is_favorite }} />
                     </motion.div>
                   ))}
                 </div>
@@ -584,10 +705,16 @@ export default function Vault() {
                 <div key={item.id} className="group">
                   <div className="flex justify-between items-center mb-2">
                     <p className="font-ui text-[13px] text-[var(--clr-linen)] truncate font-medium">{item.name}</p>
-                    {item.status === 'READY' ? <CheckCircle size={18} weight="fill" className="text-[var(--clr-success)]"/> : <div className="w-4 h-4 border-2 border-[var(--clr-gold)] border-t-transparent rounded-full animate-spin"/>}
+                    {item.status === 'READY' ? (
+                      <CheckCircle size={18} weight="fill" className="text-[var(--clr-success)]"/>
+                    ) : item.status === 'FAILED' ? (
+                      <X size={18} weight="bold" className="text-[var(--clr-danger)]"/>
+                    ) : (
+                      <div className="w-4 h-4 border-2 border-[var(--clr-gold)] border-t-transparent rounded-full animate-spin"/>
+                    )}
                   </div>
                   <div className="h-1.5 w-full bg-[rgba(255,255,255,0.1)] rounded-full overflow-hidden">
-                    <motion.div className="h-full bg-[var(--clr-gold)]" initial={{ width: 0 }} animate={{ width: `${item.progress}%` }} />
+                    <motion.div className={`h-full ${item.status === 'FAILED' ? 'bg-[var(--clr-danger)]' : 'bg-[var(--clr-gold)]'}`} initial={{ width: 0 }} animate={{ width: `${item.status === 'FAILED' ? 100 : item.progress}%` }} />
                   </div>
                 </div>
               ))}
@@ -599,19 +726,19 @@ export default function Vault() {
       {/* AI Curation Ready Banner */}
       <AnimatePresence>
         {(summary?.unreviewedCount > 0) && !isReviewPanelOpen && (
-          <motion.div initial={{ opacity: 0, y: -100 }} animate={{ opacity: 1, y: 0 }} className="absolute top-10 left-1/2 -translate-x-1/2 z-[150] bg-[var(--clr-soot)] border-2 border-[var(--clr-gold)] shadow-[0_0_50px_rgba(184,143,91,0.3)] rounded-full py-3 px-8 flex items-center gap-8 pointer-events-auto">
-            <div className="flex items-center gap-3 text-[var(--clr-linen)]">
+          <motion.div initial={{ opacity: 0, y: -100 }} animate={{ opacity: 1, y: 0 }} className="absolute top-10 left-1/2 -translate-x-1/2 z-[150] w-[min(92vw,680px)] bg-[var(--clr-soot)] border border-[rgba(212,169,106,0.55)] shadow-[0_18px_60px_rgba(0,0,0,0.45)] rounded-[var(--radius-lg)] py-3 px-4 sm:px-5 flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-5 pointer-events-auto">
+            <div className="flex min-w-0 flex-1 items-center gap-3 text-[var(--clr-linen)]">
               <MagicWand size={24} className="text-[var(--clr-gold)] animate-pulse" weight="fill" />
-              <span className="font-ui text-[14px] font-bold tracking-wide">
+              <span className="font-ui text-[13px] sm:text-[14px] font-bold tracking-wide truncate">
                 {summary.unreviewedCount} Artifacts Need Your Review
               </span>
             </div>
             <Button
                 variant="primary"
-                className="py-2 px-8 text-[11px]"
+                className="py-2 px-6 text-[11px] shrink-0"
                 onClick={async () => {
                     const { data: fetchRes } = await axiosClient.get(`/vaults/${activeVaultId}/memories/`, { params: { reviewed: false, limit: 1 } });
-                    const unreviewed = fetchRes.results?.[0];
+                    const unreviewed = fetchRes.results?.[0] || fetchRes[0];
                     if (unreviewed) {
                         setPendingCuration(unreviewed);
                         setReviewNote(unreviewed.human_caption || '');
@@ -638,28 +765,83 @@ export default function Vault() {
       {/* Full Screen Review Panel */}
       <AnimatePresence>
         {isReviewPanelOpen && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[400] bg-[var(--clr-charcoal)] flex items-center justify-center p-4 md:p-8 pointer-events-auto">
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="w-full max-w-4xl bg-[var(--clr-parchment)] rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] border border-[rgba(184,143,91,0.3)] overflow-hidden flex flex-col md:flex-row max-h-[85vh]">
-              <div className="w-full md:w-1/2 h-64 md:h-auto bg-[var(--clr-soot)] relative flex items-center justify-center p-8">
-                <button onClick={() => setIsReviewPanelOpen(false)} className="absolute top-4 right-4 w-10 h-10 rounded-full bg-[rgba(20,18,17,0.7)] border border-[rgba(184,143,91,0.4)] text-[var(--clr-linen)] flex items-center justify-center hover:border-[var(--clr-gold)] transition-colors">
-                  <X size={18} />
-                </button>
-                <img src={pendingCuration?.url || "https://images.unsplash.com/photo-1542038784456-1ea8e935640e?q=80&w=1200"} className="max-w-full max-h-[40vh] md:max-h-[60vh] object-contain shadow-[0_20px_60px_rgba(0,0,0,0.4)] rounded-sm border-4 border-white/10" alt="Review" />
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[400] bg-[rgba(20,18,17,0.92)] backdrop-blur-md flex items-center justify-center p-3 sm:p-5 md:p-8 pointer-events-auto">
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="w-full max-w-5xl bg-[var(--clr-parchment)] rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] border border-[rgba(184,143,91,0.3)] overflow-hidden grid grid-rows-[minmax(220px,38vh)_1fr] md:grid-rows-1 md:grid-cols-[minmax(320px,0.95fr)_minmax(360px,1.05fr)] max-h-[92vh]">
+              <div className="bg-[var(--clr-soot)] relative flex items-center justify-center p-4 sm:p-6 overflow-hidden">
+                <div className="absolute top-4 right-4 z-20">
+                  <Tooltip content="Close">
+                    <button aria-label="Close review" onClick={() => setIsReviewPanelOpen(false)} className="w-10 h-10 rounded-full bg-[rgba(20,18,17,0.82)] border border-[rgba(184,143,91,0.45)] text-[var(--clr-linen)] flex items-center justify-center hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)] transition-colors">
+                      <X size={18} />
+                    </button>
+                  </Tooltip>
+                </div>
+                <img src={pendingCuration?.url || "https://images.unsplash.com/photo-1542038784456-1ea8e935640e?q=80&w=1200"} className="max-w-full max-h-full object-contain shadow-[0_20px_60px_rgba(0,0,0,0.4)] rounded-sm border-4 border-white/10" alt="Review" />
               </div>
 
-              <div className="w-full md:w-1/2 p-6 md:p-10 overflow-y-auto no-scrollbar flex flex-col bg-[var(--clr-linen)]">
-                <div className="flex items-center gap-3 mb-4">
-                  <MagicWand size={20} className="text-[var(--clr-gold)]" weight="fill" />
-                  <span className="font-ui text-[10px] uppercase font-black tracking-widest text-[var(--clr-gold)]">Digital Curation</span>
+              <div className="p-5 sm:p-6 md:p-8 overflow-y-auto no-scrollbar flex flex-col bg-[var(--clr-linen)] min-h-0">
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="w-9 h-9 rounded-full bg-[var(--clr-gold-muted)] text-[var(--clr-gold)] flex items-center justify-center">
+                    <MagicWand size={18} weight="fill" />
+                  </span>
+                  <div>
+                    <span className="font-ui text-[10px] uppercase font-black tracking-widest text-[var(--clr-gold)]">Digital Curation</span>
+                    <h3 className="font-display font-extrabold text-[1.65rem] text-[var(--clr-ink)] leading-none uppercase tracking-wider">Verify Artifact</h3>
+                  </div>
                 </div>
 
-                <h3 className="font-display font-extrabold text-2xl text-[var(--clr-ink)] mb-6 leading-tight uppercase tracking-wider">Verify Artifact</h3>
-
-                <div className="space-y-4 flex-1">
+                <div className="space-y-4 pb-1">
                   <div className="bg-[rgba(184,143,91,0.05)] border border-[rgba(184,143,91,0.2)] p-4 rounded-xl shadow-inner">
-                    <label className="font-ui text-[9px] uppercase tracking-[0.2em] text-[var(--clr-gold-dark)] font-bold mb-1.5 block">AI Insight</label>
-                    <p className="font-ui text-[13px] text-[var(--clr-ink)] leading-relaxed italic">"{pendingCuration?.ai_caption}"</p>
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                      <label className="font-ui text-[9px] uppercase tracking-[0.2em] text-[var(--clr-gold-dark)] font-bold">AI Insight</label>
+                      <AiMarker label="AI-generated description" />
+                    </div>
+                    <p className="font-ui text-[13px] text-[var(--clr-ink)] leading-relaxed italic">
+                      {pendingCuration?.ai_caption || 'AI has not added a caption yet. You can verify this memory manually.'}
+                    </p>
                   </div>
+
+                  {(pendingTitleSuggestion || pendingDescriptionSuggestion || (pendingTagSuggestion && pendingTagSuggestion.length > 0)) && (
+                    <div className="space-y-3 rounded-xl border border-[rgba(184,143,91,0.22)] bg-[rgba(184,143,91,0.06)] p-4">
+                      <p className="font-ui text-[9px] font-black uppercase tracking-[0.2em] text-[var(--clr-gold-dark)]">Review AI Suggestions</p>
+                      {[
+                        pendingTitleSuggestion ? { field: 'title', label: 'Title', value: pendingTitleSuggestion } : null,
+                        pendingDescriptionSuggestion ? { field: 'description', label: 'Description', value: pendingDescriptionSuggestion } : null,
+                      ].filter(Boolean).map((item: any) => (
+                        <div key={item.field} className="rounded-lg bg-[var(--clr-paper)] p-3">
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <AiMarker label={`AI suggestion for ${item.label.toLowerCase()}`} />
+                              <span className="font-ui text-[10px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">{item.label}</span>
+                            </div>
+                            <div className="flex gap-2">
+                              <button disabled={suggestionDecision.isPending} onClick={() => handleReviewSuggestionDecision(item.field, 'accept')} className="rounded-full border border-[rgba(82,120,82,0.35)] px-3 py-1 font-ui text-[9px] font-black uppercase tracking-widest text-[rgb(82,120,82)] hover:bg-[rgb(82,120,82)] hover:text-white disabled:opacity-50">Accept</button>
+                              <button disabled={suggestionDecision.isPending} onClick={() => handleReviewSuggestionDecision(item.field, 'reject')} className="rounded-full border border-[rgba(139,58,58,0.35)] px-3 py-1 font-ui text-[9px] font-black uppercase tracking-widest text-[var(--clr-danger)] hover:bg-[var(--clr-danger)] hover:text-white disabled:opacity-50">Reject</button>
+                            </div>
+                          </div>
+                          <p className="font-ui text-[12px] leading-relaxed text-[var(--clr-dust)]">{item.value}</p>
+                        </div>
+                      ))}
+                      {pendingTagSuggestion && pendingTagSuggestion.length > 0 && (
+                        <div className="rounded-lg bg-[var(--clr-paper)] p-3">
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <AiMarker label="AI suggestion for tags" />
+                              <span className="font-ui text-[10px] font-bold uppercase tracking-widest text-[var(--clr-ink)]">Tags</span>
+                            </div>
+                            <div className="flex gap-2">
+                              <button disabled={suggestionDecision.isPending} onClick={() => handleReviewSuggestionDecision('tags', 'accept')} className="rounded-full border border-[rgba(82,120,82,0.35)] px-3 py-1 font-ui text-[9px] font-black uppercase tracking-widest text-[rgb(82,120,82)] hover:bg-[rgb(82,120,82)] hover:text-white disabled:opacity-50">Accept</button>
+                              <button disabled={suggestionDecision.isPending} onClick={() => handleReviewSuggestionDecision('tags', 'reject')} className="rounded-full border border-[rgba(139,58,58,0.35)] px-3 py-1 font-ui text-[9px] font-black uppercase tracking-widest text-[var(--clr-danger)] hover:bg-[var(--clr-danger)] hover:text-white disabled:opacity-50">Reject</button>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {pendingTagSuggestion.map((tag) => (
+                              <span key={tag} className="rounded-full border border-[var(--clr-aged)] px-3 py-1 font-ui text-[11px] font-semibold text-[var(--clr-ink)]">{tag}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div>
                     <label className="font-ui text-[9px] uppercase tracking-[0.2em] text-[var(--clr-dust)] font-bold mb-1.5 block">Curator's Note (Optional)</label>
@@ -672,12 +854,13 @@ export default function Vault() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="font-ui text-[9px] uppercase tracking-[0.2em] text-[var(--clr-dust)] font-bold mb-1.5 block">Date</label>
                       <CustomDatePicker
                         value={pendingCuration?.date || ''}
                         onChange={(val) => setPendingCuration((prev: any) => ({ ...prev, date: val }))}
+                        className="[&>div]:rounded-[var(--radius-md)] [&>div]:bg-[var(--clr-paper)]"
                       />
                     </div>
                     <div>
@@ -686,7 +869,7 @@ export default function Vault() {
                         type="text"
                         value={pendingCuration?.location || ''}
                         onChange={(e) => setPendingCuration((prev: any) => ({ ...prev, location: e.target.value }))}
-                        className="w-full bg-[var(--clr-paper)] shadow-inner border border-[var(--clr-aged)] rounded-full px-4 py-2 font-ui text-[13px] outline-none focus:border-[var(--clr-gold)] transition-colors"
+                        className="w-full bg-[var(--clr-paper)] shadow-inner border border-[var(--clr-aged)] rounded-[var(--radius-md)] px-4 py-3 font-ui text-[13px] outline-none focus:border-[var(--clr-gold)] transition-colors"
                       />
                     </div>
                   </div>
@@ -697,15 +880,16 @@ export default function Vault() {
                       {(pendingCuration?.tags || []).map((tag: string) => (
                         <span key={tag} className="inline-flex items-center gap-1.5 bg-[var(--clr-paper)] border border-[var(--clr-aged)] text-[var(--clr-ink)] px-3 py-1.5 rounded-full font-ui text-[11px] font-semibold shadow-sm">
                           {tag}
+                          {pendingCuration && isAiGeneratedTag(pendingCuration, tag) && <AiMarker compact label="AI-generated tag" />}
                         </span>
                       ))}
                     </div>
                   </div>
                 </div>
 
-                <div className="pt-6 mt-6 border-t border-[var(--clr-aged)] flex justify-between items-center gap-4 shrink-0">
-                  <button onClick={() => setIsReviewPanelOpen(false)} className="font-ui text-[10px] font-bold uppercase tracking-widest text-[var(--clr-dust)] hover:text-[var(--clr-ink)] transition-colors px-2">Skip</button>
-                  <Button variant="primary" className="px-8 py-3" disabled={isConfirmingReview} onClick={handleConfirmReview}>
+                <div className="pt-5 mt-6 border-t border-[var(--clr-aged)] flex flex-col-reverse sm:flex-row justify-between sm:items-center gap-3">
+                  <button onClick={() => setIsReviewPanelOpen(false)} className="font-ui text-[10px] font-bold uppercase tracking-widest text-[var(--clr-dust)] hover:text-[var(--clr-ink)] transition-colors px-2 py-2">Review Later</button>
+                  <Button variant="primary" className="px-6 py-3 w-full sm:w-auto" disabled={isConfirmingReview} onClick={handleConfirmReview}>
                     {isConfirmingReview ? 'PRESERVING...' : 'CONFIRM & PRESERVE'} <ArrowRight weight="bold" />
                   </Button>
                 </div>

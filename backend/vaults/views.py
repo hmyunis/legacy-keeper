@@ -9,11 +9,11 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from pgvector.django import CosineDistance
 
-from .models import Memory, Capsule
+from .models import Memory, Capsule, MemoryCollection
 from core.models import VaultMember, ActionLog, get_accessible_vault_ids
 from lineage.models import Person
-from .serializers import MemorySerializer, CapsuleSerializer
-from django.db.models import Q, Count
+from .serializers import MemorySerializer, CapsuleSerializer, MemoryCollectionSerializer
+from django.db.models import Q, Count, F
 from sentence_transformers import SentenceTransformer
 
 _clip_model = None
@@ -56,6 +56,7 @@ class MemoryListCreateView(generics.ListCreateAPIView):
             qs = qs.filter(
                 Q(title__icontains=q) |
                 Q(ai_caption__icontains=q) |
+                Q(human_caption__icontains=q) |
                 Q(location__icontains=q) |
                 Q(tags__icontains=q)
             )
@@ -85,6 +86,9 @@ class MemoryListCreateView(generics.ListCreateAPIView):
             raise PermissionDenied("You lack contribution rights to this vault.")
 
         file = request.FILES.get('file')
+        if not file:
+            return Response({"file": ["No file was uploaded."]}, status=status.HTTP_400_BAD_REQUEST)
+
         title = request.data.get('title', '')
 
         memory = Memory.objects.create(vault_id=vault_id, original_file=file, title=title)
@@ -96,10 +100,18 @@ class MemoryListCreateView(generics.ListCreateAPIView):
             target_type='MEMORY'
         )
 
-        from tasks.ai_pipeline import process_memory_task
-        task = process_memory_task.delay(str(memory.id))
+        task_id = None
+        try:
+            from tasks.ai_pipeline import process_memory_task
+            task = process_memory_task.delay(str(memory.id))
+            task_id = task.id
+        except Exception as exc:
+            # Keep the upload usable when the local worker/broker is down. The
+            # review dialog can still open for manual verification.
+            memory.exif_json = {**(memory.exif_json or {}), "processing_error": str(exc)}
+            memory.save(update_fields=['exif_json'])
 
-        return Response({"task_id": task.id, "status": "PROCESSING", "memory_id": str(memory.id)}, status=status.HTTP_202_ACCEPTED)
+        return Response({"task_id": task_id, "status": "PROCESSING" if task_id else "PENDING_REVIEW", "memory_id": str(memory.id)}, status=status.HTTP_202_ACCEPTED)
 
 class VaultClustersView(views.APIView):
     permission_classes = [IsAuthenticated]
@@ -107,7 +119,7 @@ class VaultClustersView(views.APIView):
     def get(self, request, vault_id):
         if not has_vault_access(request.user, vault_id):
             raise PermissionDenied("You do not have access to this vault.")
-        memories = Memory.objects.visible_to_vault(vault_id)
+        memories = Memory.objects.visible_to_vault(vault_id).filter(is_reviewed=True)
 
         clusters = {}
         for mem in memories:
@@ -185,6 +197,89 @@ class MemoryFiltersView(views.APIView):
             "clusters": clusters,
             "decades": decades,
         })
+
+class MemoryCollectionListCreateView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, vault_id):
+        if not has_vault_access(request.user, vault_id):
+            raise PermissionDenied("You do not have access to this vault.")
+
+        explicit = MemoryCollection.objects.filter(vault_id=vault_id).annotate(
+            memory_count=Count('vault__memories', filter=Q(vault__memories__cluster_name=F('name')))
+        )
+        explicit_names = set(explicit.values_list('name', flat=True))
+
+        memory_names = Memory.objects.visible_to_vault(vault_id).exclude(cluster_name='').exclude(cluster_name='Unsorted')\
+            .values('cluster_name').annotate(memory_count=Count('id')).order_by('cluster_name')
+
+        items = MemoryCollectionSerializer(explicit, many=True).data
+        for row in memory_names:
+            if row['cluster_name'] in explicit_names:
+                continue
+            items.append({
+                "id": None,
+                "name": row['cluster_name'],
+                "memory_count": row['memory_count'],
+                "created_at": None,
+            })
+
+        items.sort(key=lambda item: item['name'].lower())
+        return Response(items)
+
+    def post(self, request, vault_id):
+        member = VaultMember.objects.filter(user=request.user, vault_id=vault_id).first()
+        if not member or member.role == 'VIEWER':
+            raise PermissionDenied("You lack contribution rights to create collections.")
+
+        name = (request.data.get('name') or '').strip()
+        if not name:
+            return Response({"name": ["Collection name is required."]}, status=status.HTTP_400_BAD_REQUEST)
+        if len(name) > 100:
+            return Response({"name": ["Collection name must be 100 characters or fewer."]}, status=status.HTTP_400_BAD_REQUEST)
+        if name.lower() == 'unsorted':
+            return Response({"name": ["Unsorted is reserved for uncategorized memories."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        collection, created = MemoryCollection.objects.get_or_create(vault_id=vault_id, name=name)
+        if created:
+            ActionLog.objects.create(
+                vault_id=vault_id,
+                user=request.user,
+                action_type='edit',
+                description=f"Created memory collection '{name}'.",
+                target_id=collection.id,
+                target_type='COLLECTION'
+            )
+
+        collection.memory_count = Memory.objects.visible_to_vault(vault_id).filter(cluster_name=name).count()
+        return Response(MemoryCollectionSerializer(collection).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+class MemoryCollectionDetailView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, vault_id, collection_id):
+        member = VaultMember.objects.filter(user=request.user, vault_id=vault_id).first()
+        if not member or member.role == 'VIEWER':
+            raise PermissionDenied("You lack contribution rights to delete collections.")
+
+        collection = get_object_or_404(MemoryCollection, id=collection_id, vault_id=vault_id)
+        linked_count = Memory.objects.filter(vault_id=vault_id, cluster_name=collection.name).count()
+        if linked_count > 0:
+            return Response({
+                "error": "Collection still contains memories. Unlink those memories before deleting it.",
+                "memory_count": linked_count,
+            }, status=status.HTTP_409_CONFLICT)
+
+        collection_name = collection.name
+        collection.delete()
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='delete',
+            description=f"Deleted empty memory collection '{collection_name}'.",
+            target_type='COLLECTION'
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 class MemoryRestoreView(views.APIView):
     permission_classes = [IsAuthenticated]
@@ -356,9 +451,137 @@ class MemoryReprocessView(views.APIView):
             raise PermissionDenied("You lack contribution rights to trigger AI reprocessing.")
 
         memory = get_object_or_404(Memory, id=id, vault_id=vault_id)
-        from tasks.ai_pipeline import process_memory_task
-        task = process_memory_task.delay(str(id))
+        try:
+            from tasks.ai_pipeline import process_memory_task
+            task = process_memory_task.delay(str(id))
+        except Exception as exc:
+            return Response({"error": f"AI queue unavailable: {exc}"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
         return Response({"task_id": task.id, "status": "REPROCESSING"})
+
+class MemorySuggestionDecisionView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    allowed_fields = {'title', 'description', 'tags'}
+
+    def post(self, request, vault_id, id, field):
+        member = VaultMember.objects.filter(user=request.user, vault_id=vault_id).first()
+        if not member or member.role == 'VIEWER':
+            raise PermissionDenied("You lack contribution rights to review AI suggestions.")
+        if field not in self.allowed_fields:
+            return Response({"field": ["Unsupported suggestion field."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        action = request.data.get('action')
+        if action not in {'accept', 'reject'}:
+            return Response({"action": ["Use 'accept' or 'reject'."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        memory = get_object_or_404(Memory, id=id, vault_id=vault_id)
+        suggestions = dict(memory.ai_suggestions or {})
+        suggestion = dict(suggestions.get(field) or {})
+        if not suggestion.get('value'):
+            return Response({"error": "No AI suggestion is available for this field."}, status=status.HTTP_404_NOT_FOUND)
+
+        exif_json = memory.exif_json or {}
+        suggestion['status'] = 'accepted' if action == 'accept' else 'rejected'
+        suggestion['decided_at'] = timezone.now().isoformat()
+        suggestion['decided_by'] = str(request.user.id)
+        suggestions[field] = suggestion
+        memory.ai_suggestions = suggestions
+
+        if action == 'accept':
+            value = suggestion.get('value')
+            if field == 'title':
+                memory.title = str(value or '')[:255]
+                exif_json['ai_generated_title'] = True
+            elif field == 'description':
+                memory.ai_caption = str(value or '')
+                exif_json['ai_generated_description'] = True
+            elif field == 'tags':
+                suggested_tags = value if isinstance(value, list) else []
+                current_tags = list(memory.tags or [])
+                current_lookup = {str(tag).strip().lower() for tag in current_tags}
+                for tag in suggested_tags:
+                    clean = str(tag or '').strip()
+                    if clean and clean.lower() not in current_lookup:
+                        current_tags.append(clean[:50])
+                        current_lookup.add(clean.lower())
+                memory.tags = current_tags
+
+                previous_ai_tags = exif_json.get('ai_generated_tags') or []
+                ai_lookup = {str(tag).strip().lower() for tag in previous_ai_tags}
+                accepted_ai_tags = list(previous_ai_tags)
+                for tag in suggested_tags:
+                    clean = str(tag or '').strip()
+                    if clean and clean.lower() not in ai_lookup:
+                        accepted_ai_tags.append(clean[:50])
+                        ai_lookup.add(clean.lower())
+                exif_json['ai_generated_tags'] = accepted_ai_tags
+
+        memory.exif_json = exif_json
+        memory.save()
+
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='edit',
+            description=f"{action.title()}ed AI suggestion for {field} on '{memory.title or 'Untitled'}'.",
+            target_id=memory.id,
+            target_type='MEMORY'
+        )
+
+        return Response(MemorySerializer(memory, context={'request': request}).data)
+
+class MemoryIdentifiedKinView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, vault_id, id):
+        member = VaultMember.objects.filter(user=request.user, vault_id=vault_id).first()
+        if not member or member.role == 'VIEWER':
+            raise PermissionDenied("You lack contribution rights to identify kin.")
+
+        person_id = request.data.get('person_id')
+        if not person_id:
+            return Response({"person_id": ["A person id is required."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        memory = get_object_or_404(Memory, id=id, vault_id=vault_id)
+        vault_ids = get_accessible_vault_ids(vault_id)
+        person = get_object_or_404(Person, id=person_id, vault_id__in=vault_ids)
+        memory.identified_people.add(person)
+
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='edit',
+            description=f"Manually identified {person.name} in '{memory.title or 'Untitled'}'.",
+            target_id=memory.id,
+            target_type='MEMORY'
+        )
+
+        return Response(MemorySerializer(memory, context={'request': request}).data)
+
+    def delete(self, request, vault_id, id):
+        member = VaultMember.objects.filter(user=request.user, vault_id=vault_id).first()
+        if not member or member.role == 'VIEWER':
+            raise PermissionDenied("You lack contribution rights to update identified kin.")
+
+        person_id = request.data.get('person_id')
+        if not person_id:
+            return Response({"person_id": ["A person id is required."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        memory = get_object_or_404(Memory, id=id, vault_id=vault_id)
+        person = get_object_or_404(Person, id=person_id)
+        memory.identified_people.remove(person)
+
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='edit',
+            description=f"Removed manual kin identification for {person.name} from '{memory.title or 'Untitled'}'.",
+            target_id=memory.id,
+            target_type='MEMORY'
+        )
+
+        return Response(MemorySerializer(memory, context={'request': request}).data)
 
 class MemoryDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = MemorySerializer
@@ -376,14 +599,38 @@ class MemoryDetailView(generics.RetrieveUpdateDestroyAPIView):
         if not member or member.role == 'VIEWER':
             raise PermissionDenied("You lack contribution rights to edit this artifact.")
 
-        serializer.save()
+        previous_title = serializer.instance.title or ''
+        previous_exif = serializer.instance.exif_json or {}
+        previous_ai_tags = previous_exif.get('ai_generated_tags') or previous_exif.get('ai_visual_tags') or []
+        instance = serializer.save()
+
+        exif_json = instance.exif_json or {}
+        exif_changed = False
+
+        if 'title' in self.request.data and (instance.title or '') != previous_title:
+            exif_json.pop('ai_generated_title', None)
+            exif_json.pop('ai_suggested_title', None)
+            exif_changed = True
+
+        if 'tags' in self.request.data:
+            current_tags = {str(tag).strip().lower() for tag in (instance.tags or [])}
+            kept_ai_tags = [
+                tag for tag in previous_ai_tags
+                if str(tag).strip().lower() in current_tags
+            ]
+            exif_json['ai_generated_tags'] = kept_ai_tags
+            exif_changed = True
+
+        if exif_changed:
+            instance.exif_json = exif_json
+            instance.save(update_fields=['exif_json'])
 
         ActionLog.objects.create(
             vault_id=vault_id,
             user=self.request.user,
             action_type='edit',
-            description=f"Updated details for artifact '{serializer.instance.title or 'Untitled'}.'",
-            target_id=serializer.instance.id,
+            description=f"Updated details for artifact '{instance.title or 'Untitled'}.'",
+            target_id=instance.id,
             target_type='MEMORY'
         )
 

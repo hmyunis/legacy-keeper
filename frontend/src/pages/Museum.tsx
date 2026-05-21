@@ -2,14 +2,29 @@ import { Suspense, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { ScrollControls } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from '@tanstack/react-router';
 import MuseumHall, { type ExhibitData } from '../features/museum/MuseumHall';
 import MemoryDetailModal from '../features/vault/MemoryDetailModal';
 import { useVaultMemories } from '../features/vault/hooks/useVault';
+import { useAuthStore } from '../stores/authStore';
 
 export default function Museum() {
   const [activeDecade, setActiveDecade] = useState('1970s');
   const [selectedExhibit, setSelectedExhibit] = useState<any | null>(null);
   const { data: memories = [] } = useVaultMemories();
+  const navigate = useNavigate();
+  const currentUser = useAuthStore(s => s.currentUser);
+  const avatarUrl = currentUser?.avatar || `https://ui-avatars.com/api/?name=${(currentUser?.fullName || 'Curator').replace(/ /g, '+')}&background=B88F5B&color=fff`;
+  const roleLabel = currentUser?.role || 'CURATOR';
+
+  const leaveMuseum = () => {
+    const referrerPath = document.referrer ? new URL(document.referrer).pathname : '';
+    if (referrerPath && referrerPath !== '/') {
+      window.history.back();
+      return;
+    }
+    navigate({ to: currentUser?.vaultId ? '/dashboard' : '/vault' });
+  };
 
   const exhibits: ExhibitData[] = memories.map((mem: any, index: number) => ({
       id: mem.id,
@@ -35,8 +50,14 @@ export default function Museum() {
         </Canvas>
       </Suspense>
 
-      <div className="absolute top-8 right-8 z-10 pointer-events-auto">
-        <button onClick={() => window.history.back()} className="px-5 py-2 border border-[rgba(184,143,91,0.3)] rounded-full text-[11px] uppercase tracking-widest text-[var(--clr-fog)] hover:text-[var(--clr-linen)] hover:border-[var(--clr-gold)] backdrop-blur-md bg-[rgba(20,18,17,0.5)] cursor-pointer transition-colors">
+      <div className="absolute top-8 right-8 z-10 pointer-events-auto flex items-center gap-3">
+        <div className="hidden sm:flex items-center gap-2 rounded-full border border-[rgba(184,143,91,0.3)] bg-[rgba(20,18,17,0.55)] px-2 py-1 backdrop-blur-md">
+          <img src={avatarUrl} alt="Curator" className="w-8 h-8 rounded-full border border-[var(--clr-gold)] object-cover" />
+          <span className="rounded-full bg-[var(--clr-gold)] px-2.5 py-1 font-ui text-[8px] font-black uppercase tracking-[0.14em] text-[var(--clr-charcoal)]">
+            {roleLabel}
+          </span>
+        </div>
+        <button onClick={leaveMuseum} className="px-5 py-2 border border-[rgba(184,143,91,0.3)] rounded-full text-[11px] uppercase tracking-widest text-[var(--clr-fog)] hover:text-[var(--clr-linen)] hover:border-[var(--clr-gold)] backdrop-blur-md bg-[rgba(20,18,17,0.5)] cursor-pointer transition-colors">
           LEAVE MUSEUM
         </button>
       </div>

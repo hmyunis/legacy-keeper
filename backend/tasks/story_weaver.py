@@ -1,8 +1,8 @@
 import logging
-import requests
 from celery import shared_task
 from django.conf import settings
 from django.db.models import Q
+from tasks.ollama_client import generate_with_ollama
 from lineage.models import Person, KinshipEdge
 from vaults.models import Memory
 
@@ -41,20 +41,17 @@ def generate_chronicle_task(self, person_id):
                 "The tone must be museum-quality, warm, and prestigious. Do not use corporate filler words."
             )
 
-        ollama_res = requests.post(f"{settings.OLLAMA_URL}/api/generate", json={
-            "model": "llama3.1:8b",
+        ollama_res = generate_with_ollama({
+            "model": settings.OLLAMA_MODEL,
             "prompt": prompt,
             "stream": False
         }, timeout=90)
 
-        if ollama_res.status_code == 200:
-            person = Person.objects.get(id=person_id)
-            person.biography = ollama_res.json().get("response", "").strip()
-            person.active_story_task_id = None
-            person.save()
-            return {"status": "READY", "person_id": str(person.id)}
-
-        raise Exception("AI Engine Timeout")
+        person = Person.objects.get(id=person_id)
+        person.biography = ollama_res.json().get("response", "").strip()
+        person.active_story_task_id = None
+        person.save()
+        return {"status": "READY", "person_id": str(person.id)}
 
     except Exception as e:
         try:

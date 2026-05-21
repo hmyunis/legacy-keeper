@@ -39,6 +39,45 @@ export const useMemoryFilters = () => {
   });
 };
 
+export const useMemoryCollections = () => {
+  const vaultId = useAuthStore((s) => s.activeVaultId);
+  return useQuery({
+    queryKey: ['memoryCollections', vaultId],
+    queryFn: () => vaultService.getCollections(vaultId!),
+    enabled: !!vaultId,
+  });
+};
+
+export const useCollectionActions = () => {
+  const queryClient = useQueryClient();
+
+  const createCollection = useMutation({
+    mutationFn: (name: string) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return vaultService.createCollection(vaultId, name);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['memoryCollections'] });
+      queryClient.invalidateQueries({ queryKey: ['memoryFilters'] });
+    },
+  });
+
+  const deleteCollection = useMutation({
+    mutationFn: (collectionId: string) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return vaultService.deleteCollection(vaultId, collectionId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['memoryCollections'] });
+      queryClient.invalidateQueries({ queryKey: ['memoryFilters'] });
+    },
+  });
+
+  return { createCollection, deleteCollection };
+};
+
 export const useUploadMemory = () => {
   return useMutation({
     mutationFn: ({ file, title }: { file: File; title?: string }) => {
@@ -60,7 +99,31 @@ export const useUpdateMemory = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['filteredMemories'] });
+      queryClient.invalidateQueries({ queryKey: ['vaultMemories'] });
       queryClient.invalidateQueries({ queryKey: ['vaultClusters'] });
+      queryClient.invalidateQueries({ queryKey: ['memoryFilters'] });
+      queryClient.invalidateQueries({ queryKey: ['memoryCollections'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardSummary'] });
+      queryClient.invalidateQueries({ queryKey: ['familyTree'] });
+    },
+  });
+};
+
+export const useMemorySuggestionDecision = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ memoryId, field, action }: { memoryId: string; field: string; action: 'accept' | 'reject' }) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return vaultService.decideSuggestion(vaultId, memoryId, field, action);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['filteredMemories'] });
+      queryClient.invalidateQueries({ queryKey: ['vaultMemories'] });
+      queryClient.invalidateQueries({ queryKey: ['vaultClusters'] });
+      queryClient.invalidateQueries({ queryKey: ['memoryFilters'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardSummary'] });
     },
   });
 };

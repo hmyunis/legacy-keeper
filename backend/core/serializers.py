@@ -9,10 +9,11 @@ class UserSerializer(serializers.ModelSerializer):
     fullName = serializers.CharField(source='full_name')
     avatar = serializers.SerializerMethodField()
     vaultId = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'fullName', 'email', 'is_verified', 'avatar', 'vaultId')
+        fields = ('id', 'fullName', 'email', 'is_verified', 'avatar', 'vaultId', 'role')
 
     def get_avatar(self, obj):
         if obj.avatar:
@@ -22,6 +23,10 @@ class UserSerializer(serializers.ModelSerializer):
     def get_vaultId(self, obj):
         member = obj.vault_memberships.first()
         return str(member.vault.id) if member else None
+
+    def get_role(self, obj):
+        member = obj.vault_memberships.first()
+        return member.role if member else 'CURATOR'
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):

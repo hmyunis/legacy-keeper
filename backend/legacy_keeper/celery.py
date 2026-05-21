@@ -4,8 +4,17 @@ from celery.schedules import crontab
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'legacy_keeper.settings')
 
-app = Celery('legacy_keeper')
+TASK_MODULES = (
+    'tasks.ai_pipeline',
+    'tasks.governance',
+    'tasks.periodic',
+    'tasks.restoration',
+    'tasks.story_weaver',
+)
+
+app = Celery('legacy_keeper', include=TASK_MODULES)
 app.config_from_object('django.conf:settings', namespace='CELERY')
+app.conf.imports = tuple(dict.fromkeys([*(app.conf.imports or ()), *TASK_MODULES]))
 app.autodiscover_tasks()
 
 app.conf.beat_schedule = {

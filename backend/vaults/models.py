@@ -32,6 +32,8 @@ class Memory(models.Model):
     ai_caption = models.TextField(blank=True)
     human_caption = models.TextField(blank=True, default='')
     tags = ArrayField(models.CharField(max_length=50), default=list, blank=True)
+    ai_suggestions = models.JSONField(default=dict, blank=True)
+    identified_people = models.ManyToManyField('lineage.Person', related_name='identified_memories', blank=True)
     
     # AI / ML Fields
     clip_embedding = VectorField(dimensions=512, null=True, blank=True) # For Vibe Search
@@ -42,6 +44,16 @@ class Memory(models.Model):
     is_favorite = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+class MemoryCollection(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name='memory_collections')
+    name = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('vault', 'name')
+        ordering = ['name']
 
 class Capsule(models.Model):
     STATUS_CHOICES = (
