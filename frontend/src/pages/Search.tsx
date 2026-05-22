@@ -74,9 +74,16 @@ export default function Search() {
     setTimeout(() => inputRef.current?.focus(), 100);
   };
 
+  const handleMemoryUpdate = (updatedMemory: any) => {
+    setSelectedMemory(updatedMemory);
+    setResults((current) => current.map((memory) =>
+      memory.id === updatedMemory.id ? { ...memory, ...updatedMemory } : memory
+    ));
+  };
+
   return (
     <div className="min-h-screen zone-light pt-[120px] pb-24 px-[clamp(24px,5vw,80px)] flex flex-col relative overflow-hidden">
-      <MemoryDetailModal isOpen={!!selectedMemory} onClose={() => setSelectedMemory(null)} memory={selectedMemory} />
+      <MemoryDetailModal isOpen={!!selectedMemory} onClose={() => setSelectedMemory(null)} memory={selectedMemory} onUpdate={handleMemoryUpdate} />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-[var(--clr-gold)] rounded-full blur-[200px] opacity-[0.03] pointer-events-none" />
 
       <div className={`max-w-[800px] mx-auto w-full transition-all duration-700 ease-[var(--ease-out)] ${hasSearched ? 'mb-12 scale-95' : 'mb-24 mt-[10vh] scale-100'}`}>

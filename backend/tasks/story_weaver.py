@@ -15,6 +15,7 @@ def generate_chronicle_task(self, person_id):
 
         memories = Memory.objects.filter(
             Q(detected_faces__person=person) |
+            Q(identified_people=person) |
             Q(title__icontains=person.name) |
             Q(tags__contains=[person.name])
         ).distinct().order_by('year')
@@ -44,11 +45,20 @@ def generate_chronicle_task(self, person_id):
         ollama_res = generate_with_ollama({
             "model": settings.OLLAMA_MODEL,
             "prompt": prompt,
-            "stream": False
-        }, timeout=90)
+            "stream": False,
+            "think": False,
+            "options": {
+                "temperature": 0.7,
+                "num_predict": 700,
+            },
+        }, timeout=180)
 
         person = Person.objects.get(id=person_id)
-        person.biography = ollama_res.json().get("response", "").strip()
+        biography = ollama_res.json().get("response", "").strip()
+        if not biography:
+            raise ValueError("Ollama returned an empty chronicle response.")
+
+        person.biography = biography
         person.active_story_task_id = None
         person.save()
         return {"status": "READY", "person_id": str(person.id)}

@@ -1,5 +1,7 @@
 import logging
 import os
+import socket
+import struct
 from urllib.parse import urlparse, urlunparse
 
 import requests
@@ -8,7 +10,7 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
-def _windows_host_from_wsl():
+def _is_wsl():
     is_wsl = os.path.exists("/proc/sys/fs/binfmt_misc/WSLInterop")
     if not is_wsl:
         try:
@@ -17,9 +19,23 @@ def _windows_host_from_wsl():
         except OSError:
             is_wsl = False
 
-    if not is_wsl:
+    return is_wsl
+
+
+def _default_gateway_from_proc_route():
+    try:
+        with open("/proc/net/route", "r", encoding="utf-8") as route_file:
+            for line in route_file.readlines()[1:]:
+                fields = line.strip().split()
+                if len(fields) >= 3 and fields[1] == "00000000":
+                    return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+    except (OSError, ValueError):
         return None
 
+    return None
+
+
+def _nameserver_from_resolv_conf():
     try:
         with open("/etc/resolv.conf", "r", encoding="utf-8") as resolv_conf:
             for line in resolv_conf:
@@ -30,6 +46,18 @@ def _windows_host_from_wsl():
         return None
 
     return None
+
+
+def _windows_hosts_from_wsl():
+    is_wsl = _is_wsl()
+    if not is_wsl:
+        return []
+
+    hosts = []
+    for host in (_default_gateway_from_proc_route(), _nameserver_from_resolv_conf()):
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts
 
 
 def _replace_host(url, host):
@@ -43,12 +71,20 @@ def ollama_url_candidates():
     configured_url = settings.OLLAMA_URL.rstrip("/")
     candidates = [configured_url]
     parsed = urlparse(configured_url)
+    configured_host = parsed.hostname
 
-    if parsed.hostname in {"localhost", "127.0.0.1"}:
+    if configured_host in {"localhost", "127.0.0.1"}:
         candidates.append(_replace_host(configured_url, "host.docker.internal"))
-        wsl_host = _windows_host_from_wsl()
-        if wsl_host:
+        for wsl_host in _windows_hosts_from_wsl():
             candidates.append(_replace_host(configured_url, wsl_host))
+    elif configured_host == "host.docker.internal":
+        for wsl_host in _windows_hosts_from_wsl():
+            candidates.append(_replace_host(configured_url, wsl_host))
+        candidates.append(_replace_host(configured_url, "localhost"))
+        candidates.append(_replace_host(configured_url, "127.0.0.1"))
+
+    for wsl_host in _windows_hosts_from_wsl():
+        candidates.append(_replace_host(configured_url, wsl_host))
 
     unique_candidates = []
     for candidate in candidates:
@@ -59,6 +95,7 @@ def ollama_url_candidates():
 
 def generate_with_ollama(payload, timeout):
     last_error = None
+    errors = []
 
     for base_url in ollama_url_candidates():
         try:
@@ -80,6 +117,12 @@ def generate_with_ollama(payload, timeout):
             raise
         except requests.exceptions.RequestException as exc:
             last_error = exc
+            errors.append(f"{base_url}: {exc}")
             logger.debug("Ollama local API failed at %s: %s", base_url, exc)
 
-    raise last_error
+    raise requests.exceptions.ConnectionError(
+        "Could not reach Ollama local API. Tried: "
+        f"{', '.join(ollama_url_candidates())}. "
+        "Start Ollama or set OLLAMA_URL to the reachable host. "
+        f"Errors: {' | '.join(errors)}"
+    ) from last_error

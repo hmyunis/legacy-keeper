@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Vault, UserPlus, CheckCircle, ArrowRight, Camera } from '@phosphor-icons/react';
 import { Button } from '../components/ui/Button';
-import { CustomSelect } from '../components/ui/CustomSelect';
+import { PlatformSelect } from '../components/ui/Select';
 import { useNavigate } from '@tanstack/react-router';
 import { sileo } from 'sileo';
 import { useInitVault, useFirstRelative } from '../features/auth/hooks/useAuth';
@@ -139,13 +139,17 @@ export default function Onboarding() {
                 <input type="text" value={relativeName} onChange={(e) => setRelativeName(e.target.value)} placeholder="Full Legal Name" className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 font-ui outline-none focus:border-[var(--clr-gold)]" />
                 <div className="grid grid-cols-2 gap-4">
                    <input type="text" value={birthYear} onChange={e => setBirthYear(e.target.value)} placeholder="Birth Year" className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 font-ui outline-none focus:border-[var(--clr-gold)]" />
-                   <CustomSelect value={relationship} onChange={e => setRelationship(e.target.value)} className="w-full bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 font-ui outline-none focus:border-[var(--clr-gold)]">
-                     <option>Relationship...</option>
-                     <option value="Myself">Myself</option>
-                     <option value="Parent">Parent</option>
-                     <option value="Child">Child</option>
-                     <option value="Spouse">Spouse</option>
-                   </CustomSelect>
+                   <PlatformSelect
+                     value={relationship}
+                     onValueChange={setRelationship}
+                     className="bg-[var(--clr-soot)] text-[var(--clr-linen)]"
+                     options={[
+                       { value: 'Myself', label: 'Myself' },
+                       { value: 'Parent', label: 'Parent' },
+                       { value: 'Child', label: 'Child' },
+                       { value: 'Spouse', label: 'Spouse' },
+                     ]}
+                   />
                 </div>
               </div>
               <Button variant="primary" onClick={nextStep} className="w-full py-5" disabled={firstRelativeMutation.isPending}>ESTABLISH LINEAGE</Button>

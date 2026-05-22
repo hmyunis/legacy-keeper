@@ -1,12 +1,14 @@
 from django.db.models import Q
 from vaults.serializers import MemorySerializer
+from vaults.models import Memory
 from rest_framework import views, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.shortcuts import get_object_or_404
 
 from .models import Person, KinshipEdge, PersonFaceEmbedding
-from core.models import VaultMember, get_accessible_vault_ids
+from core.models import VaultMember, get_accessible_vault_ids, ActionLog
 from .serializers import PersonSerializer, KinshipEdgeSerializer
 from tasks.story_weaver import generate_chronicle_task
 
@@ -17,7 +19,7 @@ class LineageGraphView(views.APIView):
         get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
         vault_ids = get_accessible_vault_ids(vault_id)
 
-        nodes = Person.objects.filter(vault_id__in=vault_ids)
+        nodes = Person.objects.filter(vault_id__in=vault_ids).select_related("vault")
         edges = KinshipEdge.objects.filter(vault_id__in=vault_ids)
 
         return Response({
@@ -31,39 +33,68 @@ class GraftBranchView(views.APIView):
     def post(self, request, vault_id):
         get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role__in=['ADMIN', 'CONTRIBUTOR'])
 
-        parent_id = request.data.get('parentId')
+        target_id = request.data.get("targetId")  # Pivot Node ID
+        existing_person_id = request.data.get("existingPersonId")
         name = request.data.get('name')
-        relationship_type = request.data.get('role', 'CHILD')
+        role = request.data.get("role", "")  # Person's curator identity role
+        relationship_type = request.data.get(
+            "relationshipType", "CHILD_OF"
+        )  # Edge type: 'PARENT_OF', 'CHILD_OF', 'SPOUSE_OF'
         birth_year = request.data.get('birthYear', '')
         death_year = request.data.get('deathYear', '')
 
-        new_person = Person.objects.create(
-            vault_id=vault_id,
-            name=name,
-            birth_year=birth_year,
-            death_year=death_year
-        )
+        vault_ids = get_accessible_vault_ids(vault_id)
+        linked_person = None
 
-        if parent_id:
-            vault_ids = get_accessible_vault_ids(vault_id)
-            parent = get_object_or_404(Person, id=parent_id, vault_id__in=vault_ids)
-
-            KinshipEdge.objects.create(
+        if existing_person_id:
+            linked_person = get_object_or_404(Person, id=existing_person_id, vault_id__in=vault_ids)
+        else:
+            linked_person = Person.objects.create(
                 vault_id=vault_id,
-                from_person=parent,
-                to_person=new_person,
-                relationship_type=relationship_type
+                name=name,
+                role=role,
+                birth_year=birth_year,
+                death_year=death_year
             )
 
-            if relationship_type == 'SPOUSE':
-                KinshipEdge.objects.create(
-                    vault_id=vault_id,
-                    from_person=new_person,
-                    to_person=parent,
-                    relationship_type='SPOUSE'
+        if target_id:
+            target = get_object_or_404(Person, id=target_id, vault_id__in=vault_ids)
+
+            if target.id == linked_person.id:
+                return Response(
+                    {"detail": "Cannot link a person to themselves."},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        return Response({"personId": str(new_person.id)}, status=status.HTTP_201_CREATED)
+            if relationship_type == "CHILD_OF":
+                KinshipEdge.objects.get_or_create(
+                    vault_id=vault_id,
+                    from_person=target,
+                    to_person=linked_person,
+                    relationship_type="PARENT_OF",
+                )
+            elif relationship_type == "PARENT_OF":
+                KinshipEdge.objects.get_or_create(
+                    vault_id=vault_id,
+                    from_person=linked_person,
+                    to_person=target,
+                    relationship_type="PARENT_OF",
+                )
+            elif relationship_type == "SPOUSE_OF":
+                KinshipEdge.objects.get_or_create(
+                    vault_id=vault_id,
+                    from_person=target,
+                    to_person=linked_person,
+                    relationship_type="SPOUSE_OF",
+                )
+                KinshipEdge.objects.get_or_create(
+                    vault_id=vault_id,
+                    from_person=linked_person,
+                    to_person=target,
+                    relationship_type="SPOUSE_OF",
+                )
+
+        return Response({"personId": str(linked_person.id)}, status=status.HTTP_201_CREATED)
 
 class GenerateChronicleView(views.APIView):
     permission_classes = [IsAuthenticated]
@@ -88,24 +119,31 @@ class PersonProfileView(views.APIView):
         get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
         person = get_object_or_404(Person, id=id, vault_id=vault_id)
 
-        from vaults.models import Memory
-        memories = Memory.objects.filter(detected_faces__person=person).distinct()
+        memories = Memory.objects.filter(
+            Q(detected_faces__person=person) | Q(identified_people=person)
+        ).distinct()
         memories_data = MemorySerializer(memories, many=True, context={'request': request}).data
 
         edges = KinshipEdge.objects.filter(Q(from_person=person) | Q(to_person=person))
         relatives = []
         for edge in edges:
             rel = edge.to_person if edge.from_person == person else edge.from_person
+            rel_type = edge.relationship_type
+            if edge.to_person == person and edge.relationship_type == "PARENT_OF":
+                rel_type = "CHILD_OF"
+            rel_photo = PersonSerializer(rel, context={"request": request}).data.get("photo")
             relatives.append({
                 "id": str(rel.id),
                 "name": rel.name,
                 "role": rel.role,
-                "avatar": rel.avatar_url or f"https://ui-avatars.com/api/?name={rel.name.replace(' ', '+')}&background=B88F5B&color=fff"
+                "relationship": rel_type,
+                "avatar": rel_photo,
             })
 
         return Response({
             "id": str(person.id),
             "name": person.name,
+            "photo": PersonSerializer(person, context={"request": request}).data.get("photo"),
             "biography": person.biography,
             "role": person.role,
             "birthYear": person.birth_year,
@@ -116,21 +154,61 @@ class PersonProfileView(views.APIView):
             "active_story_task_id": person.active_story_task_id
         })
 
+
+class PersonMemoryLinkView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, vault_id, id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role__in=['ADMIN', 'CONTRIBUTOR'])
+        person = get_object_or_404(Person, id=id, vault_id=vault_id)
+        memory_id = request.data.get('memory_id')
+
+        memory = get_object_or_404(Memory, id=memory_id, vault_id=vault_id)
+        memory.identified_people.add(person)
+
+        ActionLog.objects.create(
+            vault_id=vault_id, user=request.user, action_type='edit',
+            description=f"Manually tagged {person.name} in memory '{memory.title or 'Untitled'}'."
+        )
+        return Response({"status": "LINKED"})
+
+    def delete(self, request, vault_id, id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role__in=['ADMIN', 'CONTRIBUTOR'])
+        person = get_object_or_404(Person, id=id, vault_id=vault_id)
+        memory_id = request.data.get('memory_id')
+
+        memory = get_object_or_404(Memory, id=memory_id, vault_id=vault_id)
+        memory.identified_people.remove(person)
+
+        ActionLog.objects.create(
+            vault_id=vault_id, user=request.user, action_type='edit',
+            description=f"Removed manual tag of {person.name} from memory '{memory.title or 'Untitled'}'."
+        )
+        return Response({"status": "UNLINKED"})
+
 class PersonDetailView(views.APIView):
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def patch(self, request, vault_id, id):
         get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role__in=['ADMIN', 'CONTRIBUTOR'])
         person = get_object_or_404(Person, id=id, vault_id=vault_id)
 
+        if 'name' in request.data:
+            person.name = request.data.get('name') or person.name
         if 'biography' in request.data:
             person.biography = request.data.get('biography') or ''
         if 'role' in request.data:
-            person.role = request.data.get('role') or person.role
+            person.role = request.data.get('role') or ''
         if 'birthYear' in request.data:
             person.birth_year = request.data.get('birthYear') or ''
         if 'deathYear' in request.data:
             person.death_year = request.data.get('deathYear') or ''
+        if request.data.get("avatarRemove") == "true" and person.avatar:
+            person.avatar.delete(save=False)
+            person.avatar = None
+        if "avatar" in request.FILES:
+            person.avatar = request.FILES["avatar"]
 
         person.save()
         return Response(PersonSerializer(person, context={'request': request}).data)
@@ -139,9 +217,22 @@ class PersonDetailView(views.APIView):
         get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role__in=['ADMIN', 'CONTRIBUTOR'])
         person = get_object_or_404(Person, id=id, vault_id=vault_id)
 
+        reparent_id = request.data.get("reparentId")  # Safe delegation on lineage gaps
+        outgoing_edges = KinshipEdge.objects.filter(from_person=person, relationship_type="PARENT_OF")
+
+        if reparent_id:
+            reparent_to = get_object_or_404(Person, id=reparent_id, vault_id=vault_id)
+            for edge in outgoing_edges:
+                KinshipEdge.objects.get_or_create(
+                    vault_id=vault_id,
+                    from_person=reparent_to,
+                    to_person=edge.to_person,
+                    relationship_type="PARENT_OF",
+                )
+
         ActionLog.objects.create(
             vault_id=vault_id, user=request.user, action_type='delete',
-            description=f"Removed relative '{person.name}' from the lineage tree."
+            description=f"Removed relative '{person.name}' from the lineage tree. Children delegated safely."
         )
 
         person.delete()

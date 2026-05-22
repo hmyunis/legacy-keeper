@@ -35,7 +35,11 @@ export const vaultService = {
 
   getFilters: async (vaultId: string): Promise<MemoryFilters> => {
     const response = await axiosClient.get(`/vaults/${vaultId}/memories/filters/`);
-    return extractData<MemoryFilters>(response);
+    const data = extractData<Partial<MemoryFilters>>(response);
+    return {
+      clusters: Array.isArray(data?.clusters) ? data.clusters : [],
+      decades: Array.isArray(data?.decades) ? data.decades : [],
+    };
   },
 
   getCollections: async (vaultId: string): Promise<MemoryCollection[]> => {

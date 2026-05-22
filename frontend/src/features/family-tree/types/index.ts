@@ -6,12 +6,14 @@ export interface Person {
   birthYear?: string;
   deathYear?: string;
   biography?: string;
+  vaultId?: string;
+  vaultName?: string;
 }
 
 export interface KinshipEdge {
   from: string;
   to: string;
-  type: string;
+  type: string; // 'PARENT_OF' | 'SPOUSE_OF'
 }
 
 export interface FamilyTreeData {

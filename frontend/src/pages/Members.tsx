@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { UsersThree, UserPlus, LinkBreak, ShieldCheck, ArrowsMerge } from '@phosphor-icons/react';
 import { sileo } from 'sileo';
 import { Button } from '../components/ui/Button';
-import { CustomSelect } from '../components/ui/CustomSelect';
+import { PlatformSelect } from '../components/ui/Select';
 import { useMembers, useGovernanceActions } from '../features/governance/hooks/useGovernance';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axiosClient from '../services/axiosClient';
@@ -13,6 +13,7 @@ import { useAuthStore } from '../stores/authStore';
 export default function Members() {
   const [showInvite, setShowInvite] = useState(false);
   const [showPactModal, setShowPactModal] = useState(false);
+  const [inviteRole, setInviteRole] = useState('VIEWER');
   const queryClient = useQueryClient();
   const activeVaultId = useAuthStore((s) => s.activeVaultId);
 
@@ -40,7 +41,7 @@ export default function Members() {
   const handleInviteSubmit = async (e: any) => {
     e.preventDefault();
     const email = e.target.email.value;
-    const role = e.target.role.value;
+    const role = inviteRole;
 
     await sileo.promise(inviteMember.mutateAsync({ email, role }), {
       loading: { title: "Dispatching..." },
@@ -140,10 +141,15 @@ export default function Members() {
                 <h2 className="font-display text-2xl uppercase tracking-widest mb-6">Invite Relative</h2>
                 <form onSubmit={handleInviteSubmit} className="space-y-4">
                   <input required type="email" name="email" placeholder="Email Address" className="w-full bg-[var(--clr-linen)] border border-[var(--clr-aged)] rounded-full px-6 py-4 outline-none focus:border-[var(--clr-gold)]" />
-                  <CustomSelect name="role" className="w-full bg-[var(--clr-linen)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 outline-none focus:border-[var(--clr-gold)]">
-                    <option value="VIEWER">Viewer (See only)</option>
-                    <option value="CONTRIBUTOR">Contributor (Upload & Label)</option>
-                  </CustomSelect>
+                  <PlatformSelect
+                    name="role"
+                    value={inviteRole}
+                    onValueChange={setInviteRole}
+                    options={[
+                      { value: 'VIEWER', label: 'Viewer (See only)' },
+                      { value: 'CONTRIBUTOR', label: 'Contributor (Upload & Label)' },
+                    ]}
+                  />
                   <Button variant="primary" type="submit" className="w-full" disabled={inviteMember.isPending}>
                     {inviteMember.isPending ? 'SENDING...' : 'SEND INVITATION'}
                   </Button>

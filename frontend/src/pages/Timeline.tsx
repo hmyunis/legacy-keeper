@@ -27,7 +27,7 @@ export default function Timeline() {
 
   return (
     <div className="min-h-screen bg-[var(--clr-parchment)] flex flex-col zone-light pt-[var(--space-8)] relative overflow-hidden">
-      <MemoryDetailModal isOpen={!!selectedMemory} onClose={() => setSelectedMemory(null)} memory={selectedMemory} />
+      <MemoryDetailModal isOpen={!!selectedMemory} onClose={() => setSelectedMemory(null)} memory={selectedMemory} onUpdate={setSelectedMemory} />
 
       <div className="px-[clamp(24px,5vw,80px)] max-w-[var(--max-width)] mx-auto w-full mb-16 relative z-10">
         <h1 className="font-display font-semibold text-[var(--type-h1)] text-[var(--clr-ink)] tracking-[0.03em] uppercase text-center mb-2">CHRONOLOGY</h1>

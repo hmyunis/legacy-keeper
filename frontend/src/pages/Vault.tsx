@@ -339,7 +339,9 @@ export default function Vault() {
 
   const { data: filteredMemories = [], isFetching: isFetchingMemories } = useFilteredMemories(filterParams);
 
-  const allCategories = ['All', ...filters.clusters];
+  const filterClusters = Array.isArray(filters.clusters) ? filters.clusters : [];
+  const filterDecades = Array.isArray(filters.decades) ? filters.decades : [];
+  const allCategories = ['All', ...filterClusters];
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -590,7 +592,7 @@ export default function Vault() {
                           >
                             All Eras
                           </button>
-                          {filters.decades.map(dec => (
+                          {filterDecades.map(dec => (
                             <button
                               key={dec}
                               onClick={() => setSelectedDecade(selectedDecade === dec ? '' : dec)}

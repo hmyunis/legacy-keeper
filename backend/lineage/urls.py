@@ -9,4 +9,5 @@ urlpatterns = [
     path('<uuid:vault_id>/lineage/person/<uuid:id>/', views.PersonDetailView.as_view(), name='person-detail'),
     path('<uuid:vault_id>/lineage/person/<uuid:id>/generate-chronicle/', views.GenerateChronicleView.as_view(), name='generate-chronicle'),
     path('<uuid:vault_id>/lineage/person/<uuid:id>/profile/', views.PersonProfileView.as_view(), name='person-profile'),
+    path('<uuid:vault_id>/lineage/person/<uuid:id>/link-memory/', views.PersonMemoryLinkView.as_view(), name='person-memory-link'),
 ]

@@ -223,6 +223,7 @@ export default function Dashboard() {
         isOpen={!!selectedMemory}
         onClose={() => setSelectedMemory(null)}
         memory={selectedMemory}
+        onUpdate={setSelectedMemory}
       />
 
       <DashboardHero textX={textX} textY={textY} bgX={bgX} bgY={bgY} summary={summary} members={members} />

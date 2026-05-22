@@ -325,7 +325,12 @@ def process_memory_task(self, memory_id):
                 "model": settings.OLLAMA_MODEL,
                 "prompt": prompt,
                 "format": "json",
-                "stream": False
+                "stream": False,
+                "think": False,
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 500,
+                },
             }, timeout=60)
 
             enrichment = parse_json_object(ollama_res.json().get("response", ""))

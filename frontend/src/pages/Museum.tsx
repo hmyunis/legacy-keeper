@@ -38,7 +38,7 @@ export default function Museum() {
 
   return (
     <div className="w-screen h-screen bg-[#0E0C0B] overflow-hidden fixed inset-0 z-50 text-[var(--clr-linen)] font-ui">
-      <MemoryDetailModal isOpen={!!selectedExhibit} onClose={() => setSelectedExhibit(null)} memory={selectedExhibit} />
+      <MemoryDetailModal isOpen={!!selectedExhibit} onClose={() => setSelectedExhibit(null)} memory={selectedExhibit} onUpdate={setSelectedExhibit} />
 
       <Suspense fallback={<div className="flex items-center justify-center h-full w-full"><p className="font-script text-[48px] text-[var(--clr-gold)] animate-pulse">"Lighting the gallery..."</p></div>}>
         <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
