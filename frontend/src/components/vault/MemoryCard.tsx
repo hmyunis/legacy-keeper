@@ -5,6 +5,7 @@ import { useUpdateMemory } from '../../features/vault/hooks/useVault';
 import { Tooltip } from '../ui/Tooltip';
 import { AiMarker } from '../ui/AiMarker';
 import { isAiGeneratedTag, isAiGeneratedTitle } from '../../features/vault/lib/aiMarkers';
+import { detectVaultMediaType } from '../../features/vault/lib/mediaType';
 
 interface MemoryCardProps {
   memory: {
@@ -24,6 +25,7 @@ export default function MemoryCard({ memory }: MemoryCardProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [isFavorite, setIsFavorite] = useState(memory.is_favorite || false);
   const updateMutation = useUpdateMemory();
+  const mediaType = detectVaultMediaType(memory.url, memory.exif_json);
 
   useEffect(() => {
     setIsFavorite(memory.is_favorite || false);
@@ -53,13 +55,41 @@ export default function MemoryCard({ memory }: MemoryCardProps) {
       onMouseLeave={() => setIsHovered(false)}
     >
       <div className="relative aspect-[4/3] overflow-hidden bg-[var(--clr-soot)]">
-        <motion.img
-          src={memory.url}
-          animate={{ scale: isHovered ? 1.08 : 1 }}
-          transition={{ duration: 6, ease: "linear" }}
-          className="w-full h-full object-cover"
-          alt={memory.title}
-        />
+        {mediaType === 'video' ? (
+          <motion.video
+            src={memory.url}
+            animate={{ scale: isHovered ? 1.04 : 1 }}
+            transition={{ duration: 6, ease: "linear" }}
+            className="w-full h-full object-cover"
+            muted
+            loop
+            playsInline
+            autoPlay
+            preload="metadata"
+          />
+        ) : mediaType === 'audio' ? (
+          <div className="w-full h-full bg-[radial-gradient(circle_at_20%_20%,rgba(184,143,91,0.25),transparent_50%),linear-gradient(135deg,rgba(30,26,23,0.95),rgba(44,36,32,0.95))] flex items-center justify-center px-4 text-center">
+            <div>
+              <p className="font-display text-[1.2rem] uppercase tracking-widest text-[var(--clr-gold-light)]">Audio</p>
+              <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-fog)] mt-1">Sound Memory</p>
+            </div>
+          </div>
+        ) : mediaType === 'pdf' ? (
+          <div className="w-full h-full bg-[linear-gradient(135deg,rgba(247,244,239,1),rgba(232,223,203,0.95))] flex items-center justify-center px-4 text-center">
+            <div>
+              <p className="font-display text-[1.2rem] uppercase tracking-widest text-[var(--clr-gold-dark)]">PDF</p>
+              <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-dust)] mt-1">Document Preview</p>
+            </div>
+          </div>
+        ) : (
+          <motion.img
+            src={memory.url}
+            animate={{ scale: isHovered ? 1.08 : 1 }}
+            transition={{ duration: 6, ease: "linear" }}
+            className="w-full h-full object-cover"
+            alt={memory.title}
+          />
+        )}
 
         {memory.is_duplicate && (
           <div className="absolute top-3 left-3 bg-amber-600/90 text-white px-2 py-1 rounded text-[9px] font-bold uppercase tracking-tighter backdrop-blur-md">

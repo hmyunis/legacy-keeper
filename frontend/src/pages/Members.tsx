@@ -1,62 +1,99 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UsersThree, UserPlus, LinkBreak, ShieldCheck, ArrowsMerge } from '@phosphor-icons/react';
 import { sileo } from 'sileo';
 import { Button } from '../components/ui/Button';
 import { PlatformSelect } from '../components/ui/Select';
-import { useMembers, useGovernanceActions } from '../features/governance/hooks/useGovernance';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import axiosClient from '../services/axiosClient';
-import { extractList } from '../services/responseExtractor';
+import { useMembers, useInvitations, usePacts, usePactHistory, useGovernanceActions } from '../features/governance/hooks/useGovernance';
 import { useAuthStore } from '../stores/authStore';
 
 export default function Members() {
   const [showInvite, setShowInvite] = useState(false);
   const [showPactModal, setShowPactModal] = useState(false);
   const [inviteRole, setInviteRole] = useState('VIEWER');
-  const queryClient = useQueryClient();
-  const activeVaultId = useAuthStore((s) => s.activeVaultId);
+  const [pactError, setPactError] = useState<string | null>(null);
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const canAdmin = currentUser?.role === 'ADMIN';
 
   const { data: members = [] } = useMembers();
-  const { inviteMember, removeMember, requestPact } = useGovernanceActions();
-
-  const { data: allPacts = [] } = useQuery({
-    queryKey: ['allPacts', activeVaultId],
-    queryFn: () => axiosClient.get(`/vaults/${activeVaultId}/pacts/`).then(extractList),
-    enabled: !!activeVaultId,
-  });
+  const { data: invitations = [] } = useInvitations(canAdmin);
+  const { data: allPacts = [], isLoading: isLoadingPacts } = usePacts();
+  const { data: pactHistory = [] } = usePactHistory();
+  const { inviteMember, removeMember, requestPact, actOnPact, revokeInvitation } = useGovernanceActions();
 
   const incomingPacts = allPacts.filter((p: any) => p.is_incoming);
   const outgoingPacts = allPacts.filter((p: any) => !p.is_incoming);
+  const invitationGroups = {
+    PENDING: invitations.filter((invite: any) => invite.status === 'PENDING'),
+    ACCEPTED: invitations.filter((invite: any) => invite.status === 'ACCEPTED'),
+    REJECTED: invitations.filter((invite: any) => invite.status === 'REJECTED'),
+    REVOKED: invitations.filter((invite: any) => invite.status === 'REVOKED'),
+  };
 
-  const handlePactResponse = async (pactId: string, action: 'ACCEPT' | 'REJECT') => {
-    await sileo.promise(axiosClient.post(`/vaults/${activeVaultId}/pacts/${pactId}/action/`, { action }), {
-      loading: { title: "Processing Pact..." },
-      success: { title: "Pact Updated" },
-      error: { title: "Failed to Update Pact" }
+  useEffect(() => {
+    if (!showPactModal) {
+      setPactError(null);
+    }
+  }, [showPactModal]);
+
+  const handlePactResponse = async (pactId: string, action: 'ACCEPT' | 'REJECT', mode: 'incoming' | 'outgoing') => {
+    await sileo.promise(actOnPact.mutateAsync({ pactId, action }), {
+      loading: { title: action === 'ACCEPT' ? "Accepting Pact..." : "Updating Pact..." },
+      success: action === 'ACCEPT'
+        ? { title: "Pact Accepted", description: "Lineages are now connected." }
+        : mode === 'incoming'
+          ? { title: "Pact Declined" }
+          : { title: "Pact Revoked" },
+      error: (err: any) => ({
+        title: "Failed to Update Pact",
+        description: err?.response?.data?.error || "Could not process the pact request."
+      })
     });
-    queryClient.invalidateQueries({ queryKey: ['allPacts'] });
   };
 
   const handleInviteSubmit = async (e: any) => {
     e.preventDefault();
-    const email = e.target.email.value;
+    const email = (e.target.email.value || '').trim().toLowerCase();
     const role = inviteRole;
 
     await sileo.promise(inviteMember.mutateAsync({ email, role }), {
       loading: { title: "Dispatching..." },
-      success: () => { setShowInvite(false); return { title: "Invitation Sent", description: `Registry keys sent to ${email}.` }; },
-      error: { title: "Failed to Invite" }
+      success: () => {
+        setShowInvite(false);
+        return { title: "Invitation Sent", description: `Registry keys sent to ${email}.` };
+      },
+      error: (err: any) => ({
+        title: "Failed to Invite",
+        description: err?.response?.data?.error || "Could not dispatch invitation."
+      })
     });
   };
 
   const handlePactRequest = async (e: any) => {
     e.preventDefault();
-    await sileo.promise(requestPact.mutateAsync({ email: e.target.email.value }), {
-      loading: { title: "Requesting Federation..." },
-      success: () => { setShowPactModal(false); return { title: "Pact Dispatched", description: "Lineage connection requested." }; },
-      error: { title: "Request Failed" }
-    });
+    const email = (e.target.email.value || '').trim().toLowerCase();
+    setPactError(null);
+
+    try {
+      const res = await sileo.promise(requestPact.mutateAsync({ email }), {
+        loading: { title: "Requesting Federation..." },
+        success: (successRes: any) => {
+          setShowPactModal(false);
+          if (successRes?.status === 'INVITATION_SENT') {
+            return { title: "Curator Invited", description: "They need to become a vault admin before pacting." };
+          }
+          return { title: "Pact Dispatched", description: "Lineage connection requested." };
+        },
+        error: (err: any) => ({
+          title: "Request Failed",
+          description: err?.response?.data?.error || "Could not dispatch pact request."
+        })
+      });
+
+      return res;
+    } catch (err: any) {
+      setPactError(err?.response?.data?.error || "Could not dispatch pact request.");
+    }
   };
 
   const handleRemoveMember = (id: string, name: string) => {
@@ -64,6 +101,14 @@ export default function Members() {
       loading: { title: "Revoking Access..." },
       success: { title: "Access Revoked", description: `Keys disabled for ${name}.` },
       error: { title: "Error", description: "Cannot remove vault admin." }
+    });
+  };
+
+  const handleRevokeInvite = (invitationId: string, email: string) => {
+    sileo.promise(revokeInvitation.mutateAsync(invitationId), {
+      loading: { title: "Revoking Invitation..." },
+      success: { title: "Invitation Revoked", description: `Invite cancelled for ${email}.` },
+      error: { title: "Failed to Revoke" }
     });
   };
 
@@ -78,42 +123,138 @@ export default function Members() {
             <h1 className="font-display text-[2.5rem] text-[var(--clr-ink)] uppercase">Vault Governance</h1>
           </div>
           <div className="flex gap-3">
-            <Button variant="ghost" onClick={() => setShowPactModal(true)}><ArrowsMerge size={18} /> LINEAGE PACT</Button>
-            <Button variant="primary" onClick={() => setShowInvite(true)}><UserPlus size={18} weight="bold" /> INVITE KIN</Button>
+            {canAdmin && (
+              <Button variant="ghost" onClick={() => setShowPactModal(true)}><ArrowsMerge size={18} /> LINEAGE PACT</Button>
+            )}
+            {canAdmin && (
+              <Button variant="primary" onClick={() => setShowInvite(true)}><UserPlus size={18} weight="bold" /> INVITE KIN</Button>
+            )}
           </div>
         </header>
 
-        {incomingPacts.length > 0 && (
-          <div className="mb-8 p-6 bg-[var(--clr-gold-muted)] border border-[var(--clr-gold)] rounded-2xl">
-            <h4 className="font-display font-bold text-[var(--clr-gold-dark)] mb-4 uppercase tracking-widest">Incoming Requests</h4>
-            {incomingPacts.map((p: any) => (
-              <div key={p.id} className="flex justify-between items-center bg-white/50 p-4 rounded-xl">
-                <p className="font-ui text-sm text-[var(--clr-ink)]">Request to merge trees from <strong>{p.requester_name}</strong></p>
-                <div className="flex gap-2">
-                  <Button variant="primary" className="py-2 px-4 text-[10px]" onClick={() => handlePactResponse(p.id, 'ACCEPT')}>ACCEPT</Button>
-                  <Button variant="ghost" className="py-2 px-4 text-[10px]" onClick={() => handlePactResponse(p.id, 'REJECT')}>DECLINE</Button>
-                </div>
-              </div>
-            ))}
+        {invitations.length > 0 && (
+          <div className="mb-8 p-6 bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-2xl">
+            <h4 className="font-ui text-[10px] font-black text-[var(--clr-dust)] mb-4 uppercase tracking-[0.2em]">Invitations</h4>
+            <div className="space-y-4">
+              {(['PENDING', 'ACCEPTED', 'REJECTED', 'REVOKED'] as const).map((status) => {
+                const items = invitationGroups[status];
+                if (items.length === 0) return null;
+                return (
+                  <div key={status} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="font-ui text-[10px] font-black text-[var(--clr-dust)] uppercase tracking-[0.2em]">{status}</p>
+                      <span className="font-ui text-[10px] font-black text-[var(--clr-gold-dark)] uppercase tracking-widest">{items.length}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {items.map((invite: any) => (
+                        <div key={invite.id} className="flex justify-between items-center bg-white/50 p-4 rounded-xl gap-4">
+                          <div>
+                            <p className="font-ui text-sm text-[var(--clr-ink)]"><strong>{invite.email}</strong></p>
+                            <p className="font-ui text-[11px] text-[var(--clr-dust)] uppercase tracking-widest">{invite.role} · {invite.vaultName || 'Vault'}</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="font-ui text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border bg-[var(--clr-paper)] text-[var(--clr-dust)] border-[var(--clr-aged)]">
+                              {invite.status}
+                            </span>
+                            {canAdmin && invite.status === 'PENDING' && (
+                              <button
+                                onClick={() => handleRevokeInvite(invite.id, invite.email)}
+                                className="text-[10px] font-bold text-[var(--clr-danger)] uppercase hover:underline"
+                              >
+                                Revoke
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
-        {outgoingPacts.length > 0 && (
-          <div className="mb-12 p-6 bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-2xl">
-            <h4 className="font-ui text-[10px] font-black text-[var(--clr-dust)] mb-4 uppercase tracking-[0.2em]">Sent Requests (Awaiting Response)</h4>
-            {outgoingPacts.map((p: any) => (
-              <div key={p.id} className="flex justify-between items-center opacity-70">
-                <p className="font-ui text-sm text-[var(--clr-ink)]">Request sent to <strong>{p.target_vault_name}</strong></p>
-                <button
-                  onClick={() => handlePactResponse(p.id, 'REJECT')}
-                  className="text-[10px] font-bold text-[var(--clr-danger)] uppercase hover:underline"
-                >
-                  Revoke
-                </button>
-              </div>
-            ))}
+        <section className="mb-12 p-6 bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-2xl">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="font-ui text-[10px] font-black text-[var(--clr-dust)] uppercase tracking-[0.2em]">Lineage Pacts</h4>
+            <span className="font-ui text-[10px] font-black text-[var(--clr-gold-dark)] uppercase tracking-widest">
+              {incomingPacts.length + outgoingPacts.length} Pending
+            </span>
           </div>
-        )}
+
+          {isLoadingPacts && (
+            <p className="font-ui text-sm text-[var(--clr-dust)]">Loading pact requests...</p>
+          )}
+
+          {!isLoadingPacts && incomingPacts.length === 0 && outgoingPacts.length === 0 && (
+            <p className="font-ui text-sm text-[var(--clr-dust)]">No pending lineage pacts.</p>
+          )}
+
+          {incomingPacts.length > 0 && (
+            <div className="space-y-3 mb-4">
+              {incomingPacts.map((p: any) => (
+                <div key={p.id} className="flex justify-between items-center bg-[var(--clr-gold-muted)] border border-[var(--clr-gold)] p-4 rounded-xl">
+                  <p className="font-ui text-sm text-[var(--clr-ink)]">Request to merge trees from <strong>{p.requester_name}</strong></p>
+                  {canAdmin && (
+                    <div className="flex gap-2">
+                      <Button variant="primary" className="py-2 px-4 text-[10px]" onClick={() => handlePactResponse(p.id, 'ACCEPT', 'incoming')}>ACCEPT</Button>
+                      <Button variant="ghost" className="py-2 px-4 text-[10px]" onClick={() => handlePactResponse(p.id, 'REJECT', 'incoming')}>DECLINE</Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {outgoingPacts.length > 0 && (
+            <div className="space-y-2">
+              {outgoingPacts.map((p: any) => (
+                <div key={p.id} className="flex justify-between items-center opacity-90 bg-white/50 p-4 rounded-xl">
+                  <p className="font-ui text-sm text-[var(--clr-ink)]">Request sent to <strong>{p.target_vault_name}</strong></p>
+                  {canAdmin && (
+                    <button
+                      onClick={() => handlePactResponse(p.id, 'REJECT', 'outgoing')}
+                      className="text-[10px] font-bold text-[var(--clr-danger)] uppercase hover:underline"
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="mb-12 p-6 bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-2xl">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="font-ui text-[10px] font-black text-[var(--clr-dust)] uppercase tracking-[0.2em]">Connected Vaults</h4>
+            <span className="font-ui text-[10px] font-black text-[var(--clr-gold-dark)] uppercase tracking-widest">
+              {pactHistory.length} Active
+            </span>
+          </div>
+
+          {pactHistory.length === 0 ? (
+            <p className="font-ui text-sm text-[var(--clr-dust)]">No active lineage pacts yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {pactHistory.map((p: any) => {
+                const counterpartName = p.is_incoming ? p.requester_name : p.target_vault_name;
+                const connectedOn = p.created_at ? new Date(p.created_at).toLocaleDateString() : 'Unknown';
+                return (
+                  <div key={p.id} className="flex items-center justify-between bg-white/50 p-4 rounded-xl">
+                    <p className="font-ui text-sm text-[var(--clr-ink)]">
+                      Linked with <strong>{counterpartName}</strong>
+                    </p>
+                    <span className="font-ui text-[10px] font-black text-[var(--clr-dust)] uppercase tracking-widest">
+                      Since {connectedOn}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
 
         <div className="space-y-4">
           {members.map((member: any, i: number) => (
@@ -134,7 +275,7 @@ export default function Members() {
         </div>
 
         <AnimatePresence>
-          {showInvite && (
+          {showInvite && canAdmin && (
             <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setShowInvite(false)} />
               <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="relative w-full max-w-lg bg-[var(--clr-parchment)] border-2 border-[var(--clr-gold)] rounded-[var(--radius-lg)] p-10 shadow-2xl">
@@ -172,6 +313,11 @@ export default function Members() {
                   </p>
                   <form onSubmit={handlePactRequest} className="space-y-4">
                     <input type="email" name="email" placeholder="Partner's Email Address" required className="w-full bg-[var(--clr-linen)] border border-[var(--clr-aged)] rounded-full px-6 py-4 outline-none focus:border-[var(--clr-gold)]" />
+                    {pactError && (
+                      <p className="rounded-2xl border border-[rgba(139,58,58,0.35)] bg-[rgba(139,58,58,0.08)] px-4 py-3 text-left font-ui text-[12px] text-[var(--clr-danger)]">
+                        {pactError}
+                      </p>
+                    )}
                     <div className="bg-[var(--clr-paper)] p-4 rounded-xl text-left flex gap-3">
                       <ShieldCheck size={32} className="text-[var(--clr-gold)] shrink-0" />
                       <p className="font-ui text-[11px] text-[var(--clr-ink)] leading-tight">

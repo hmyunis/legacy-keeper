@@ -13,9 +13,10 @@ import { CustomDatePicker } from '../components/ui/CustomDatePicker';
 import { Tooltip } from '../components/ui/Tooltip';
 import { AiMarker } from '../components/ui/AiMarker';
 import MemoryCard from '../components/vault/MemoryCard';
+import VaultMediaSurface from '../components/vault/VaultMediaSurface';
 import MemoryDetailModal from '../features/vault/MemoryDetailModal';
 import { Breadcrumbs } from '../components/ui/Breadcrumbs';
-import { useMemorySuggestionDecision, useUploadMemory, useVaultClusters, useFilteredMemories, useMemoryFilters, useUpdateMemory } from '../features/vault/hooks/useVault';
+import { useMemorySuggestionDecision, useUploadMemory, useVaultClusters, useInfiniteFilteredMemories, useMemoryFilters, useUpdateMemory } from '../features/vault/hooks/useVault';
 import { useDashboardSummary } from '../features/dashboard/hooks/useDashboard';
 import type { VaultMemory } from '../features/vault/types';
 import { pollTask } from '../lib/tasks';
@@ -23,6 +24,7 @@ import { useDebouncedValue } from '../lib/debounce';
 import { useQueryClient } from '@tanstack/react-query';
 import axiosClient from '../services/axiosClient';
 import { getPendingSuggestion, isAiGeneratedTag } from '../features/vault/lib/aiMarkers';
+import { detectVaultMediaType } from '../features/vault/lib/mediaType';
 
 const ORBIT_RADIUS = 16;
 const FRAME_CORNERS = [
@@ -165,9 +167,10 @@ function OrbitingCluster({
 }) {
   const x = Math.sin(cluster.angle) * radius;
   const z = Math.cos(cluster.angle) * radius;
+  const renderableMemories = cluster.memories.filter((mem: VaultMemory) => detectVaultMediaType(mem.url, mem.exif_json) === 'image');
 
   const ROWS = 2;
-  const count = cluster.memories.length;
+  const count = renderableMemories.length;
   const cols = Math.ceil(count / ROWS);
   const SPACING_X = 3.05;
   const SPACING_Y = 3.7;
@@ -176,7 +179,7 @@ function OrbitingCluster({
     <group position={[x, 0, z]} rotation={[0, cluster.angle, 0]}>
       {!isFaded && <SpotLight position={[0, 5, 4]} angle={0.9} penumbra={0.6} intensity={4} color="#D4A96A" distance={20} />}
 
-      {cluster.memories.map((mem: VaultMemory, i: number) => {
+      {renderableMemories.map((mem: VaultMemory, i: number) => {
         const r = i % ROWS;
         const c = Math.floor(i / ROWS);
         const xOffset = -((cols - 1) * SPACING_X) / 2 + c * SPACING_X;
@@ -294,6 +297,7 @@ function SceneLoader() {
 
 export default function Vault() {
   const [viewMode, setViewMode] = useState<'3D' | '2D'>('3D');
+  const [isWebglAvailable, setIsWebglAvailable] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<any[]>([]);
   const [isReviewPanelOpen, setIsReviewPanelOpen] = useState(false);
@@ -306,10 +310,12 @@ export default function Vault() {
   const [showFilters, setShowFilters] = useState(false);
   const [showFavorites, setShowFavorites] = useState(() => new URLSearchParams(window.location.search).get('favorites') === 'true');
   const [selectedDecade, setSelectedDecade] = useState('');
+  const [selectedFileType, setSelectedFileType] = useState<'ALL' | 'image' | 'video' | 'audio' | 'pdf'>('ALL');
 
   const debouncedSearch = useDebouncedValue(searchInput, 400);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   const { data: dynamicClusters = [] } = useVaultClusters();
   const { data: filters = { clusters: [], decades: [] } } = useMemoryFilters();
   const { data: summary } = useDashboardSummary();
@@ -333,15 +339,36 @@ export default function Vault() {
     q: debouncedSearch || undefined,
     cluster: activeCategory !== 'All' ? activeCategory : undefined,
     decade: selectedDecade || undefined,
+    file_type: selectedFileType !== 'ALL' ? selectedFileType : undefined,
     reviewed: true,
     is_favorite: showFavorites ? true : undefined,
   };
 
-  const { data: filteredMemories = [], isFetching: isFetchingMemories } = useFilteredMemories(filterParams);
+  const {
+    data: pagedMemories,
+    isLoading: isLoadingMemories,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteFilteredMemories(filterParams);
+
+  const filteredMemories = pagedMemories?.pages.flatMap((page) => page.results) ?? [];
+  const totalFilteredCount = pagedMemories?.pages?.[0]?.count ?? filteredMemories.length;
+  const isFetchingMemories = isLoadingMemories;
 
   const filterClusters = Array.isArray(filters.clusters) ? filters.clusters : [];
   const filterDecades = Array.isArray(filters.decades) ? filters.decades : [];
   const allCategories = ['All', ...filterClusters];
+
+  useEffect(() => {
+    const canvas = document.createElement('canvas');
+    const hasWebgl =
+      !!canvas.getContext('webgl2') ||
+      !!canvas.getContext('webgl') ||
+      !!canvas.getContext('experimental-webgl');
+    setIsWebglAvailable(hasWebgl);
+    if (!hasWebgl) setViewMode('2D');
+  }, []);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -352,6 +379,30 @@ export default function Vault() {
     }
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
   }, [showFavorites]);
+
+  useEffect(() => {
+    if (viewMode !== '2D') return;
+    const target = loadMoreRef.current;
+    if (!target) return;
+    if (!hasNextPage || isFetchingNextPage) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (entry?.isIntersecting && hasNextPage && !isFetchingNextPage) {
+          void fetchNextPage();
+        }
+      },
+      {
+        root: null,
+        rootMargin: '400px',
+        threshold: 0.1,
+      }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, viewMode]);
 
   const handleFiles = async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
@@ -422,7 +473,8 @@ export default function Vault() {
           human_caption: reviewNote,
           is_reviewed: true,
           date: pendingCuration.date || null,
-          location: pendingCuration.location || ''
+          location: pendingCuration.location || '',
+          tags: pendingCuration.tags || []
         }
       }),
       {
@@ -434,6 +486,16 @@ export default function Vault() {
         error: { title: "Failed to verify memory" }
       }
     ).finally(() => setIsConfirmingReview(false));
+  };
+
+  const handleRemoveReviewTag = (tagToRemove: string) => {
+    setPendingCuration((prev: any) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        tags: (prev.tags || []).filter((tag: string) => tag !== tagToRemove)
+      };
+    });
   };
 
   const handleReviewSuggestionDecision = async (field: string, action: 'accept' | 'reject') => {
@@ -452,9 +514,9 @@ export default function Vault() {
 
   const vaultHeader = (
     <div className={`flex flex-col ${viewMode === '3D' ? 'pointer-events-none' : ''}`}>
-      <div className={viewMode === '3D' ? 'pointer-events-auto' : ''}>
-        <Breadcrumbs />
-      </div>
+          <div className={viewMode === '3D' ? 'pointer-events-auto' : ''}>
+            <Breadcrumbs />
+          </div>
       <div className="px-[clamp(24px,5vw,80px)] flex flex-col md:flex-row justify-between items-start pb-6">
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className={viewMode === '3D' ? 'pointer-events-auto' : ''}>
           <div className="inline-flex items-center gap-2 px-4 py-1 bg-[rgba(184,143,91,0.15)] border border-[rgba(184,143,91,0.3)] rounded-full text-[var(--clr-gold)] font-ui text-[10px] uppercase font-bold tracking-[0.2em] mb-4 shadow-[var(--shadow-md)]">
@@ -463,14 +525,27 @@ export default function Vault() {
           <h1 className="font-display font-semibold text-[3.5rem] text-[var(--clr-linen)] tracking-widest uppercase leading-none drop-shadow-2xl">The Archive</h1>
           {viewMode === '2D' && (
             <p className="font-script text-[48px] text-[var(--clr-gold)] leading-[1] mt-4 drop-shadow-md">
-              &ldquo;{filteredMemories.length} exhibits curated&rdquo;
+              &ldquo;{totalFilteredCount} exhibits curated&rdquo;
             </p>
           )}
         </motion.div>
 
         <div className={`mt-6 md:mt-0 flex flex-wrap items-center gap-4 ${viewMode === '3D' ? 'pointer-events-auto' : ''}`}>
           <div className="flex bg-[rgba(20,18,17,0.6)] backdrop-blur-md p-1 rounded-full border border-[rgba(184,143,91,0.3)] shadow-inner">
-            <button onClick={() => setViewMode('3D')} className={`px-5 py-2 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all ${viewMode === '3D' ? 'bg-[var(--clr-gold)] text-black shadow-md' : 'text-[var(--clr-fog)] hover:text-white'}`}>Orbit</button>
+            <button
+              onClick={() => setViewMode('3D')}
+              disabled={!isWebglAvailable}
+              title={!isWebglAvailable ? 'WebGL unavailable in this browser/environment' : undefined}
+              className={`px-5 py-2 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all ${
+                !isWebglAvailable
+                  ? 'text-[var(--clr-dust)] opacity-50 cursor-not-allowed'
+                  : viewMode === '3D'
+                    ? 'bg-[var(--clr-gold)] text-black shadow-md'
+                    : 'text-[var(--clr-fog)] hover:text-white'
+              }`}
+            >
+              Orbit
+            </button>
             <button onClick={() => setViewMode('2D')} className={`px-5 py-2 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all ${viewMode === '2D' ? 'bg-[var(--clr-gold)] text-black shadow-md' : 'text-[var(--clr-fog)] hover:text-white'}`}>Grid</button>
           </div>
           {canContribute && (
@@ -495,7 +570,7 @@ export default function Vault() {
     >
 
       {/* --- 3D ORBIT VIEW --- */}
-      {viewMode === '3D' && (
+      {viewMode === '3D' && isWebglAvailable && (
         <>
           <div className="absolute inset-0 z-0">
             <Suspense fallback={<SceneLoader />}>
@@ -509,6 +584,20 @@ export default function Vault() {
             {vaultHeader}
           </div>
         </>
+      )}
+
+      {viewMode === '3D' && !isWebglAvailable && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center">
+          <div className="max-w-xl rounded-[var(--radius-lg)] border border-[var(--clr-aged)] bg-[rgba(20,18,17,0.8)] p-6 shadow-2xl">
+            <h3 className="font-display text-2xl uppercase tracking-widest text-[var(--clr-linen)]">3D View Unavailable</h3>
+            <p className="mt-3 font-ui text-sm text-[var(--clr-fog)]">
+              WebGL is disabled in this browser or system. The vault is available in Grid mode.
+            </p>
+            <div className="mt-5">
+              <Button variant="primary" onClick={() => setViewMode('2D')}>Switch to Grid</Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* --- 2D GRID VIEW --- */}
@@ -571,6 +660,18 @@ export default function Vault() {
                   >
                     <FunnelSimple size={14} weight="fill" /> Filters
                   </button>
+
+                  <button
+                    onClick={() => {
+                      setSelectedDecade('');
+                      setSelectedFileType('ALL');
+                      setActiveCategory('All');
+                      setShowFavorites(false);
+                    }}
+                    className="flex items-center gap-2 px-5 py-3 rounded-full font-ui text-[11px] font-bold uppercase border transition-all bg-[var(--clr-charcoal)] text-[var(--clr-fog)] border-[rgba(184,143,91,0.2)] hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)]"
+                  >
+                    Clear Filters
+                  </button>
                 </div>
               </div>
 
@@ -605,6 +706,31 @@ export default function Vault() {
                       </div>
 
                       <div>
+                        <p className="font-ui text-[9px] uppercase tracking-[0.2em] text-[var(--clr-gold)] font-bold mb-2">File Type</p>
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            { key: 'ALL', label: 'All Types' },
+                            { key: 'image', label: 'Image' },
+                            { key: 'video', label: 'Video' },
+                            { key: 'audio', label: 'Audio' },
+                            { key: 'pdf', label: 'PDF' },
+                          ].map((opt) => (
+                            <button
+                              key={opt.key}
+                              onClick={() => setSelectedFileType(opt.key as typeof selectedFileType)}
+                              className={`px-4 py-2 rounded-full font-ui text-[10px] font-bold uppercase border transition-all ${
+                                selectedFileType === opt.key
+                                  ? 'bg-[var(--clr-gold)] text-black border-[var(--clr-gold)]'
+                                  : 'bg-[var(--clr-charcoal)] text-[var(--clr-fog)] border-[rgba(184,143,91,0.2)]'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
                         <p className="font-ui text-[9px] uppercase tracking-[0.2em] text-[var(--clr-gold)] font-bold mb-2">Collection</p>
                         <div className="flex flex-wrap gap-2">
                           {allCategories.map(cat => (
@@ -628,25 +754,35 @@ export default function Vault() {
               {isFetchingMemories && !filteredMemories.length ? (
                 <GridLoader />
               ) : filteredMemories.length > 0 ? (
-                <div className="columns-1 md:columns-2 lg:columns-3 xl:columns-4 gap-[var(--space-6)] space-y-[var(--space-6)]">
-                  {filteredMemories.map((mem: VaultMemory) => (
-                    <motion.div
-                      key={mem.id}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="break-inside-avoid shadow-lg rounded-2xl cursor-pointer"
-                      onClick={() => setSelectedMemory(mem)}
-                    >
-                      <MemoryCard memory={{ id: mem.id, url: mem.url, title: mem.title, location: mem.location, date: mem.date, tags: (mem.tags || []).slice(0, 3), exif_json: mem.exif_json, is_favorite: mem.is_favorite }} />
-                    </motion.div>
-                  ))}
-                </div>
+                <>
+                  <div className="columns-1 md:columns-2 lg:columns-3 xl:columns-4 gap-[var(--space-6)] space-y-[var(--space-6)]">
+                    {filteredMemories.map((mem: VaultMemory) => (
+                      <motion.div
+                        key={mem.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="break-inside-avoid shadow-lg rounded-2xl cursor-pointer"
+                        onClick={() => setSelectedMemory(mem)}
+                      >
+                        <MemoryCard memory={{ id: mem.id, url: mem.url, title: mem.title, location: mem.location, date: mem.date, tags: (mem.tags || []).slice(0, 3), exif_json: mem.exif_json, is_favorite: mem.is_favorite }} />
+                      </motion.div>
+                    ))}
+                  </div>
+                  <div ref={loadMoreRef} className="h-12 flex items-center justify-center">
+                    {isFetchingNextPage && (
+                      <div className="flex items-center gap-3 text-[var(--clr-gold)]">
+                        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                        <span className="font-ui text-[10px] uppercase tracking-[0.18em]">Loading more exhibits</span>
+                      </div>
+                    )}
+                  </div>
+                </>
               ) : (
                 <div className="text-center py-24">
                   <Binoculars size={64} className="mx-auto text-[var(--clr-gold)] opacity-30 mb-6" weight="thin" />
                   <h3 className="font-display text-[2rem] text-[var(--clr-linen)] mb-2">No Exhibits Found</h3>
                   <p className="font-ui text-[14px] text-[var(--clr-fog)]">
-                    {debouncedSearch ? `Nothing matches "${debouncedSearch}". Try a different search.` : 'This collection is empty.'}
+                    {debouncedSearch ? `Nothing matches "${debouncedSearch}". Try a different search.` : selectedFileType !== 'ALL' ? `No ${selectedFileType.toUpperCase()} artifacts match the current filters.` : 'This collection is empty.'}
                   </p>
                 </div>
               )}
@@ -777,7 +913,12 @@ export default function Vault() {
                     </button>
                   </Tooltip>
                 </div>
-                <img src={pendingCuration?.url || "https://images.unsplash.com/photo-1542038784456-1ea8e935640e?q=80&w=1200"} className="max-w-full max-h-full object-contain shadow-[0_20px_60px_rgba(0,0,0,0.4)] rounded-sm border-4 border-white/10" alt="Review" />
+                <VaultMediaSurface
+                  src={pendingCuration?.url || "https://images.unsplash.com/photo-1542038784456-1ea8e935640e?q=80&w=1200"}
+                  title={pendingCuration?.title || 'Review'}
+                  exif={pendingCuration?.exif_json}
+                  imageClassName="max-w-full max-h-full object-contain shadow-[0_20px_60px_rgba(0,0,0,0.4)] rounded-sm border-4 border-white/10"
+                />
               </div>
 
               <div className="p-5 sm:p-6 md:p-8 overflow-y-auto no-scrollbar flex flex-col bg-[var(--clr-linen)] min-h-0">
@@ -883,6 +1024,14 @@ export default function Vault() {
                         <span key={tag} className="inline-flex items-center gap-1.5 bg-[var(--clr-paper)] border border-[var(--clr-aged)] text-[var(--clr-ink)] px-3 py-1.5 rounded-full font-ui text-[11px] font-semibold shadow-sm">
                           {tag}
                           {pendingCuration && isAiGeneratedTag(pendingCuration, tag) && <AiMarker compact label="AI-generated tag" />}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveReviewTag(tag)}
+                            className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full text-[var(--clr-dust)] hover:text-[var(--clr-danger)] hover:bg-[rgba(139,58,58,0.1)] transition-colors"
+                            aria-label={`Remove tag ${tag}`}
+                          >
+                            <X size={10} weight="bold" />
+                          </button>
                         </span>
                       ))}
                     </div>

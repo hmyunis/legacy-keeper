@@ -493,3 +493,33 @@ body {
   color: var(--clr-gold-light);
   border-left: 3px solid var(--clr-gold);
 }
+
+/* ── Vault rich media skins ────────────────────────────────────────── */
+.vault-vjs-surface .vjs-player {
+  width: 100%;
+  border: 2px solid rgba(184, 143, 91, 0.45);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.vault-vjs-surface .vjs-audio-player {
+  min-height: 98px;
+}
+
+.vault-vjs-surface .vjs-player.vjs-theme-videojs {
+  --vjs-background-color: #141211;
+  --vjs-control-bar-background: rgba(20, 18, 17, 0.85);
+  --vjs-icon-color: #d4a96a;
+  --vjs-text-color: #f7f4ef;
+  --vjs-accent-color: #b88f5b;
+  --vjs-focus-ring-color: #d4a96a;
+}
+
+.vault-vjs-surface .vjs-control-bar {
+  backdrop-filter: blur(4px);
+}
+
+.rpv-core__viewer {
+  background: #f7f4ef !important;
+}

@@ -185,6 +185,43 @@ MAILEROO_API_KEY = config('MAILEROO_API_KEY', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='museum@yourfamily.com')
 DEFAULT_FROM_NAME = config('DEFAULT_FROM_NAME', default='LegacyKeeper Museum')
 
-VAPID_PUBLIC_KEY = config('VAPID_PUBLIC_KEY', default='')
-VAPID_PRIVATE_KEY = config('VAPID_PRIVATE_KEY', default='')
+_VAPID_PLACEHOLDERS = {
+    '',
+    'your-vapid-public-key',
+    'your-vapid-private-key',
+    'your_vapid_public_key',
+    'your_vapid_private_key',
+}
+
+
+def _read_local_env_value(key):
+    env_path = BASE_DIR / '.env'
+    if not env_path.exists():
+        return ''
+
+    for line in env_path.read_text(encoding='utf-8').splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#') or '=' not in stripped:
+            continue
+
+        name, value = stripped.split('=', 1)
+        if name.strip() == key:
+            return value.strip().strip("'\"")
+    return ''
+
+
+def _vapid_config(key, default=''):
+    value = config(key, default=default)
+    normalized = str(value or '').strip().strip("'\"")
+    if normalized not in _VAPID_PLACEHOLDERS:
+        return value
+
+    local_value = _read_local_env_value(key)
+    if local_value and local_value not in _VAPID_PLACEHOLDERS:
+        return local_value
+    return value
+
+
+VAPID_PUBLIC_KEY = _vapid_config('VAPID_PUBLIC_KEY', default='')
+VAPID_PRIVATE_KEY = _vapid_config('VAPID_PRIVATE_KEY', default='')
 VAPID_ADMIN_EMAIL = config('VAPID_ADMIN_EMAIL', default=DEFAULT_FROM_EMAIL)

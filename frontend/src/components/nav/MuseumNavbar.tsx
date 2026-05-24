@@ -26,6 +26,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { useDebouncedValue } from '../../lib/debounce';
 import { Tooltip } from '../ui/Tooltip';
 import axiosClient from '../../services/axiosClient';
+import logoIcon from '../../assets/logo.png';
 
 export type NavMode = 'public' | 'app';
 
@@ -81,7 +82,7 @@ export function MuseumNavbar({ mode }: MuseumNavbarProps) {
   const [isWingsOpen, setIsWingsOpen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const { currentUser, accessToken, refreshToken, login } = useAuthStore();
+  const { currentUser, accessToken, refreshToken, activeVaultId, login } = useAuthStore();
 
   const currentPath = useRouterState({ select: (s) => s.location.pathname });
 
@@ -115,7 +116,7 @@ export function MuseumNavbar({ mode }: MuseumNavbarProps) {
             user: res.data,
             accessToken,
             refreshToken,
-            activeVaultId: res.data?.vaultId || null,
+            activeVaultId,
           });
         })
         .catch(() => undefined);
@@ -184,9 +185,9 @@ function PersistentControls({ mode, onOpenWings, onOpenNotifs, onOpenProfile }: 
     <div className="fixed inset-0 z-[45] pointer-events-none flex flex-col justify-between p-[clamp(20px,4vw,40px)]">
 
       <div className="flex justify-between items-start w-full">
-        <Link to="/" className="pointer-events-auto group flex items-center gap-3">
-          <div className="w-12 h-12 rounded-full border border-[var(--clr-gold)] bg-[rgba(20,18,17,0.6)] backdrop-blur-md flex items-center justify-center shadow-lg">
-            <span className="font-display font-bold text-[18px] text-[var(--clr-linen)] tracking-widest">LK</span>
+        <Link to="/dashboard" className="pointer-events-auto group flex items-center gap-3">
+          <div className="w-12 h-12 rounded-full border border-[var(--clr-gold)] bg-[rgba(20,18,17,0.6)] backdrop-blur-md flex items-center justify-center shadow-lg overflow-hidden">
+            <img src={logoIcon} alt="" aria-hidden="true" className="h-full w-full object-cover" />
           </div>
           <div className="hidden sm:flex flex-col">
             <span className="font-display text-[16px] font-bold text-[var(--clr-linen)] drop-shadow-md">LEGACY<span className="text-[var(--clr-gold)]">KEEPER</span></span>
@@ -353,23 +354,23 @@ function CinematicDirectory({ onClose }: { onClose: () => void }) {
         <div className="absolute inset-0 bg-gradient-to-t from-[var(--clr-charcoal)] via-transparent to-transparent opacity-80" />
       </div>
 
-      <div className="relative z-10 w-full flex flex-col md:flex-row h-full px-[clamp(24px,8vw,120px)] py-[clamp(40px,8vw,80px)] items-center">
+      <div className="relative z-10 w-full h-full flex flex-col md:flex-row px-[clamp(16px,4vw,84px)] py-[max(12px,env(safe-area-inset-top))] md:py-[clamp(24px,4.5vw,52px)] items-start md:items-center gap-4 md:gap-0">
 
-        <button onClick={onClose} className="absolute top-10 right-10 w-16 h-16 rounded-full border border-[rgba(184,143,91,0.4)] text-[var(--clr-gold)] flex items-center justify-center hover:bg-[var(--clr-gold)] hover:text-black transition-all shadow-2xl z-50">
+        <button onClick={onClose} className="absolute top-[max(8px,env(safe-area-inset-top))] right-[max(8px,env(safe-area-inset-right))] w-10 h-10 md:w-12 md:h-12 rounded-full border border-[rgba(184,143,91,0.4)] text-[var(--clr-gold)] flex items-center justify-center hover:bg-[var(--clr-gold)] hover:text-black transition-all shadow-2xl z-50">
           <X size={28} weight="thin" />
         </button>
 
-        <div className="w-full md:w-1/2 flex flex-col justify-center gap-4">
-          <p className="font-script text-[48px] text-[var(--clr-gold)] leading-none mb-4 opacity-70 italic">"Chart your path"</p>
+        <div className="w-full md:w-1/2 flex flex-col justify-center gap-2 pt-10 md:pt-0 pb-2 md:pb-0">
+          <p className="font-script text-[clamp(24px,6vw,40px)] text-[var(--clr-gold)] leading-none mb-1 md:mb-2 opacity-70 italic">"Chart your path"</p>
           <nav className="flex flex-col">
             {WINGS.map((wing, i) => (
               <Link
                 key={wing.path} to={wing.path}
                 onMouseEnter={() => setHoveredIndex(i)}
-                className="group flex items-center gap-6 py-4 cursor-pointer relative"
+                className="group flex items-center gap-4 py-2 md:py-3 cursor-pointer relative"
               >
-                <div className={`w-1 h-8 bg-[var(--clr-gold)] rounded-full transition-all duration-500 ${hoveredIndex === i ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-0'}`} />
-                <span className={`font-display text-[2.5rem] md:text-[3.5rem] font-extrabold uppercase tracking-[0.1em] transition-all duration-500 ${hoveredIndex === i ? 'text-[var(--clr-gold-light)] translate-x-4' : 'text-[var(--clr-linen)] opacity-40 hover:opacity-70'}`}>
+                <div className={`w-1 h-6 md:h-7 bg-[var(--clr-gold)] rounded-full transition-all duration-500 ${hoveredIndex === i ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-0'}`} />
+                <span className={`font-display text-[clamp(1.1rem,5.2vw,2.85rem)] font-extrabold uppercase tracking-[0.06em] transition-all duration-500 ${hoveredIndex === i ? 'text-[var(--clr-gold-light)] translate-x-2 md:translate-x-3' : 'text-[var(--clr-linen)] opacity-40 hover:opacity-70'}`}>
                   {wing.label}
                 </span>
               </Link>

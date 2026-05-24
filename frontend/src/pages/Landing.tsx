@@ -16,6 +16,7 @@ import { Float, Sparkles } from '@react-three/drei';
 import { useRef, useMemo, Suspense, useState, type ReactNode, type CSSProperties } from 'react';
 import * as THREE from 'three';
 import { useAuthStore } from '../stores/authStore';
+import logoIcon from '../assets/logo.png';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
@@ -287,8 +288,14 @@ function MuseumSeal({ size = 220 }: { size?: number }) {
           />
         );
       })}
-      <text x="110" y="120" textAnchor="middle" fontSize="32"
-            fontFamily="Georgia, serif" fill={GOLD} letterSpacing="7">LK</text>
+      <image
+        href={logoIcon}
+        x="72"
+        y="72"
+        width="76"
+        height="76"
+        preserveAspectRatio="xMidYMid meet"
+      />
       <text x="110" y="142" textAnchor="middle" fontSize="8"
             fontFamily="sans-serif" fill={GOLD} letterSpacing="5">EST. 2025</text>
     </svg>

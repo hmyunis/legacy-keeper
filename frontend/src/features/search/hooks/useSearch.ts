@@ -11,3 +11,13 @@ export const useVibeSearch = () => {
     },
   });
 };
+
+export const useDeepVibeSearch = () => {
+  return useMutation({
+    mutationFn: (query: string) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return searchService.startDeepVibeSearch(vaultId, query);
+    },
+  });
+};

@@ -42,8 +42,8 @@ class GraftBranchView(views.APIView):
         )  # Edge type: 'PARENT_OF', 'CHILD_OF', 'SPOUSE_OF'
         birth_year = request.data.get('birthYear', '')
         death_year = request.data.get('deathYear', '')
-
         vault_ids = get_accessible_vault_ids(vault_id)
+
         linked_person = None
 
         if existing_person_id:
@@ -117,7 +117,8 @@ class PersonProfileView(views.APIView):
 
     def get(self, request, vault_id, id):
         get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
-        person = get_object_or_404(Person, id=id, vault_id=vault_id)
+        vault_ids = get_accessible_vault_ids(vault_id)
+        person = get_object_or_404(Person, id=id, vault_id__in=vault_ids)
 
         memories = Memory.objects.filter(
             Q(detected_faces__person=person) | Q(identified_people=person)
@@ -126,14 +127,19 @@ class PersonProfileView(views.APIView):
 
         edges = KinshipEdge.objects.filter(Q(from_person=person) | Q(to_person=person))
         relatives = []
+        seen_relative_ids = set()
         for edge in edges:
             rel = edge.to_person if edge.from_person == person else edge.from_person
             rel_type = edge.relationship_type
             if edge.to_person == person and edge.relationship_type == "PARENT_OF":
                 rel_type = "CHILD_OF"
+            rel_id = str(rel.id)
+            if rel_id in seen_relative_ids:
+                continue
+            seen_relative_ids.add(rel_id)
             rel_photo = PersonSerializer(rel, context={"request": request}).data.get("photo")
             relatives.append({
-                "id": str(rel.id),
+                "id": rel_id,
                 "name": rel.name,
                 "role": rel.role,
                 "relationship": rel_type,
@@ -144,6 +150,8 @@ class PersonProfileView(views.APIView):
             "id": str(person.id),
             "name": person.name,
             "photo": PersonSerializer(person, context={"request": request}).data.get("photo"),
+            "vaultId": str(person.vault_id),
+            "vaultName": person.vault.name,
             "biography": person.biography,
             "role": person.role,
             "birthYear": person.birth_year,
@@ -246,12 +254,26 @@ class IdentifyFaceView(views.APIView):
 
         face_embedding_id = request.data.get('face_embedding_id')
         target_person_id = request.data.get('target_person_id')
+        action = request.data.get('action')
 
         embedding = get_object_or_404(PersonFaceEmbedding, id=face_embedding_id, memory__vault_id=vault_id)
-        vault_ids = get_accessible_vault_ids(vault_id)
-        target_person = get_object_or_404(Person, id=target_person_id, vault_id__in=vault_ids)
-
         old_person = embedding.person
+
+        if action == 'unlink':
+            embedding.delete()
+            if old_person.name.startswith("Unknown Kin") and old_person.face_embeddings.count() == 0:
+                old_person.delete()
+            return Response({"status": "UNLINKED"})
+
+        if target_person_id:
+            target_person = get_object_or_404(Person, id=target_person_id, vault_id=vault_id)
+        else:
+            target_person = Person.objects.create(
+                vault_id=vault_id,
+                name=f"Unknown Kin {str(embedding.id)[:6]}",
+                role="Unidentified"
+            )
+
         embedding.person = target_person
         embedding.save()
 

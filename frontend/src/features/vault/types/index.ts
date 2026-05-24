@@ -22,6 +22,8 @@ export interface VaultMemory {
     decided_at?: string | null;
     decided_by?: string | null;
   }>;
+  searchScore?: number;
+  searchReasons?: string[];
   is_reviewed: boolean;
   is_indexed: boolean;
   is_favorite: boolean;

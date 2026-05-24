@@ -1,10 +1,13 @@
 import axiosClient from '../../../services/axiosClient';
-import { extractList, extractData } from '../../../services/responseExtractor';
+import { extractList, extractData, extractPaginated } from '../../../services/responseExtractor';
 import type { VaultCluster, VaultMemory } from '../../vault/types';
 
 export interface MemoryFilters {
   clusters: string[];
   decades: string[];
+  decadeCounts: Record<string, number>;
+  undatedCount: number;
+  totalCount: number;
 }
 
 export interface MemoryCollection {
@@ -20,6 +23,14 @@ export interface MemoryQueryParams {
   decade?: string;
   reviewed?: boolean;
   is_favorite?: boolean;
+  file_type?: 'image' | 'video' | 'audio' | 'pdf';
+}
+
+export interface PaginatedVaultMemories {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: VaultMemory[];
 }
 
 export const vaultService = {
@@ -33,12 +44,25 @@ export const vaultService = {
     return extractList<VaultMemory>(response);
   },
 
+  getMemoriesPage: async (
+    vaultId: string,
+    params?: MemoryQueryParams & { page?: number; page_size?: number }
+  ): Promise<PaginatedVaultMemories> => {
+    const response = await axiosClient.get(`/vaults/${vaultId}/memories/`, {
+      params: { page_size: 24, ...params },
+    });
+    return extractPaginated<VaultMemory>(response);
+  },
+
   getFilters: async (vaultId: string): Promise<MemoryFilters> => {
     const response = await axiosClient.get(`/vaults/${vaultId}/memories/filters/`);
     const data = extractData<Partial<MemoryFilters>>(response);
     return {
       clusters: Array.isArray(data?.clusters) ? data.clusters : [],
       decades: Array.isArray(data?.decades) ? data.decades : [],
+      decadeCounts: data?.decadeCounts && typeof data.decadeCounts === 'object' ? data.decadeCounts : {},
+      undatedCount: typeof data?.undatedCount === 'number' ? data.undatedCount : 0,
+      totalCount: typeof data?.totalCount === 'number' ? data.totalCount : 0,
     };
   },
 

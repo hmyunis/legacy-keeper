@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { vaultService } from '../api/vault.service';
 import { useAuthStore } from '../../../stores/authStore';
 import type { MemoryQueryParams } from '../api/vault.service';
@@ -26,6 +26,31 @@ export const useFilteredMemories = (params?: MemoryQueryParams) => {
   return useQuery({
     queryKey: ['filteredMemories', vaultId, params],
     queryFn: () => vaultService.getMemories(vaultId!, params),
+    enabled: !!vaultId,
+  });
+};
+
+export const useInfiniteFilteredMemories = (params?: MemoryQueryParams) => {
+  const vaultId = useAuthStore((s) => s.activeVaultId);
+  return useInfiniteQuery({
+    queryKey: ['filteredMemories', vaultId, params, 'infinite'],
+    queryFn: ({ pageParam = 1 }) =>
+      vaultService.getMemoriesPage(vaultId!, {
+        ...params,
+        page: pageParam,
+        page_size: 24,
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      if (!lastPage?.next) return undefined;
+      try {
+        const nextUrl = new URL(lastPage.next);
+        const nextPage = Number(nextUrl.searchParams.get('page') || '0');
+        return Number.isFinite(nextPage) && nextPage > 0 ? nextPage : undefined;
+      } catch {
+        return undefined;
+      }
+    },
     enabled: !!vaultId,
   });
 };

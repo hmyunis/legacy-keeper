@@ -1,24 +1,51 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { UserFocus, Palette, Database, MagicWand, Sparkle, BellRinging, Spinner } from '@phosphor-icons/react';
 import { sileo } from 'sileo';
 import { Button } from '../components/ui/Button';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '../stores/authStore';
 import { useMutation } from '@tanstack/react-query';
 import axiosClient from '../services/axiosClient';
-import { subscribeToPush } from '../lib/notifications';
+import { getPushState, subscribeToPush, unsubscribeFromPush } from '../lib/notifications';
 import { useQueryClient } from '@tanstack/react-query';
+import { useDashboardSummary } from '../features/dashboard/hooks/useDashboard';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
+
+type SettingsTab = 'ACCOUNT' | 'THEME' | 'HEALTH';
+
+const TAB_TO_SLUG: Record<SettingsTab, string> = {
+  ACCOUNT: 'identity',
+  THEME: 'appearance',
+  HEALTH: 'health',
+};
+
+const SLUG_TO_TAB: Record<string, SettingsTab> = {
+  identity: 'ACCOUNT',
+  appearance: 'THEME',
+  health: 'HEALTH',
+};
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState('HEALTH');
   const [selectedColor, setSelectedColor] = useState('#B88F5B');
   const [grainEnabled, setGrainEnabled] = useState(true);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [isPurgeDialogOpen, setIsPurgeDialogOpen] = useState(false);
+  const [isLoadingPurgePreview, setIsLoadingPurgePreview] = useState(false);
+  const [isPushEnabled, setIsPushEnabled] = useState(false);
+  const [isPushLoading, setIsPushLoading] = useState(false);
+  const [purgeGroups, setPurgeGroups] = useState<any[]>([]);
+  const [selectedPurgeIds, setSelectedPurgeIds] = useState<Record<string, boolean>>({});
   const { currentUser, activeVaultId, login } = useAuthStore();
   const queryClient = useQueryClient();
+  const { data: summary } = useDashboardSummary();
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const searchString = useRouterState({ select: (s) => s.location.search });
+  const tabSlug = new URLSearchParams(searchString).get('tab') || undefined;
+  const activeTab: SettingsTab = SLUG_TO_TAB[tabSlug || ''] || 'ACCOUNT';
 
   const smartPurgeMutation = useMutation({
-    mutationFn: () => axiosClient.post(`/vaults/${activeVaultId}/memories/purge/`)
+    mutationFn: (memoryIds?: string[]) => axiosClient.post(`/vaults/${activeVaultId}/memories/purge/`, { memory_ids: memoryIds || [] })
   });
 
   const updateSettingsMutation = useMutation({
@@ -29,20 +56,94 @@ export default function Settings() {
     mutationFn: (data: any) => axiosClient.put(`/auth/profile/`, data)
   });
 
-  const handleSmartPurge = async () => {
-    const confirmed = window.confirm(
-      "Execute Smart Purge?\n\n" +
-      "The AI Curator will identify visually identical images and keep only the highest-resolution copy. " +
-      "This will physically erase redundant files to optimize your vault. Proceed?"
-    );
+  const pushTestMutation = useMutation({
+    mutationFn: () => axiosClient.post('/auth/push-test/'),
+  });
 
-    if (!confirmed) return;
+  useEffect(() => {
+    if (!summary?.theme) return;
+    if (summary.theme.primaryHue) setSelectedColor(summary.theme.primaryHue);
+    if (typeof summary.theme.grainEnabled === 'boolean') setGrainEnabled(summary.theme.grainEnabled);
+  }, [summary?.theme?.primaryHue, summary?.theme?.grainEnabled]);
 
-    sileo.promise(smartPurgeMutation.mutateAsync(), {
+  useEffect(() => {
+    if (pathname !== '/settings') return;
+    if (!tabSlug || !SLUG_TO_TAB[tabSlug]) {
+      navigate({
+        to: '/settings',
+        search: (prev: Record<string, unknown>) => ({ ...prev, tab: 'identity' }),
+        replace: true,
+      });
+    }
+  }, [navigate, pathname, tabSlug]);
+
+  useEffect(() => {
+    let mounted = true;
+    if (activeTab !== 'ACCOUNT') return;
+    setIsPushLoading(true);
+    getPushState()
+      .then((state) => {
+        if (!mounted) return;
+        setIsPushEnabled(state.enabled);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setIsPushEnabled(false);
+      })
+      .finally(() => {
+        if (mounted) setIsPushLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [activeTab]);
+
+  const applyThemePreview = (next: { primaryHue?: string; grainEnabled?: boolean }) => {
+    queryClient.setQueryData(['dashboardSummary', activeVaultId], (prev: any) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        theme: {
+          ...prev.theme,
+          ...(next.primaryHue !== undefined ? { primaryHue: next.primaryHue } : {}),
+          ...(next.grainEnabled !== undefined ? { grainEnabled: next.grainEnabled } : {}),
+        },
+      };
+    });
+  };
+
+  const handleOpenPurgeDialog = async () => {
+    setIsLoadingPurgePreview(true);
+    try {
+      const res = await axiosClient.get(`/vaults/${activeVaultId}/memories/purge/`);
+      const groups = res.data?.groups || [];
+      const defaults = res.data?.default_delete_ids || [];
+      const selectedMap: Record<string, boolean> = {};
+      defaults.forEach((id: string) => {
+        selectedMap[id] = true;
+      });
+      setPurgeGroups(groups);
+      setSelectedPurgeIds(selectedMap);
+      setIsPurgeDialogOpen(true);
+    } catch {
+      sileo.error({ title: "Purge Preview Failed", description: "Could not load duplicates for review." });
+    } finally {
+      setIsLoadingPurgePreview(false);
+    }
+  };
+
+  const selectedIdsList = useMemo(
+    () => Object.entries(selectedPurgeIds).filter(([, checked]) => checked).map(([id]) => id),
+    [selectedPurgeIds]
+  );
+
+  const handleConfirmSmartPurge = async () => {
+    sileo.promise(smartPurgeMutation.mutateAsync(selectedIdsList), {
       loading: { title: "Deduplicating...", description: "Selecting highest-quality artifacts..." },
       success: (res) => {
         queryClient.invalidateQueries();
         const { purged, mb_saved } = res.data;
+        setIsPurgeDialogOpen(false);
         return {
           title: "Vault Optimized",
           description: purged > 0
@@ -56,8 +157,12 @@ export default function Settings() {
 
   const handleColorChange = (color: string) => {
     setSelectedColor(color);
+    applyThemePreview({ primaryHue: color });
     updateSettingsMutation.mutate({ primary_hue: color }, {
-      onSuccess: () => sileo.success({ title: "Palette Updated", description: `Museum hue changed.` })
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['dashboardSummary', activeVaultId] });
+        sileo.success({ title: "Palette Updated", description: `Museum hue changed.` });
+      }
     });
   };
 
@@ -77,6 +182,68 @@ export default function Settings() {
     });
   };
 
+  const handlePushToggle = async () => {
+    setIsPushLoading(true);
+    try {
+      if (isPushEnabled) {
+        await unsubscribeFromPush();
+        setIsPushEnabled(false);
+        sileo.success({ title: "Alerts Disabled", description: "Push notifications were turned off for this browser." });
+      } else {
+        await subscribeToPush();
+        setIsPushEnabled(true);
+        sileo.success({ title: "Alerts Enabled", description: "You will now receive museum notifications." });
+      }
+    } catch (err: any) {
+      const message = String(err?.message || '').toLowerCase();
+      if (message.includes('denied')) {
+        sileo.error({ title: "Notifications Blocked", description: "Browser permission is denied. Enable notifications in site settings." });
+      } else {
+        sileo.error({ title: "Push Setup Failed", description: "Could not update notification settings on this device." });
+      }
+    } finally {
+      setIsPushLoading(false);
+    }
+  };
+
+  const handlePushTest = async () => {
+    const toastId = sileo.show({
+      type: 'loading',
+      title: 'Sending test notification...',
+      description: 'A sample push is being delivered to this browser.',
+      duration: null,
+    });
+
+    try {
+      const result = await pushTestMutation.mutateAsync();
+      sileo.dismiss(toastId);
+
+      const { sent = 0, failed = 0, deleted = 0 } = result?.data || {};
+      if (sent > 0) {
+        const deliverySummary = `Delivered to ${sent} active device${sent === 1 ? '' : 's'}.`;
+        const cleanupSummary = deleted > 0
+          ? `Cleaned up ${deleted} stale subscription${deleted === 1 ? '' : 's'} in the background.`
+          : '';
+        const retrySummary = failed > 0
+          ? 'Some older devices could not be reached, but the notification was delivered successfully.'
+          : 'Check your notifications for the preview message.';
+
+        sileo.success({
+          title: 'Test Delivered',
+          description: `${deliverySummary} ${cleanupSummary} ${retrySummary}`.trim(),
+          duration: 8000,
+        });
+      }
+    } catch (err: any) {
+      sileo.dismiss(toastId);
+      sileo.error({
+        title: 'Test Failed',
+        description: err?.response?.data?.error || 'Enable push notifications first or check the VAPID configuration.',
+        duration: 10000,
+      });
+    }
+  };
+
   return (
     <div className="min-h-screen zone-light py-20 px-[clamp(24px,5vw,80px)]">
       <div className="max-w-[var(--max-width)] mx-auto flex flex-col lg:flex-row gap-12">
@@ -90,7 +257,15 @@ export default function Settings() {
           ].map(item => (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() =>
+                navigate({
+                  to: '/settings',
+                  search: (prev: Record<string, unknown>) => ({
+                    ...prev,
+                    tab: TAB_TO_SLUG[item.id as SettingsTab],
+                  }),
+                })
+              }
               className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl font-ui font-bold text-[11px] uppercase tracking-[0.1em] transition-all ${
                 activeTab === item.id ? 'bg-[var(--clr-gold)] text-white shadow-lg' : 'text-[var(--clr-dust)] hover:bg-[var(--clr-gold-muted)] hover:text-[var(--clr-gold-dark)]'
               }`}
@@ -118,7 +293,7 @@ export default function Settings() {
                   <div>
                     <p className="font-ui font-bold text-[14px] text-[var(--clr-ink)]">Smart Purge Ready</p>
                     <p className="font-ui text-[12px] text-[var(--clr-dust)] mt-1 leading-relaxed">
-                      Executing a Smart Purge will command the AI to group identical burst-photos based on their perceptual hashes (pHash), deleting lesser-quality duplicates while preserving the sharpest image.
+                      Executing a Smart Purge will command the AI to group identical burst-photos based on their perceptual hashes (pHash). You will review and confirm exactly which duplicates get deleted.
                     </p>
                   </div>
                 </div>
@@ -127,8 +302,8 @@ export default function Settings() {
                    <div className="flex items-center gap-2 text-[var(--clr-gold)] font-bold text-[11px] uppercase tracking-widest">
                      <Sparkle size={14} weight="fill" /> Deduplication Engine
                    </div>
-                   <Button variant="primary" onClick={handleSmartPurge} disabled={smartPurgeMutation.isPending}>
-                     {smartPurgeMutation.isPending ? 'PURGING...' : 'START SMART PURGE'}
+                   <Button variant="primary" onClick={handleOpenPurgeDialog} disabled={isLoadingPurgePreview || smartPurgeMutation.isPending}>
+                     {isLoadingPurgePreview ? 'ANALYZING...' : smartPurgeMutation.isPending ? 'PURGING...' : 'START SMART PURGE'}
                    </Button>
                 </div>
               </div>
@@ -144,7 +319,7 @@ export default function Settings() {
                 <div className="space-y-6">
                   <p className="font-ui text-[11px] font-black uppercase tracking-widest text-[var(--clr-fog)]">Primary Hue</p>
                   <div className="flex gap-4">
-                    {['#B88F5B', '#4A7C59', '#3A5F7A', '#8B3A3A', '#1E1A17'].map(color => (
+                    {['#B88F5B', '#7FAF8C', '#7C9FC1', '#C88383', '#5A524C'].map(color => (
                       <button
                         key={color}
                         onClick={() => handleColorChange(color)}
@@ -159,13 +334,18 @@ export default function Settings() {
                    <div className="flex items-center justify-between">
                      <div>
                        <p className="font-ui font-bold text-[14px] text-[var(--clr-ink)]">Dynamic Museum Grain</p>
-                       <p className="font-ui text-[12px] text-[var(--clr-dust)]">Apply subtle film-grain overlays to the Light Zone.</p>
+                       <p className="font-ui text-[12px] text-[var(--clr-dust)]">Adds subtle archival paper/noise texture across light surfaces for a vintage museum feel.</p>
                      </div>
                      <div
                        onClick={() => {
-                         setGrainEnabled(!grainEnabled);
-                         updateSettingsMutation.mutate({ grain_enabled: !grainEnabled }, {
-                           onSuccess: () => sileo.success({ title: "Grain Toggled", description: `Dynamic museum grain ${!grainEnabled ? 'enabled' : 'disabled'}.` })
+                         const next = !grainEnabled;
+                         setGrainEnabled(next);
+                         applyThemePreview({ grainEnabled: next });
+                         updateSettingsMutation.mutate({ grain_enabled: next }, {
+                           onSuccess: () => {
+                             queryClient.invalidateQueries({ queryKey: ['dashboardSummary', activeVaultId] });
+                             sileo.success({ title: "Grain Toggled", description: `Dynamic museum grain ${next ? 'enabled' : 'disabled'}.` });
+                           }
                          });
                        }}
                        className={`w-12 h-6 rounded-full relative p-1 cursor-pointer transition-colors ${grainEnabled ? 'bg-[var(--clr-gold)]' : 'bg-[var(--clr-aged)]'}`}
@@ -235,23 +415,36 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div className="pt-8 mt-4 border-t border-[var(--clr-aged)] flex justify-between items-center">
-                  <div className="flex gap-4 items-center">
-                    <div className="w-10 h-10 rounded-full bg-[rgba(184,143,91,0.15)] flex items-center justify-center text-[var(--clr-gold)]">
+                <div className="pt-8 mt-4 border-t border-[var(--clr-aged)] flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                  <div className="flex gap-4 items-center min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-[rgba(184,143,91,0.15)] flex items-center justify-center text-[var(--clr-gold)] shrink-0">
                       <BellRinging size={20} weight="fill" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="font-ui font-bold text-[14px] text-[var(--clr-ink)]">Push Notifications</p>
                       <p className="font-ui text-[12px] text-[var(--clr-dust)]">Get pinged when AI curation or capsules finish processing.</p>
                     </div>
                   </div>
-                  <Button variant="ghost" type="button" onClick={() => {
-                    subscribeToPush()
-                      .then(() => sileo.success({ title: "Alerts Enabled", description: "You will now receive museum notifications." }))
-                      .catch(() => sileo.error({ title: "Failed", description: "Please allow notifications in your browser." }));
-                  }}>
-                    ENABLE ALERTS
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      onClick={handlePushTest}
+                      disabled={pushTestMutation.isPending || isPushLoading}
+                      className="!h-8 !px-3 !py-1.5 !text-[9px] !tracking-[0.16em] !rounded-full whitespace-nowrap"
+                    >
+                      {pushTestMutation.isPending ? 'TESTING...' : 'TEST ALERT'}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      onClick={handlePushToggle}
+                      disabled={isPushLoading || pushTestMutation.isPending}
+                      className="!h-8 !px-3 !py-1.5 !text-[9px] !tracking-[0.16em] !rounded-full whitespace-nowrap"
+                    >
+                      {isPushLoading ? 'UPDATING...' : isPushEnabled ? 'DISABLE ALERTS' : 'ENABLE ALERTS'}
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="pt-6 border-t border-[var(--clr-aged)]">
@@ -265,6 +458,64 @@ export default function Settings() {
           </div>
         </main>
       </div>
+
+      <AnimatePresence>
+        {isPurgeDialogOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsPurgeDialogOpen(false)} />
+            <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} className="relative w-full max-w-5xl max-h-[88vh] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--clr-aged)] bg-[var(--clr-linen)] shadow-2xl flex flex-col">
+              <div className="p-5 sm:p-6 border-b border-[var(--clr-aged)]">
+                <h3 className="font-display text-[1.5rem] uppercase tracking-widest text-[var(--clr-ink)]">Review Smart Purge</h3>
+                <p className="font-ui text-[12px] text-[var(--clr-dust)] mt-1">AI preselected redundant copies. Uncheck anything you want to keep.</p>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
+                {purgeGroups.length === 0 ? (
+                  <div className="rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)]/50 p-6 text-center">
+                    <p className="font-ui text-[13px] text-[var(--clr-dust)]">No duplicate groups detected. Your archive is pristine.</p>
+                  </div>
+                ) : (
+                  purgeGroups.map((group) => (
+                    <div key={group.phash} className="rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)]/35 p-4">
+                      <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-gold-dark)] mb-3">Duplicate Cluster</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {group.items.map((item: any) => {
+                          const isKeep = item.suggested_keep;
+                          const checked = !!selectedPurgeIds[item.id];
+                          return (
+                            <label key={item.id} className={`flex items-center gap-3 rounded-[var(--radius-sm)] border p-2 ${isKeep ? 'border-[var(--clr-success)] bg-[rgba(74,124,89,0.08)]' : 'border-[var(--clr-aged)] bg-[var(--clr-linen)]'}`}>
+                              <input
+                                type="checkbox"
+                                disabled={isKeep}
+                                checked={isKeep ? false : checked}
+                                onChange={(e) => setSelectedPurgeIds((prev) => ({ ...prev, [item.id]: e.target.checked }))}
+                              />
+                              <img src={item.url} alt={item.title} className="h-14 w-14 rounded object-cover border border-[var(--clr-aged)]" />
+                              <div className="min-w-0">
+                                <p className="font-ui text-[12px] font-bold text-[var(--clr-ink)] truncate">{item.title}</p>
+                                <p className="font-ui text-[10px] text-[var(--clr-dust)]">{item.width}x{item.height} • {(item.filesize / (1024 * 1024)).toFixed(2)} MB</p>
+                                {isKeep && <p className="font-ui text-[9px] uppercase tracking-widest text-[var(--clr-success)] font-bold mt-1">AI Keep (best quality)</p>}
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="p-5 sm:p-6 border-t border-[var(--clr-aged)] flex items-center justify-between gap-3">
+                <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-dust)]">{selectedIdsList.length} selected for deletion</p>
+                <div className="flex items-center gap-3">
+                  <Button variant="ghost" onClick={() => setIsPurgeDialogOpen(false)}>Cancel</Button>
+                  <Button variant="primary" onClick={handleConfirmSmartPurge} disabled={smartPurgeMutation.isPending || selectedIdsList.length === 0}>
+                    {smartPurgeMutation.isPending ? 'PURGING...' : 'CONFIRM PURGE'}
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -7,6 +7,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'legacy_keeper.settings')
 TASK_MODULES = (
     'tasks.ai_pipeline',
     'tasks.governance',
+    'tasks.search',
     'tasks.periodic',
     'tasks.restoration',
     'tasks.story_weaver',

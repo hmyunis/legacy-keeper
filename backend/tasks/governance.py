@@ -14,8 +14,17 @@ def send_invite_email_task(self, vault_id, email, role, inviter_name):
     try:
         vault = Vault.objects.get(id=vault_id)
         subject = f"You've been invited to {vault.name}"
-        html_msg = f"<h1>Museum Invitation</h1><p>{inviter_name} has invited you to join their family vault as a {role}.</p>"
-        plain_msg = f"{inviter_name} has invited you to join their family vault as a {role}."
+        role_label = role.capitalize()
+        html_msg = (
+            f"<h1>Museum Invitation</h1>"
+            f"<p>{inviter_name} invited you to join <strong>{vault.name}</strong> as a <strong>{role_label}</strong>.</p>"
+            f"<p>If you already have an account with this email, access will appear in your vault list. "
+            f"If not, register with this email to accept automatically.</p>"
+        )
+        plain_msg = (
+            f"{inviter_name} invited you to join {vault.name} as a {role_label}. "
+            f"Use this email to sign in or register to access the vault."
+        )
 
         send_notification_email(subject, html_msg, plain_msg, email)
         return {"status": "SUCCESS", "message": f"Invited {email}"}

@@ -19,9 +19,24 @@ import axiosClient from '../services/axiosClient';
 import type { PersonProfile as PersonProfileType } from '../features/chronicles/types';
 
 export default function PersonProfile() {
+  const CHRONICLE_LOADING_LINES = [
+    'Dusting the archives',
+    'Unsealing forgotten letters',
+    'Tracing ancestral footsteps',
+    'Threading names through time',
+    'Binding memory fragments',
+    'Restoring faded chapters',
+    'Illuminating hidden lineage',
+    'Cataloging family echoes',
+    'Etching the chronicle',
+    'Weaving a legacy tapestry',
+  ];
+
   const [activeTab, setActiveTab] = useState<'CHRONICLE' | 'CONNECTIONS' | 'MEMORIES'>('CHRONICLE');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [chronicleLineIndex, setChronicleLineIndex] = useState(0);
+  const [chronicleDots, setChronicleDots] = useState(3);
   const [isEditingBio, setIsEditingBio] = useState(false);
   const [isSavingBio, setIsSavingBio] = useState(false);
   const [isSpeakingBio, setIsSpeakingBio] = useState(false);
@@ -46,6 +61,8 @@ export default function PersonProfile() {
     queryFn: () => chroniclesService.getPersonProfile(vaultId!, personId as string),
     enabled: !!vaultId && !!personId,
   });
+  const isForeignProfile = Boolean(profile?.vaultId && vaultId && profile.vaultId !== vaultId);
+  const canEditProfile = canContribute && !isForeignProfile;
 
   const { data: allVaultMemories = [] } = useQuery({
     queryKey: ['allVaultMemories', vaultId],
@@ -58,7 +75,17 @@ export default function PersonProfile() {
 
   useEffect(() => {
     if (profile?.active_story_task_id && !isGenerating) {
-      handlePoll(profile.active_story_task_id);
+      setIsGenerating(true);
+      void handlePoll(profile.active_story_task_id)
+        .then(() => {
+          sileo.success({ title: 'Story Woven', description: 'The chronicle is ready for presentation.' });
+        })
+        .catch(() => {
+          sileo.error({ title: 'Story Weaver Failed', description: 'The biography weave failed. Please try again in a moment.' });
+        })
+        .finally(() => {
+          setIsGenerating(false);
+        });
     }
     if (profile) {
       setEditedBio(profile.biography || '');
@@ -74,18 +101,31 @@ export default function PersonProfile() {
     };
   }, [personId]);
 
-  const handlePoll = async (taskId: string) => {
-    setIsGenerating(true);
-    try {
-      await pollTask(taskId);
-      queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
-      setIsGenerating(false);
-      setIsComplete(true);
-      sileo.success({ title: 'Story Woven', description: 'The chronicle is ready for presentation.' });
-    } catch {
-      setIsGenerating(false);
-      sileo.error({ title: 'Story Weaver Failed', description: 'The AI was unable to synthesize the chronicle.' });
+  useEffect(() => {
+    if (!isGenerating) {
+      setChronicleLineIndex(0);
+      setChronicleDots(3);
+      return;
     }
+
+    const lineTimer = window.setInterval(() => {
+      setChronicleLineIndex((prev) => (prev + 1) % CHRONICLE_LOADING_LINES.length);
+    }, 1700);
+
+    const dotsTimer = window.setInterval(() => {
+      setChronicleDots((prev) => (prev % 3) + 1);
+    }, 420);
+
+    return () => {
+      window.clearInterval(lineTimer);
+      window.clearInterval(dotsTimer);
+    };
+  }, [isGenerating]);
+
+  const handlePoll = async (taskId: string) => {
+    await pollTask(taskId);
+    queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
+    setIsComplete(true);
   };
 
   const generateChronicle = async () => {
@@ -94,16 +134,24 @@ export default function PersonProfile() {
     setIsEditingBio(false);
     setIsGenerating(true);
 
-    try {
+    const chroniclePromise = (async () => {
       const res = await generateStoryMutation.mutateAsync(personId as string);
-      handlePoll(res.task_id);
-    } catch {
-      setIsGenerating(false);
-      sileo.error({ title: 'Story Weaver Failed', description: 'The biography could not be started.' });
-    }
+      await handlePoll(res.task_id);
+      return res;
+    })();
+
+    await sileo.promise(chroniclePromise, {
+      loading: { title: 'Story Weaver Working...', description: 'The chronicle is being woven from linked memories.' },
+      success: { title: 'Story Woven', description: 'The chronicle is ready for presentation.' },
+      error: { title: 'Story Weaver Failed', description: 'The biography weave failed. Please try again in a moment.' }
+    }).finally(() => setIsGenerating(false));
   };
 
   const saveBio = async () => {
+    if (isForeignProfile) {
+      sileo.error({ title: 'Read-Only Profile', description: 'This profile belongs to a linked vault and cannot be edited here.' });
+      return;
+    }
     setIsSavingBio(true);
     await sileo.promise(
       axiosClient.patch(`/vaults/${vaultId}/lineage/person/${personId}/`, { biography: editedBio }),
@@ -121,6 +169,7 @@ export default function PersonProfile() {
 
   const linkMemoryMutation = useMutation({
     mutationFn: async (memoryId: string) => {
+      if (isForeignProfile) throw new Error('This profile is read-only.');
       await axiosClient.post(`/vaults/${vaultId}/lineage/person/${personId}/link-memory/`, { memory_id: memoryId });
     },
     onSuccess: () => {
@@ -132,6 +181,7 @@ export default function PersonProfile() {
 
   const unlinkMemoryMutation = useMutation({
     mutationFn: async (memoryId: string) => {
+      if (isForeignProfile) throw new Error('This profile is read-only.');
       await axiosClient.delete(`/vaults/${vaultId}/lineage/person/${personId}/link-memory/`, { data: { memory_id: memoryId } });
     },
     onSuccess: () => {
@@ -276,9 +326,10 @@ export default function PersonProfile() {
 
   const story = profile.biography || '';
   const allMemories = profile.memories || [];
-  const kinship = profile.kinship || [];
+  const kinship = [...new Map((profile.kinship || []).map((kin: any) => [kin.id, kin])).values()];
   const profileAvatar = profile.photo || `https://ui-avatars.com/api/?name=${profile.name.replace(' ', '+')}&background=B88F5B&color=fff&size=256`;
   const isChronicleBusy = isGenerating || generateStoryMutation.isPending || Boolean(profile.active_story_task_id);
+  const loadingChronicleLabel = `${CHRONICLE_LOADING_LINES[chronicleLineIndex]}${'.'.repeat(chronicleDots)}`;
 
   const existingLinkedIds = new Set(allMemories.map(m => m.id));
   const linkCandidates = allVaultMemories.filter((m: any) => {
@@ -388,7 +439,7 @@ export default function PersonProfile() {
                     Weave {allMemories.length} tagged memories and metadata into a complete life record.
                   </p>
                   <Button variant="primary" onClick={generateChronicle} disabled={isChronicleBusy} className="px-8 py-4 shadow-[var(--shadow-gold)]">
-                    <Sparkle size={18} weight="fill" /> {isChronicleBusy ? 'Writing...' : 'Write Biography'}
+                    <Sparkle size={18} weight="fill" /> {isChronicleBusy ? loadingChronicleLabel : 'Write Biography'}
                   </Button>
                 </motion.div>
               ) : (
@@ -415,7 +466,14 @@ export default function PersonProfile() {
                         <span className="whitespace-pre-wrap">{story.slice(1)}</span>
                       </>
                     )}
-                    {isGenerating && <span className="inline-block w-2.5 h-5 bg-[var(--clr-gold)] animate-pulse ml-1 align-middle" />}
+                    {isGenerating && (
+                      <span className="inline-flex items-center gap-2 ml-2 align-middle">
+                        <span className="inline-block w-2.5 h-5 bg-[var(--clr-gold)] animate-pulse" />
+                        <span className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-gold-dark)]">
+                          {loadingChronicleLabel}
+                        </span>
+                      </span>
+                    )}
                   </div>
 
                   {isComplete && (
@@ -425,11 +483,11 @@ export default function PersonProfile() {
                         <p className="font-ui text-[9px] uppercase font-bold tracking-widest text-[var(--clr-dust)]">AI Generated</p>
                       </div>
                       <div className="flex flex-wrap justify-center sm:justify-end gap-2">
-                        <Button variant="ghost" className="px-5 py-2.5 text-[10px]" disabled={isSavingBio} onClick={() => isEditingBio ? saveBio() : (setEditedBio(story), setIsEditingBio(true))}>
+                <Button variant="ghost" className="px-5 py-2.5 text-[10px]" disabled={isSavingBio || isForeignProfile} onClick={() => isEditingBio ? saveBio() : (setEditedBio(story), setIsEditingBio(true))}>
                           {isSavingBio ? 'Saving...' : (isEditingBio ? 'Save Biography' : 'Edit')}
                         </Button>
                         <Tooltip content="Regenerate Biography">
-                          <Button variant="icon" disabled={isChronicleBusy} onClick={generateChronicle}>
+                        <Button variant="icon" disabled={isChronicleBusy || isForeignProfile} onClick={generateChronicle}>
                             <MagicWand size={16} className={isChronicleBusy ? 'animate-pulse' : ''} weight="fill" />
                           </Button>
                         </Tooltip>
@@ -554,7 +612,7 @@ export default function PersonProfile() {
           <div className="space-y-6 no-print">
             <div className="flex justify-between items-center gap-3 flex-wrap">
               <h3 className="font-display font-bold text-[1.15rem] text-[var(--clr-ink)] uppercase tracking-wider">Tagged Exhibits</h3>
-              {canContribute && (
+              {canEditProfile && (
                 <Button variant="primary" className="py-2.5 px-5 text-[10px]" onClick={() => setIsLinkModalOpen(true)}>
                   <Plus size={14} weight="bold" /> Tag Existing Memory
                 </Button>
@@ -567,7 +625,7 @@ export default function PersonProfile() {
                   <div className="cursor-pointer" onClick={() => setSelectedMemory(mem)}>
                     <MemoryCard memory={{ ...mem, tags: mem.tags?.slice(0, 2) || [] }} />
                   </div>
-                  {canContribute && (
+                  {canEditProfile && (
                     <div className="absolute top-4 right-4 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Tooltip content="Remove Tag">
                         <button
@@ -587,7 +645,7 @@ export default function PersonProfile() {
       </section>
 
       <AnimatePresence>
-        {isLinkModalOpen && (
+        {isLinkModalOpen && canEditProfile && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6 no-print">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsLinkModalOpen(false)} />
             <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} className="relative w-full max-w-3xl h-[min(86svh,760px)] bg-[var(--clr-parchment)] border border-[var(--clr-gold)] rounded-[var(--radius-lg)] p-5 sm:p-7 shadow-2xl flex flex-col">

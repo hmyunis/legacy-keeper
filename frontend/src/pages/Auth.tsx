@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button';
 import { useAuthStore } from '../stores/authStore';
 import { sileo } from 'sileo';
 import { useLogin, useRegister } from '../features/auth/hooks/useAuth';
+import { getPostAuthRoute } from '../lib/authRouting';
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
@@ -40,14 +41,12 @@ export default function Auth() {
             user: data.user,
             accessToken: data.accessToken,
             refreshToken: data.refreshToken,
-            activeVaultId: (data.user as any).vaultId,
           });
-          const destination =
-            redirectTo ||
-            (data.user.is_verified
-              ? ((data.user as any).vaultId ? "/dashboard" : "/onboarding")
-              : "/verify-email");
-          void navigate({ to: destination });
+          const destination = getPostAuthRoute(data.user as any, redirectTo);
+          const destinationSearch = (destination === '/vault-select' || destination === '/invitation-inbox') && redirectTo
+            ? { redirect: redirectTo }
+            : undefined;
+          void navigate({ to: destination as any, search: destinationSearch as any });
           return { title: "Welcome Back", description: "Your session is now cryptographically secured." };
         },
         error: { title: "Access Denied", description: "Invalid credentials provided." }
@@ -60,7 +59,6 @@ export default function Auth() {
             user: data.user,
             accessToken: data.accessToken,
             refreshToken: data.refreshToken,
-            activeVaultId: (data.user as any).vaultId,
           });
           void navigate({ to: '/verify-email' });
           return { title: "Welcome, Curator", description: "Your account is created. Please verify your email." };

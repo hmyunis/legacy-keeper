@@ -100,6 +100,7 @@ function DashboardHero({
   bgY,
   summary,
   members,
+  isLoading,
 }: {
   textX: ReturnType<typeof useTransform<number, number>>;
   textY: ReturnType<typeof useTransform<number, number>>;
@@ -107,6 +108,7 @@ function DashboardHero({
   bgY: ReturnType<typeof useTransform<number, number>>;
   summary: any;
   members: any[];
+  isLoading: boolean;
 }) {
   return (
     <section className="dashboard-hero relative w-full min-h-[75vh] flex items-center bg-[var(--clr-charcoal)] overflow-hidden pt-12 pb-32 px-[clamp(24px,5vw,80px)] isolate">
@@ -142,33 +144,51 @@ function DashboardHero({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 1, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
-          <p className="font-ui text-[11px] uppercase text-[var(--clr-gold)] tracking-[0.2em] mb-4 font-bold drop-shadow-md">
-            <span className="w-2 h-2 rounded-full bg-[var(--clr-gold)] inline-block mr-2 animate-pulse" />
-            Good Evening, {summary?.curatorName || 'Curator'}
-          </p>
-          <h1 className="font-display font-extrabold text-[clamp(2.5rem,6vw,4.5rem)] text-[var(--clr-linen)] leading-[1.05] tracking-wide mb-2 drop-shadow-lg">
-            {summary?.vaultName ? summary.vaultName.toUpperCase() : 'FAMILY VAULT'}
-          </h1>
-          <p className="font-script text-[56px] md:text-[72px] text-[var(--clr-gold-light)] leading-[1] mb-12 drop-shadow-md">
-            &ldquo;{summary?.memoryCount || 0} memories preserved&rdquo;
-          </p>
-
-          <div className="flex items-center gap-4 bg-[rgba(255,255,255,0.03)] border border-[rgba(184,143,91,0.2)] w-max px-4 py-2.5 rounded-full backdrop-blur-sm shadow-lg">
-            <div className="flex -space-x-4">
-              {members?.slice(0, 3).map((member: any, i: number) => (
-                <img
-                  key={member.id}
-                  src={member.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name || '')}&background=B88F5B&color=fff`}
-                  alt={member.name}
-                  className="w-12 h-12 rounded-full border-[3px] border-[var(--clr-charcoal)] shadow-md relative"
-                  style={{ zIndex: 30 - i }}
-                />
-              ))}
+          {isLoading ? (
+            <div className="space-y-4">
+              <div className="h-4 w-48 rounded-full bg-[rgba(184,143,91,0.25)] animate-pulse" />
+              <div className="h-14 w-[min(640px,85vw)] rounded-md bg-[rgba(247,244,239,0.14)] animate-pulse" />
+              <div className="h-16 w-[min(420px,70vw)] rounded-md bg-[rgba(212,169,106,0.2)] animate-pulse mb-8" />
+              <div className="flex items-center gap-3 bg-[rgba(255,255,255,0.03)] border border-[rgba(184,143,91,0.2)] w-max px-4 py-2.5 rounded-full backdrop-blur-sm shadow-lg">
+                <div className="flex -space-x-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="w-11 h-11 rounded-full border-2 border-[var(--clr-charcoal)] bg-[rgba(247,244,239,0.2)] animate-pulse" />
+                  ))}
+                </div>
+                <div className="h-3 w-36 rounded-full bg-[rgba(194,186,171,0.35)] animate-pulse" />
+              </div>
             </div>
-            <span className="font-ui text-[11px] text-[var(--clr-fog)] uppercase tracking-widest font-bold pr-2">
-              {members.length > 1 ? `${(members[0]?.name || 'Curator').split(' ')[0]} + ${members.length - 1} kin` : 'Just You'}
-            </span>
-          </div>
+          ) : (
+            <>
+              <p className="font-ui text-[11px] uppercase text-[var(--clr-gold)] tracking-[0.2em] mb-4 font-bold drop-shadow-md">
+                <span className="w-2 h-2 rounded-full bg-[var(--clr-gold)] inline-block mr-2 animate-pulse" />
+                Good Evening, {summary?.curatorName || 'Curator'}
+              </p>
+              <h1 className="font-display font-extrabold text-[clamp(2.5rem,6vw,4.5rem)] text-[var(--clr-linen)] leading-[1.05] tracking-wide mb-2 drop-shadow-lg">
+                {summary?.vaultName ? summary.vaultName.toUpperCase() : 'FAMILY VAULT'}
+              </h1>
+              <p className="font-script text-[56px] md:text-[72px] text-[var(--clr-gold-light)] leading-[1] mb-12 drop-shadow-md">
+                &ldquo;{summary?.memoryCount || 0} memories preserved&rdquo;
+              </p>
+
+              <div className="flex items-center gap-4 bg-[rgba(255,255,255,0.03)] border border-[rgba(184,143,91,0.2)] w-max px-4 py-2.5 rounded-full backdrop-blur-sm shadow-lg">
+                <div className="flex -space-x-4">
+                  {members?.slice(0, 3).map((member: any, i: number) => (
+                    <img
+                      key={member.id}
+                      src={member.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name || '')}&background=B88F5B&color=fff`}
+                      alt={member.name}
+                      className="w-12 h-12 rounded-full border-[3px] border-[var(--clr-charcoal)] shadow-md relative"
+                      style={{ zIndex: 30 - i }}
+                    />
+                  ))}
+                </div>
+                <span className="font-ui text-[11px] text-[var(--clr-fog)] uppercase tracking-widest font-bold pr-2">
+                  {members.length > 1 ? `${(members[0]?.name || 'Curator').split(' ')[0]} + ${members.length - 1} kin` : 'Just You'}
+                </span>
+              </div>
+            </>
+          )}
         </motion.div>
       </motion.div>
 
@@ -183,8 +203,8 @@ export default function Dashboard() {
   const [isHovered, setIsHovered] = useState(false);
   const [selectedMemory, setSelectedMemory] = useState<any>(null);
   const navigate = useNavigate();
-  const { data: summary } = useDashboardSummary();
-  const { data: members = [] } = useMembers();
+  const { data: summary, isLoading: isSummaryLoading } = useDashboardSummary();
+  const { data: members = [], isLoading: isMembersLoading } = useMembers();
   const { currentUser } = useAuthStore();
   const canContribute = currentUser?.role === 'ADMIN' || currentUser?.role === 'CONTRIBUTOR';
   const isAdmin = currentUser?.role === 'ADMIN';
@@ -226,7 +246,15 @@ export default function Dashboard() {
         onUpdate={setSelectedMemory}
       />
 
-      <DashboardHero textX={textX} textY={textY} bgX={bgX} bgY={bgY} summary={summary} members={members} />
+      <DashboardHero
+        textX={textX}
+        textY={textY}
+        bgX={bgX}
+        bgY={bgY}
+        summary={summary}
+        members={members}
+        isLoading={isSummaryLoading || isMembersLoading}
+      />
 
       <div className="flex-1 bg-[var(--clr-parchment)] flex flex-col relative w-full zone-light">
 
@@ -270,7 +298,19 @@ export default function Dashboard() {
                   <span className="font-ui text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--clr-gold-dark)]">{new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric'})}</span>
                 </div>
 
-                {onThisDayMemory ? (
+                {isSummaryLoading ? (
+                  <div className="bg-[var(--clr-linen)] rounded-[var(--radius-lg)] shadow-[var(--shadow-md)] border border-[var(--clr-aged)] overflow-hidden animate-pulse">
+                    <div className="flex flex-col sm:flex-row">
+                      <div className="sm:w-1/2 min-h-[300px] bg-[rgba(20,18,17,0.15)]" />
+                      <div className="p-8 sm:w-1/2 space-y-4">
+                        <div className="h-3 w-44 rounded-full bg-[rgba(154,115,64,0.2)]" />
+                        <div className="h-8 w-3/4 rounded bg-[rgba(20,18,17,0.12)]" />
+                        <div className="h-24 w-full rounded bg-[rgba(20,18,17,0.08)]" />
+                        <div className="h-8 w-36 rounded-full bg-[rgba(184,143,91,0.2)]" />
+                      </div>
+                    </div>
+                  </div>
+                ) : onThisDayMemory ? (
                   <motion.div
                     onClick={() => setSelectedMemory(onThisDayMemory)}
                     whileHover={{ y: -8 }}
@@ -357,7 +397,19 @@ export default function Dashboard() {
                     {hasUpcomingCapsule ? upcomingCapsule.title : 'Create a new time capsule'}
                   </p>
 
-                  {hasUpcomingCapsule ? (
+                  {isSummaryLoading ? (
+                    <div className="flex gap-6 relative z-10 border-t border-[rgba(184,143,91,0.2)] pt-6 animate-pulse">
+                      <div className="space-y-2">
+                        <div className="h-9 w-14 rounded bg-[rgba(212,169,106,0.25)]" />
+                        <div className="h-2.5 w-10 rounded-full bg-[rgba(194,186,171,0.25)]" />
+                      </div>
+                      <div className="w-px h-10 bg-[rgba(184,143,91,0.2)]" />
+                      <div className="space-y-2">
+                        <div className="h-9 w-14 rounded bg-[rgba(212,169,106,0.25)]" />
+                        <div className="h-2.5 w-12 rounded-full bg-[rgba(194,186,171,0.25)]" />
+                      </div>
+                    </div>
+                  ) : hasUpcomingCapsule ? (
                     <div className="flex gap-6 relative z-10 border-t border-[rgba(184,143,91,0.2)] pt-6">
                       <div>
                         <span className="block font-display font-extrabold text-[2rem] text-[var(--clr-gold-light)] leading-none mb-1">

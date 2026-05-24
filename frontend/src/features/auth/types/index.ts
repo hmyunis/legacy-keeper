@@ -9,6 +9,23 @@ export interface RegisterCredentials {
   fullName: string;
 }
 
+export interface VaultMembershipSummary {
+  id: string;
+  name: string;
+  role: string;
+  joinedAt?: string;
+}
+
+export interface VaultInvitationSummary {
+  id: string;
+  vaultId: string;
+  vaultName: string;
+  role: string;
+  status: string;
+  invitedByName?: string | null;
+  createdAt?: string;
+}
+
 export interface AuthResponse {
   user: {
     id: string;
@@ -18,6 +35,8 @@ export interface AuthResponse {
     is_verified?: boolean;
     vaultId?: string;
     avatar?: string;
+    vaults?: VaultMembershipSummary[];
+    pendingInvitations?: VaultInvitationSummary[];
   };
   accessToken: string;
   refreshToken: string;

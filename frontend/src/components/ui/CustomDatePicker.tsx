@@ -7,13 +7,17 @@ import {
   endOfMonth,
   endOfWeek,
   format,
+  getYear,
   isSameDay,
   isSameMonth,
   isValid,
   parseISO,
+  setMonth,
+  setYear,
   startOfMonth,
   startOfWeek,
 } from 'date-fns';
+import { PlatformSelect } from './Select';
 
 interface CustomDatePickerProps {
   value: string;
@@ -44,12 +48,21 @@ export function CustomDatePicker({ value, onChange, className = '', placeholder 
 
   const selectedDate = value ? parseISO(value) : null;
   const hasSelectedDate = !!selectedDate && isValid(selectedDate);
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const currentYear = getYear(new Date());
+  const yearOptions = Array.from({ length: 201 }, (_, i) => currentYear + 100 - i);
+  const monthOptions = monthNames.map((name, index) => ({ value: String(index), label: name }));
+  const yearSelectOptions = yearOptions.map((year) => ({ value: String(year), label: String(year) }));
 
+  // Sync calendar view when value prop changes externally
   useEffect(() => {
-    if (hasSelectedDate) {
-      setViewMonth(selectedDate);
+    if (value) {
+      const parsed = parseISO(value);
+      if (isValid(parsed)) {
+        setViewMonth(parsed);
+      }
     }
-  }, [hasSelectedDate, selectedDate?.getTime()]);
+  }, [value]);
 
   const updatePosition = useCallback(() => {
     const trigger = triggerRef.current;
@@ -92,7 +105,26 @@ export function CustomDatePicker({ value, onChange, className = '', placeholder 
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (triggerRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
+      
+      // Keep open if clicking inside the date picker input trigger or the calendar popover itself
+      if (triggerRef.current?.contains(target) || popoverRef.current?.contains(target)) {
+        return;
+      }
+
+      // Keep open if clicking inside portaled Select menus or dropdown options
+      let current = target as HTMLElement | null;
+      while (current) {
+        if (
+          current.getAttribute?.('role') === 'listbox' ||
+          current.getAttribute?.('role') === 'option' ||
+          current.hasAttribute?.('data-radix-select-viewport') ||
+          current.hasAttribute?.('data-radix-popper-content-wrapper')
+        ) {
+          return;
+        }
+        current = current.parentElement;
+      }
+
       setIsOpen(false);
       setIsFocused(false);
     };
@@ -163,13 +195,19 @@ export function CustomDatePicker({ value, onChange, className = '', placeholder 
             >
               <CaretLeft size={16} weight="bold" />
             </button>
-            <div className="text-center">
-              <p className="font-display text-[16px] font-bold uppercase tracking-wide text-[var(--clr-ink)] leading-none">
-                {format(viewMonth, 'MMMM yyyy')}
-              </p>
-              <p className="font-ui text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--clr-gold-dark)] mt-1">
-                Curated date
-              </p>
+            <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
+              <PlatformSelect
+                value={String(viewMonth.getMonth())}
+                onValueChange={(nextMonth) => setViewMonth((month) => setMonth(month, Number(nextMonth)))}
+                options={monthOptions}
+                className="min-h-8 h-8 min-w-0 w-full gap-1 px-2 py-1 bg-[var(--clr-paper)] text-[10px] uppercase tracking-[0.04em] shadow-none [&_svg]:h-3 [&_svg]:w-3"
+              />
+              <PlatformSelect
+                value={String(getYear(viewMonth))}
+                onValueChange={(nextYear) => setViewMonth((month) => setYear(month, Number(nextYear)))}
+                options={yearSelectOptions}
+                className="min-h-8 h-8 min-w-0 w-full gap-1 px-2 py-1 bg-[var(--clr-paper)] text-[10px] uppercase tracking-[0.04em] shadow-none [&_svg]:h-3 [&_svg]:w-3"
+              />
             </div>
             <button
               type="button"

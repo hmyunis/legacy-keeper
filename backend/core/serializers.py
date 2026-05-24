@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
-from .models import Vault, VaultMember, ActionLog, LineagePact
+from .models import Vault, VaultMember, ActionLog, LineagePact, VaultInvitation
 
 User = get_user_model()
 
@@ -10,10 +10,22 @@ class UserSerializer(serializers.ModelSerializer):
     avatar = serializers.SerializerMethodField()
     vaultId = serializers.SerializerMethodField()
     role = serializers.SerializerMethodField()
+    vaults = serializers.SerializerMethodField()
+    pendingInvitations = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'fullName', 'email', 'is_verified', 'avatar', 'vaultId', 'role')
+        fields = (
+            'id',
+            'fullName',
+            'email',
+            'is_verified',
+            'avatar',
+            'vaultId',
+            'role',
+            'vaults',
+            'pendingInvitations',
+        )
 
     def get_avatar(self, obj):
         if obj.avatar:
@@ -21,22 +33,51 @@ class UserSerializer(serializers.ModelSerializer):
         return f"https://ui-avatars.com/api/?name={obj.full_name.replace(' ', '+')}&background=B88F5B&color=fff"
 
     def get_vaultId(self, obj):
-        member = obj.vault_memberships.first()
-        return str(member.vault.id) if member else None
+        memberships = list(obj.vault_memberships.select_related('vault').all())
+        if len(memberships) != 1:
+            return None
+        return str(memberships[0].vault.id)
 
     def get_role(self, obj):
-        member = obj.vault_memberships.first()
-        return member.role if member else 'CURATOR'
+        memberships = list(obj.vault_memberships.select_related('vault').all())
+        if len(memberships) != 1:
+            return 'CURATOR'
+        return memberships[0].role
+
+    def get_vaults(self, obj):
+        memberships = obj.vault_memberships.select_related('vault').order_by('joined_at')
+        return [
+            {
+                'id': str(membership.vault_id),
+                'name': membership.vault.name,
+                'role': membership.role,
+                'joinedAt': membership.joined_at,
+            }
+            for membership in memberships
+        ]
+
+    def get_pendingInvitations(self, obj):
+        invitations = VaultInvitation.objects.select_related('vault', 'invited_by').filter(
+            email=obj.email,
+            status='PENDING'
+        ).order_by('-created_at')
+        return [
+            {
+                'id': str(invitation.id),
+                'vaultId': str(invitation.vault_id),
+                'vaultName': invitation.vault.name,
+                'role': invitation.role,
+                'status': invitation.status,
+                'invitedByName': invitation.invited_by.full_name if invitation.invited_by else None,
+                'createdAt': invitation.created_at,
+            }
+            for invitation in invitations
+        ]
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         user_data = UserSerializer(self.user, context=self.context).data
-
-        member = self.user.vault_memberships.first()
-        if member:
-            user_data['role'] = member.role
-            user_data['vaultId'] = str(member.vault.id)
 
         return {
             'user': user_data,
@@ -81,3 +122,29 @@ class LineagePactSerializer(serializers.ModelSerializer):
     def get_is_incoming(self, obj):
         current_vault_id = self.context['view'].kwargs.get('vault_id')
         return str(obj.target_vault_id) == str(current_vault_id)
+
+
+class VaultInvitationSerializer(serializers.ModelSerializer):
+    invitedByName = serializers.CharField(source='invited_by.full_name', read_only=True)
+    vaultId = serializers.CharField(source='vault.id', read_only=True)
+    vaultName = serializers.CharField(source='vault.name', read_only=True)
+    invitedAt = serializers.DateTimeField(source='created_at', read_only=True)
+    acceptedAt = serializers.DateTimeField(source='accepted_at', read_only=True)
+    rejectedAt = serializers.DateTimeField(source='rejected_at', read_only=True)
+    revokedAt = serializers.DateTimeField(source='revoked_at', read_only=True)
+
+    class Meta:
+        model = VaultInvitation
+        fields = (
+            'id',
+            'email',
+            'role',
+            'status',
+            'vaultId',
+            'vaultName',
+            'invitedByName',
+            'invitedAt',
+            'acceptedAt',
+            'rejectedAt',
+            'revokedAt',
+        )

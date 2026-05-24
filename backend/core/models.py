@@ -43,6 +43,29 @@ class VaultMember(models.Model):
     class Meta:
         unique_together = ('user', 'vault')
 
+
+class VaultInvitation(models.Model):
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending'),
+        ('ACCEPTED', 'Accepted'),
+        ('REJECTED', 'Rejected'),
+        ('REVOKED', 'Revoked'),
+    )
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name='invitations')
+    email = models.EmailField()
+    role = models.CharField(max_length=15, choices=VaultMember.ROLE_CHOICES, default='VIEWER')
+    invited_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_vault_invitations')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('vault', 'email')
+
 class LineagePact(models.Model):
     STATUS_CHOICES = (
         ('PENDING', 'Pending'),

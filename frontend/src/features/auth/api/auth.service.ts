@@ -22,7 +22,7 @@ export const authService = {
     return response.data;
   },
 
-  initVault: async (vaultName: string): Promise<{ vaultId: string; name: string }> => {
+  initVault: async (vaultName: string): Promise<{ vaultId: string; name: string; role: string }> => {
     const response = await axiosClient.post('/auth/onboarding/init-vault/', { vaultName });
     return response.data;
   },

@@ -1,13 +1,30 @@
 import json
 import logging
+import mimetypes
+import os
 import re
 import requests
+import tempfile
 from core.vapid import send_web_push
 from io import BytesIO
-from PIL import Image, ExifTags
+from PIL import Image, ExifTags, ImageOps
 import imagehash
 import face_recognition
 import numpy as np
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import pytesseract
+    from pytesseract import TesseractNotFoundError
+except ImportError:
+    pytesseract = None
+
+    class TesseractNotFoundError(Exception):
+        pass
 
 from celery import shared_task
 from django.conf import settings
@@ -59,6 +76,57 @@ VISUAL_TAG_CANDIDATES = [
     "music",
     "dance",
 ]
+
+IMAGE_OBJECT_CANDIDATES = [
+    "person",
+    "child",
+    "baby",
+    "bride",
+    "groom",
+    "table",
+    "chair",
+    "sofa",
+    "bed",
+    "car",
+    "bicycle",
+    "bus",
+    "train",
+    "airplane",
+    "boat",
+    "house",
+    "building",
+    "church",
+    "school",
+    "tree",
+    "flower",
+    "mountain",
+    "beach",
+    "cake",
+    "food",
+    "cup",
+    "book",
+    "letter",
+    "document",
+    "certificate",
+    "newspaper",
+    "clock",
+    "watch",
+    "phone",
+    "camera",
+    "television",
+    "musical instrument",
+    "piano",
+    "guitar",
+    "toy",
+    "dog",
+    "cat",
+]
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+PDF_EXTENSIONS = {".pdf"}
+MAX_VIDEO_FRAMES = 20
+MAX_PDF_PAGES = 50
 
 def get_clip_model():
     global _clip_model
@@ -113,6 +181,45 @@ def infer_visual_tags(model, image, image_vector, limit=6):
         selected.append("black and white")
 
     return merge_tags(selected, limit=limit)
+
+
+def infer_image_object_tags(model, image_vector, limit=8):
+    text_prompts = [f"a family archive photo containing a {tag}" for tag in IMAGE_OBJECT_CANDIDATES]
+    text_vectors = np.array(model.encode(text_prompts), dtype=np.float32)
+    image_vector = np.array(image_vector, dtype=np.float32)
+
+    text_vectors = text_vectors / np.linalg.norm(text_vectors, axis=1, keepdims=True)
+    image_vector = image_vector / np.linalg.norm(image_vector)
+    scores = text_vectors @ image_vector
+
+    ranked_indexes = np.argsort(scores)[::-1]
+    selected = []
+    for index in ranked_indexes:
+        tag = IMAGE_OBJECT_CANDIDATES[index]
+        score = float(scores[index])
+        if len(selected) < 3 or score >= 0.24:
+            selected.append(tag)
+        if len(selected) >= limit:
+            break
+
+    return merge_tags(selected, limit=limit)
+
+
+def extract_image_ocr_text(image):
+    if pytesseract is None:
+        return "", "pytesseract is not installed, so image OCR was skipped."
+
+    try:
+        prepared = ImageOps.grayscale(image.convert("RGB"))
+        prepared = ImageOps.autocontrast(prepared)
+        text = pytesseract.image_to_string(prepared, config="--psm 6")
+        text = re.sub(r'\s+', ' ', text or '').strip()
+        return text[:6000], ""
+    except TesseractNotFoundError:
+        return "", "Tesseract OCR is not installed or not on PATH, so image OCR was skipped."
+    except Exception as exc:
+        logger.warning("Image OCR failed: %s", exc)
+        return "", f"Image OCR failed: {exc}"
 
 
 def parse_json_object(raw_text):
@@ -198,29 +305,253 @@ def put_suggestion(memory, field, value):
     suggestions[field] = suggestion
     memory.ai_suggestions = suggestions
 
+
+def detect_media_kind(file_name):
+    ext = os.path.splitext(file_name or "")[1].lower()
+    mime_type, _ = mimetypes.guess_type(file_name or "")
+    if ext in IMAGE_EXTENSIONS or (mime_type or "").startswith("image/"):
+        return "image"
+    if ext in VIDEO_EXTENSIONS or (mime_type or "").startswith("video/"):
+        return "video"
+    if ext in PDF_EXTENSIONS or mime_type == "application/pdf":
+        return "pdf"
+    return "unknown"
+
+
+def fetch_file_source(memory):
+    file_name = getattr(memory.original_file, "name", "") or ""
+    if settings.USE_MINIO:
+        file_url = memory.original_file.url
+        if file_url.startswith('/'):
+            minio_base_url = getattr(settings, 'MINIO_PUBLIC_MEDIA_URL', 'http://localhost:9000').rstrip('/')
+            file_url = f"{minio_base_url}{file_url}"
+        response = requests.get(file_url, timeout=30)
+        response.raise_for_status()
+        return file_name, BytesIO(response.content), None
+    return file_name, None, memory.original_file.path
+
+
+def materialize_source_to_path(source_bytes, source_path, suffix=""):
+    if source_path:
+        return source_path, None
+
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        source_bytes.seek(0)
+        temp.write(source_bytes.read())
+        temp.flush()
+        return temp.name, temp.name
+    finally:
+        temp.close()
+
+
+def open_image_from_source(source_bytes, source_path):
+    if source_path:
+        return Image.open(source_path)
+    source_bytes.seek(0)
+    return Image.open(source_bytes)
+
+
+def extract_image_context(source_bytes, source_path):
+    img = open_image_from_source(source_bytes, source_path)
+    return {
+        "frames": [img.convert("RGB")],
+        "primary_image": img,
+        "text": "",
+        "metadata": {
+            "width": img.width,
+            "height": img.height,
+            "frame_count": 1,
+        },
+        "warnings": [],
+    }
+
+
+def sample_video_frames(source_bytes, source_path, file_name):
+    if cv2 is None:
+        return {
+            "frames": [],
+            "primary_image": None,
+            "text": "",
+            "metadata": {"media_type": "video"},
+            "warnings": ["opencv-python-headless is not available, so video frames were not sampled."],
+        }
+
+    video_path, temp_path = materialize_source_to_path(
+        source_bytes,
+        source_path,
+        suffix=os.path.splitext(file_name or "")[1],
+    )
+    frames = []
+    warnings = []
+    cap = None
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return {
+                "frames": [],
+                "primary_image": None,
+                "text": "",
+                "metadata": {"media_type": "video"},
+                "warnings": ["Video could not be opened for frame sampling."],
+            }
+
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
+        duration_seconds = (frame_count / fps) if frame_count > 0 and fps > 0 else None
+        if frame_count <= 0:
+            return {
+                "frames": [],
+                "primary_image": None,
+                "text": "",
+                "metadata": {"media_type": "video", "fps": fps, "duration_seconds": duration_seconds},
+                "warnings": ["Video frame count is unavailable, so frame sampling was skipped."],
+            }
+
+        sample_count = min(MAX_VIDEO_FRAMES, frame_count)
+        frame_indexes = np.linspace(0, max(frame_count - 1, 0), num=sample_count, dtype=int)
+        for frame_index in frame_indexes:
+            try:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    continue
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frames.append(Image.fromarray(rgb_frame))
+            except Exception as ex:
+                warnings.append(f"Skipped video frame {int(frame_index)}: {ex}")
+
+        primary = frames[0] if frames else None
+        return {
+            "frames": frames,
+            "primary_image": primary,
+            "text": "",
+            "metadata": {
+                "media_type": "video",
+                "width": primary.width if primary else None,
+                "height": primary.height if primary else None,
+                "frame_count": frame_count,
+                "sampled_frames": len(frames),
+                "fps": fps,
+                "duration_seconds": duration_seconds,
+            },
+            "warnings": warnings,
+        }
+    finally:
+        if cap is not None:
+            cap.release()
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
+def extract_pdf_context(source_bytes, source_path, file_name):
+    pdf_path, temp_path = materialize_source_to_path(
+        source_bytes,
+        source_path,
+        suffix=os.path.splitext(file_name or "")[1] or ".pdf",
+    )
+    try:
+        try:
+            import fitz
+        except ImportError:
+            return {
+                "frames": [],
+                "primary_image": None,
+                "text": "",
+                "metadata": {"media_type": "pdf"},
+                "warnings": ["PyMuPDF is not installed, so PDF content was not processed."],
+            }
+
+        doc = fitz.open(pdf_path)
+        try:
+            page_count = doc.page_count
+            if page_count > MAX_PDF_PAGES:
+                return {
+                    "frames": [],
+                    "primary_image": None,
+                    "text": "",
+                    "metadata": {"media_type": "pdf", "page_count": page_count},
+                    "warnings": [f"PDF has {page_count} pages; only PDFs up to {MAX_PDF_PAGES} pages are processed."],
+                }
+
+            frames = []
+            text_chunks = []
+            matrix = fitz.Matrix(1.5, 1.5)
+            for page in doc:
+                text = page.get_text("text").strip()
+                if text:
+                    text_chunks.append(text)
+                try:
+                    pix = page.get_pixmap(matrix=matrix, alpha=False)
+                    frames.append(Image.frombytes("RGB", [pix.width, pix.height], pix.samples))
+                except Exception as ex:
+                    logger.warning(f"Could not render PDF page for memory context: {ex}")
+
+            primary = frames[0] if frames else None
+            return {
+                "frames": frames,
+                "primary_image": primary,
+                "text": "\n\n".join(text_chunks)[:4000],
+                "metadata": {
+                    "media_type": "pdf",
+                    "page_count": page_count,
+                    "rendered_pages": len(frames),
+                    "width": primary.width if primary else None,
+                    "height": primary.height if primary else None,
+                },
+                "warnings": [],
+            }
+        finally:
+            doc.close()
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
+def extract_media_context(memory):
+    file_name, source_bytes, source_path = fetch_file_source(memory)
+    media_kind = detect_media_kind(file_name)
+    if media_kind == "image":
+        context = extract_image_context(source_bytes, source_path)
+    elif media_kind == "video":
+        context = sample_video_frames(source_bytes, source_path, file_name)
+    elif media_kind == "pdf":
+        context = extract_pdf_context(source_bytes, source_path, file_name)
+    else:
+        context = {
+            "frames": [],
+            "primary_image": None,
+            "text": "",
+            "metadata": {},
+            "warnings": [f"Unsupported media type for AI visual processing: {file_name or 'unknown file'}"],
+        }
+    context["media_kind"] = media_kind
+    context["file_name"] = file_name
+    return context
+
 @shared_task(bind=True, queue='high_priority', name='tasks.ai_pipeline.process_memory_task')
 def process_memory_task(self, memory_id):
     try:
         memory = Memory.objects.get(id=memory_id)
         previous_exif = memory.exif_json or {}
 
-        image_path = memory.original_file.path if not settings.USE_MINIO else memory.original_file.url
-        if settings.USE_MINIO:
-            if image_path.startswith('/'):
-                minio_base_url = getattr(settings, 'MINIO_PUBLIC_MEDIA_URL', 'http://localhost:9000').rstrip('/')
-                image_path = f"{minio_base_url}{image_path}"
-            response = requests.get(image_path)
-            img = Image.open(BytesIO(response.content))
-        else:
-            img = Image.open(image_path)
+        media_context = extract_media_context(memory)
+        frames = media_context["frames"]
+        primary_image = media_context["primary_image"]
+        document_text = media_context["text"]
+        media_kind = media_context["media_kind"]
+        warnings = media_context["warnings"]
 
-        is_grayscale = img.mode == 'L'
-        img_rgb = img.convert('RGB')
-        np_img = np.array(img_rgb)
-
-        exif_data = img._getexif()
         extracted_year = ""
         tech_meta = {}
+        is_grayscale = bool(primary_image and primary_image.mode == 'L')
+        exif_data = primary_image._getexif() if primary_image and hasattr(primary_image, "_getexif") else None
         if exif_data:
             for tag, value in exif_data.items():
                 decoded = ExifTags.TAGS.get(tag, tag)
@@ -234,70 +565,114 @@ def process_memory_task(self, memory_id):
             key: value for key, value in previous_exif.items()
             if key.startswith("ai_")
         }
-        memory.exif_json = {**previous_ai_meta, **tech_meta}
-        memory.exif_json['width'] = img.width
-        memory.exif_json['height'] = img.height
+        memory.exif_json = {**previous_ai_meta, **tech_meta, **media_context["metadata"]}
+        memory.exif_json['ai_media_type'] = media_kind
+        memory.exif_json['ai_processing_status'] = 'processing'
+        if warnings:
+            memory.exif_json['ai_processing_warnings'] = warnings
         memory.exif_json['filesize'] = memory.original_file.size
 
-        memory.phash = str(imagehash.phash(img_rgb))
-
-        clip_model = get_clip_model()
-        vector = clip_model.encode(img_rgb).tolist()
-        memory.clip_embedding = vector
-        visual_tags = infer_visual_tags(clip_model, img, vector)
-
-        previous_unknowns = [
-            face.person for face in memory.detected_faces.select_related('person').all()
-            if face.person.name.startswith("Unknown Kin")
-        ]
-        memory.detected_faces.all().delete()
-        for person in previous_unknowns:
-            if person.face_embeddings.count() == 0:
-                person.delete()
-
-        face_locations = face_recognition.face_locations(np_img)
-        face_encodings = face_recognition.face_encodings(np_img, face_locations)
-
+        visual_tags = []
+        object_tags = []
+        image_ocr_text = ""
         detected_people_names = []
-
-        for location, encoding in zip(face_locations, face_encodings):
-            existing_embeddings = PersonFaceEmbedding.objects.filter(person__vault=memory.vault)
-            match_found = False
-
-            for emb_record in existing_embeddings:
-                db_encoding = np.array(emb_record.embedding_vector)
-                matches = face_recognition.compare_faces([db_encoding], encoding, tolerance=0.6)
-
-                if matches[0]:
-                    PersonFaceEmbedding.objects.create(
-                        person=emb_record.person,
-                        memory=memory,
-                        bounding_box=location,
-                        embedding_vector=encoding.tolist()
+        if frames:
+            clip_model = get_clip_model()
+            vectors = []
+            for frame in frames:
+                try:
+                    frame_rgb = frame.convert('RGB')
+                    frame_vector = clip_model.encode(frame_rgb).tolist()
+                    vectors.append(frame_vector)
+                    visual_tags = merge_tags(
+                        visual_tags,
+                        infer_visual_tags(clip_model, frame_rgb, frame_vector),
+                        limit=12,
                     )
-                    detected_people_names.append(emb_record.person.name)
-                    match_found = True
-                    break
+                    if media_kind == "image":
+                        object_tags = merge_tags(
+                            object_tags,
+                            infer_image_object_tags(clip_model, frame_vector),
+                            limit=12,
+                        )
+                except Exception as ex:
+                    logger.warning(f"Skipped frame-level AI visual analysis for memory {memory_id}: {ex}")
 
-            if not match_found:
-                new_person = Person.objects.create(
-                    vault=memory.vault,
-                    name=f"Unknown Kin ({str(memory.id)[:4]})",
-                    role="Unknown"
-                )
-                PersonFaceEmbedding.objects.create(
-                    person=new_person,
-                    memory=memory,
-                    bounding_box=location,
-                    embedding_vector=encoding.tolist()
-                )
-                detected_people_names.append(new_person.name)
+            if vectors:
+                avg_vector = np.mean(np.array(vectors, dtype=np.float32), axis=0)
+                memory.clip_embedding = avg_vector.tolist()
+
+            if primary_image:
+                img_rgb = primary_image.convert('RGB')
+                if media_kind == "image":
+                    image_ocr_text, ocr_warning = extract_image_ocr_text(img_rgb)
+                    if ocr_warning:
+                        warnings.append(ocr_warning)
+                memory.phash = str(imagehash.phash(img_rgb))
+                if not memory.exif_json.get("width"):
+                    memory.exif_json['width'] = img_rgb.width
+                if not memory.exif_json.get("height"):
+                    memory.exif_json['height'] = img_rgb.height
+
+                previous_unknowns = [
+                    face.person for face in memory.detected_faces.select_related('person').all()
+                    if face.person.name.startswith("Unknown Kin")
+                ]
+                memory.detected_faces.all().delete()
+                for person in previous_unknowns:
+                    if person.face_embeddings.count() == 0:
+                        person.delete()
+
+                try:
+                    np_img = np.array(img_rgb)
+                    face_locations = face_recognition.face_locations(np_img)
+                    face_encodings = face_recognition.face_encodings(np_img, face_locations)
+                except Exception as ex:
+                    logger.warning(f"Face recognition skipped for memory {memory_id}: {ex}")
+                    face_locations = []
+                    face_encodings = []
+
+                for location, encoding in zip(face_locations, face_encodings):
+                    existing_embeddings = PersonFaceEmbedding.objects.filter(person__vault=memory.vault)
+                    match_found = False
+
+                    for emb_record in existing_embeddings:
+                        db_encoding = np.array(emb_record.embedding_vector)
+                        matches = face_recognition.compare_faces([db_encoding], encoding, tolerance=0.6)
+
+                        if matches[0]:
+                            PersonFaceEmbedding.objects.create(
+                                person=emb_record.person,
+                                memory=memory,
+                                bounding_box=location,
+                                embedding_vector=encoding.tolist()
+                            )
+                            detected_people_names.append(emb_record.person.name)
+                            match_found = True
+                            break
+
+                    if not match_found:
+                        new_person = Person.objects.create(
+                            vault=memory.vault,
+                            name=f"Unknown Kin ({str(memory.id)[:4]})",
+                            role="Unknown"
+                        )
+                        PersonFaceEmbedding.objects.create(
+                            person=new_person,
+                            memory=memory,
+                            bounding_box=location,
+                            embedding_vector=encoding.tolist()
+                        )
+                        detected_people_names.append(new_person.name)
 
         if is_grayscale:
             visual_tags = merge_tags(visual_tags, ["black and white"], limit=7)
+        if media_kind == "pdf":
+            visual_tags = merge_tags(visual_tags, ["document"], limit=12)
 
         manual_people_names = list(memory.identified_people.values_list('name', flat=True))
         people_context = merge_tags(detected_people_names, manual_people_names, limit=30)
+        searchable_text = "\n\n".join(part for part in [document_text, image_ocr_text] if part)
 
         metadata_context = {
             "current_title": memory.title or "",
@@ -305,7 +680,11 @@ def process_memory_task(self, memory_id):
             "year": memory.year or "",
             "people": people_context,
             "visual_tags": visual_tags,
+            "object_tags": object_tags,
             "existing_tags": memory.tags or [],
+            "media_type": media_kind,
+            "document_text": searchable_text,
+            "processing_warnings": warnings,
         }
         prompt = (
             "You are curating a private family museum exhibit. "
@@ -314,6 +693,7 @@ def process_memory_task(self, memory_id):
             "description must be 1-2 polished sentences suitable for an exhibit label. "
             "tags must be 5-10 concise lowercase tags, each under 50 characters. "
             "Do not invent named people. Use the known people list only if present. "
+            "If document_text is present, use only its explicit contents. "
             f"Context: {json.dumps(metadata_context, ensure_ascii=False)}"
         )
 
@@ -340,9 +720,19 @@ def process_memory_task(self, memory_id):
         except requests.exceptions.RequestException as e:
             logger.warning(f"Ollama local API failed: {e}. Applying local visual tags only.")
 
-        ai_generated_tags = merge_tags(visual_tags, generated_tags)
+        ai_generated_tags = merge_tags(visual_tags, object_tags, generated_tags)
         memory.exif_json["ai_visual_tags"] = visual_tags
+        memory.exif_json["ai_object_tags"] = object_tags
         memory.exif_json["ai_suggested_tags"] = ai_generated_tags
+        if document_text:
+            memory.exif_json["ai_document_text"] = document_text[:12000]
+        if image_ocr_text:
+            memory.exif_json["ai_ocr_text"] = image_ocr_text[:6000]
+        memory.exif_json["ai_processed_frame_count"] = len(frames)
+        memory.exif_json["ai_processed_text_chars"] = len(searchable_text or "")
+        if warnings:
+            memory.exif_json['ai_processing_warnings'] = warnings
+        memory.exif_json["ai_processing_status"] = "ready" if (frames or searchable_text) else "skipped"
 
         if not generated_description:
             generated_description = fallback_exhibit_description(
@@ -373,4 +763,14 @@ def process_memory_task(self, memory_id):
 
     except Exception as e:
         logger.error(f"Failed to process memory {memory_id}: {str(e)}")
-        raise e
+        try:
+            memory = Memory.objects.get(id=memory_id)
+            memory.exif_json = {
+                **(memory.exif_json or {}),
+                "ai_processing_status": "failed",
+                "ai_processing_error": str(e)[:500],
+            }
+            memory.save(update_fields=["exif_json"])
+        except Exception:
+            logger.exception(f"Could not persist AI failure state for memory {memory_id}")
+        return {"status": "FAILED", "memory_id": str(memory_id), "error": str(e)}

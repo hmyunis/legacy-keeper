@@ -4,6 +4,7 @@ import { sileo } from 'sileo';
 import { useState, useEffect, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import RestorationSlider from '../../components/vault/RestorationSlider';
+import VaultMediaSurface from '../../components/vault/VaultMediaSurface';
 import { Button } from '../../components/ui/Button';
 import { CustomDatePicker } from '../../components/ui/CustomDatePicker';
 import { Tooltip } from '../../components/ui/Tooltip';
@@ -17,6 +18,7 @@ import { downloadArtifact } from '../../lib/files';
 import { pollTask } from '../../lib/tasks';
 import { getPendingSuggestion, isAiGeneratedTag, isAiGeneratedTitle } from './lib/aiMarkers';
 import type { VaultMemory } from './types';
+import { detectVaultMediaType } from './lib/mediaType';
 
 interface MemoryDetailModalProps {
   isOpen: boolean;
@@ -132,6 +134,7 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
   const pendingTitleSuggestion = typeof pendingTitleValue === 'string' ? pendingTitleValue : null;
   const pendingDescriptionSuggestion = typeof pendingDescriptionValue === 'string' ? pendingDescriptionValue : null;
   const pendingTagSuggestion = Array.isArray(pendingTagsValue) ? pendingTagsValue.map(String).filter(Boolean) : null;
+  const mediaType = detectVaultMediaType(memory.url, memory.exif_json);
   const linkedKinIds = new Set([
     ...(memory.detected_faces || []).map((face) => face.person_id),
     ...(memory.identified_people || []).map((person) => person.id),
@@ -312,6 +315,44 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
     }
   };
 
+  const handleUnidentifyFace = async (faceId: string, currentName: string) => {
+    if (!vaultId) return;
+    setManualKinBusyId(faceId);
+    try {
+      await axiosClient.post(`/vaults/${vaultId}/lineage/identify/`, {
+        face_embedding_id: faceId,
+        target_person_id: null,
+      });
+      queryClient.invalidateQueries();
+      const full = await axiosClient.get(`/vaults/${vaultId}/memories/${memory.id}/`);
+      onUpdate?.(full.data);
+      sileo.success({ title: "Kin Unlinked", description: `${currentName} has been cleared from this detected face.` });
+    } catch {
+      sileo.error({ title: "Could Not Remove Kin" });
+    } finally {
+      setManualKinBusyId(null);
+    }
+  };
+
+  const handleUnlinkFaceNode = async (faceId: string) => {
+    if (!vaultId) return;
+    setManualKinBusyId(faceId);
+    try {
+      await axiosClient.post(`/vaults/${vaultId}/lineage/identify/`, {
+        face_embedding_id: faceId,
+        action: 'unlink',
+      });
+      queryClient.invalidateQueries();
+      const full = await axiosClient.get(`/vaults/${vaultId}/memories/${memory.id}/`);
+      onUpdate?.(full.data);
+      sileo.success({ title: "Face Unlinked", description: "Detected face node removed from this exhibit." });
+    } catch {
+      sileo.error({ title: "Could Not Unlink Face" });
+    } finally {
+      setManualKinBusyId(null);
+    }
+  };
+
   const handleSaveEdit = async () => {
     const payload = {
       ...editForm,
@@ -458,10 +499,16 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
               </div>
 
               <div className="flex-1 flex items-center justify-center relative overflow-hidden">
-                {memory.restoredUrl ? (
+                {mediaType === 'image' && memory.restoredUrl ? (
                   <RestorationSlider originalSrc={memory.url} restoredSrc={memory.restoredUrl} />
                 ) : (
-                  <img src={memory.url} alt={memory.title} className="max-w-full max-h-full object-contain drop-shadow-2xl border-4 border-white/10 rounded-sm transition-transform duration-200" style={{ transform: `scale(${imageZoom})` }} />
+                  <VaultMediaSurface
+                    src={memory.url}
+                    title={memory.title}
+                    exif={memory.exif_json}
+                    imageClassName="max-w-full max-h-full object-contain drop-shadow-2xl border-4 border-white/10 rounded-sm transition-transform duration-200"
+                    imageStyle={mediaType === 'image' ? { transform: `scale(${imageZoom})` } : undefined}
+                  />
                 )}
               </div>
             </div>
@@ -714,15 +761,31 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
                                 <span className="text-[var(--clr-dust)]">Face {faceIndex + 1}:</span> {face.person_name}
                               </span>
                               {canContribute && (
-                                <IconTooltip label={face.person_name?.includes("Unknown") ? "Identify face" : "Change identity"}>
-                                  <button
-                                    aria-label={face.person_name?.includes("Unknown") ? "Identify face" : "Change identity"}
-                                    onClick={() => setIsIdentifying(isIdentifying === face.id ? null : face.id)}
-                                    className="ml-1 inline-flex h-6 w-6 items-center justify-center rounded-full text-[var(--clr-gold-dark)] hover:bg-[var(--clr-gold-muted)] hover:text-[var(--clr-gold)]"
-                                  >
-                                    {face.person_name?.includes("Unknown") ? <Fingerprint size={14} weight="bold" /> : <CaretDown size={13} weight="bold" />}
-                                  </button>
-                                </IconTooltip>
+                                <div className="ml-1 inline-flex items-center gap-1">
+                                  <IconTooltip label={face.person_name?.includes("Unknown") ? "Identify face" : "Change identity"}>
+                                    <button
+                                      aria-label={face.person_name?.includes("Unknown") ? "Identify face" : "Change identity"}
+                                      onClick={() => setIsIdentifying(isIdentifying === face.id ? null : face.id)}
+                                      className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[var(--clr-gold-dark)] hover:bg-[var(--clr-gold-muted)] hover:text-[var(--clr-gold)]"
+                                    >
+                                      {face.person_name?.includes("Unknown") ? <Fingerprint size={14} weight="bold" /> : <CaretDown size={13} weight="bold" />}
+                                    </button>
+                                  </IconTooltip>
+                                  <IconTooltip label="Remove linked kin">
+                                    <button
+                                      aria-label={`Remove ${face.person_name}`}
+                                      disabled={manualKinBusyId === face.id}
+                                      onClick={() =>
+                                        face.person_name?.includes("Unknown")
+                                          ? handleUnlinkFaceNode(face.id)
+                                          : handleUnidentifyFace(face.id, face.person_name)
+                                      }
+                                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[var(--clr-danger)] hover:bg-[rgba(139,58,58,0.1)] disabled:opacity-50"
+                                    >
+                                      <X size={10} weight="bold" />
+                                    </button>
+                                  </IconTooltip>
+                                </div>
                               )}
                             </div>
 

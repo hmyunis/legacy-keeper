@@ -8,6 +8,8 @@ export interface PersonProfile {
   id: string;
   name: string;
   photo?: string;
+  vaultId?: string;
+  vaultName?: string;
   biography: string;
   role: string;
   birthYear: string;

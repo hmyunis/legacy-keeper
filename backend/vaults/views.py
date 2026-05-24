@@ -1,5 +1,10 @@
 import datetime
+import logging
+import math
 import random
+import re
+import unicodedata
+from difflib import SequenceMatcher
 from rest_framework import generics, views, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -14,15 +19,313 @@ from core.models import VaultMember, ActionLog, get_accessible_vault_ids
 from lineage.models import Person
 from .serializers import MemorySerializer, CapsuleSerializer, MemoryCollectionSerializer
 from django.db.models import Q, Count, F
-from sentence_transformers import SentenceTransformer
+from . import search_ranking as search_ranker
+from rest_framework.pagination import PageNumberPagination
 
 _clip_model = None
+logger = logging.getLogger(__name__)
+_SEARCH_STOPWORDS = {
+    'a', 'an', 'and', 'around', 'at', 'be', 'before', 'during', 'for', 'from', 'in',
+    'into', 'is', 'it', 'of', 'on', 'or', 'over', 'that', 'the', 'their', 'there',
+    'this', 'to', 'with', 'without', 'year', 'years', 'old', 'photo', 'photos', 'picture',
+    'image', 'images', 'memory', 'memories'
+}
 
 def get_clip_model():
     global _clip_model
     if _clip_model is None:
-        _clip_model = SentenceTransformer('clip-ViT-B-32')
+        try:
+            from sentence_transformers import SentenceTransformer
+            _clip_model = SentenceTransformer('clip-ViT-B-32')
+        except Exception as exc:
+            logger.warning("CLIP search model unavailable; falling back to lexical search only: %s", exc)
+            return None
     return _clip_model
+
+def normalize_search_text(value):
+    raw = unicodedata.normalize('NFKD', str(value or ''))
+    stripped = ''.join(ch for ch in raw if not unicodedata.combining(ch))
+    return re.sub(r'[^a-z0-9]+', ' ', stripped.lower()).strip()
+
+def tokenize_search_query(query):
+    normalized_query = str(query or '').strip()
+    quoted_matches = [match.strip() for match in re.findall(r'"([^"]+)"', normalized_query)]
+    quoted_phrases = [normalize_search_text(match) for match in quoted_matches]
+    cleaned_query = re.sub(r'"[^"]+"', ' ', normalized_query)
+    normalized = normalize_search_text(cleaned_query)
+    tokens = [token for token in normalized.split() if len(token) > 1 and token not in _SEARCH_STOPWORDS]
+
+    years = sorted(set(re.findall(r'\b((?:18|19|20)\d{2})\b', normalized_query)))
+    decades = []
+    for match in re.findall(r'\b((?:18|19|20)\d{2})s\b', normalized_query, flags=re.IGNORECASE):
+        decades.append(f"{match[:3]}0s")
+    for match in re.findall(r'\b(\d{2})s\b', normalized_query):
+        if match.isdigit():
+            decades.append(f"19{match}0s")
+
+    return {
+        'raw': normalized_query,
+        'normalized': normalized,
+        'tokens': tokens,
+        'phrases': [phrase for phrase in quoted_phrases if phrase],
+        'phrase_terms': [phrase for phrase in quoted_matches if phrase],
+        'years': years,
+        'decades': sorted(set(decades)),
+    }
+
+def cosine_similarity(a, b):
+    if not a or not b:
+        return 0.0
+
+    numerator = 0.0
+    a_norm = 0.0
+    b_norm = 0.0
+    for left, right in zip(a, b):
+        numerator += left * right
+        a_norm += left * left
+        b_norm += right * right
+
+    if not a_norm or not b_norm:
+        return 0.0
+
+    return float(numerator / math.sqrt(a_norm * b_norm))
+
+def get_memory_search_blob(memory):
+    people = []
+    seen = set()
+    for face in memory.detected_faces.all():
+        if face.person_id and str(face.person_id) not in seen:
+            seen.add(str(face.person_id))
+            people.append(face.person.name)
+    for person in memory.identified_people.all():
+        if str(person.id) not in seen:
+            seen.add(str(person.id))
+            people.append(person.name)
+
+    return normalize_search_text(
+        ' '.join([
+            memory.title or '',
+            memory.location or '',
+            memory.year or '',
+            memory.cluster_name or '',
+            memory.ai_caption or '',
+            memory.human_caption or '',
+            ' '.join(memory.tags or []),
+            ' '.join((memory.exif_json or {}).get('ai_visual_tags') or []),
+            ' '.join((memory.exif_json or {}).get('ai_object_tags') or []),
+            str((memory.exif_json or {}).get('ai_ocr_text') or ''),
+            ' '.join(people),
+        ])
+    )
+
+def build_search_queryset(base_qs, query_parts):
+    lexical_q = Q()
+    tokens = query_parts['tokens'][:8]
+    phrases = query_parts['phrases'][:4]
+
+    for token in tokens:
+        lexical_q |= (
+            Q(title__icontains=token) |
+            Q(ai_caption__icontains=token) |
+            Q(human_caption__icontains=token) |
+            Q(location__icontains=token) |
+            Q(cluster_name__icontains=token) |
+            Q(year__icontains=token) |
+            Q(tags__icontains=token) |
+            Q(exif_json__ai_visual_tags__icontains=token) |
+            Q(exif_json__ai_object_tags__icontains=token) |
+            Q(exif_json__ai_ocr_text__icontains=token) |
+            Q(identified_people__name__icontains=token) |
+            Q(detected_faces__person__name__icontains=token)
+        )
+
+    for phrase in phrases:
+        lexical_q |= (
+            Q(title__icontains=phrase) |
+            Q(ai_caption__icontains=phrase) |
+            Q(human_caption__icontains=phrase) |
+            Q(location__icontains=phrase) |
+            Q(cluster_name__icontains=phrase) |
+            Q(tags__icontains=phrase) |
+            Q(exif_json__ai_visual_tags__icontains=phrase) |
+            Q(exif_json__ai_object_tags__icontains=phrase) |
+            Q(exif_json__ai_ocr_text__icontains=phrase) |
+            Q(identified_people__name__icontains=phrase) |
+            Q(detected_faces__person__name__icontains=phrase)
+        )
+
+    for year in query_parts['years']:
+        lexical_q |= Q(year=year) | Q(date__year=year)
+
+    for decade in query_parts['decades']:
+        lexical_q |= Q(year__startswith=decade[:3])
+
+    if not lexical_q:
+        return base_qs.none()
+
+    return base_qs.filter(lexical_q).distinct()
+
+def score_memory_for_query(memory, query_parts, query_vector=None):
+    search_blob = get_memory_search_blob(memory)
+    normalized_query = query_parts['normalized']
+    query_tokens = query_parts['tokens']
+    query_token_count = len(query_tokens) or 1
+
+    lexical_score = 0.0
+    field_weights = [
+        (memory.title or '', 2.6),
+        (memory.human_caption or '', 2.2),
+        (memory.ai_caption or '', 1.7),
+        (memory.location or '', 1.2),
+        (memory.cluster_name or '', 0.9),
+        (' '.join(memory.tags or []), 1.8),
+        (' '.join((memory.exif_json or {}).get('ai_object_tags') or []), 1.7),
+        (' '.join((memory.exif_json or {}).get('ai_visual_tags') or []), 1.2),
+        ((memory.exif_json or {}).get('ai_ocr_text') or '', 2.0),
+        (memory.year or '', 1.6),
+    ]
+
+    people_blob = []
+    seen = set()
+    for face in memory.detected_faces.all():
+        if face.person_id and str(face.person_id) not in seen:
+            seen.add(str(face.person_id))
+            people_blob.append(face.person.name)
+    for person in memory.identified_people.all():
+        if str(person.id) not in seen:
+            seen.add(str(person.id))
+            people_blob.append(person.name)
+    if people_blob:
+        field_weights.append((' '.join(people_blob), 2.0))
+
+    query_token_set = set(query_tokens)
+    for field_text, weight in field_weights:
+        if not field_text:
+            continue
+        normalized_field = normalize_search_text(field_text)
+        field_tokens = set(normalized_field.split())
+        overlap = len(query_token_set & field_tokens)
+        if overlap:
+            lexical_score += weight * (overlap / query_token_count)
+
+        if normalized_query and normalized_query in normalized_field:
+            lexical_score += weight * 0.45
+
+        if normalized_query and normalized_field:
+            ratio = SequenceMatcher(None, normalized_query, normalized_field).ratio()
+            if ratio >= 0.72:
+                lexical_score += weight * ratio * 0.25
+
+    for year in query_parts['years']:
+        if memory.year == year:
+            lexical_score += 1.8
+        elif memory.date and str(memory.date.year) == year:
+            lexical_score += 1.2
+
+    for decade in query_parts['decades']:
+        if memory.year and memory.year.startswith(decade[:3]):
+            lexical_score += 1.4
+        elif memory.date and str(memory.date.year).startswith(decade[:3]):
+            lexical_score += 1.0
+
+    for phrase in query_parts['phrases']:
+        if phrase and phrase in search_blob:
+            lexical_score += 1.5
+
+    semantic_score = 0.0
+    if query_vector is not None and memory.clip_embedding is not None:
+        semantic_score = max(cosine_similarity(query_vector, list(memory.clip_embedding)), 0.0)
+
+    if query_vector is not None and query_tokens:
+        semantic_weight = 0.62
+        lexical_weight = 0.38
+    elif query_vector is not None:
+        semantic_weight = 0.75
+        lexical_weight = 0.25
+    else:
+        semantic_weight = 0.0
+        lexical_weight = 1.0
+
+    score = float((semantic_score * semantic_weight) + ((min(lexical_score, 6.0) / 6.0) * lexical_weight))
+    if query_parts['phrases']:
+        score += 0.04
+    if query_parts['years'] or query_parts['decades']:
+        score += 0.05
+
+    return float(score)
+
+def explain_memory_match(memory, query_parts, query_vector=None):
+    reasons = []
+    seen = set()
+    search_blob = get_memory_search_blob(memory)
+
+    def add_reason(reason):
+        if reason and reason not in seen and len(reasons) < 5:
+            seen.add(reason)
+            reasons.append(reason)
+
+    def maybe_add_field_reason(label, field_text, query_tokens, exact_phrase=None):
+        if not field_text:
+            return
+        normalized_field = normalize_search_text(field_text)
+        field_tokens = set(normalized_field.split())
+        overlaps = [token for token in query_tokens if token in field_tokens]
+        if overlaps:
+            add_reason(f"{label}: {', '.join(overlaps[:2])}")
+        elif exact_phrase and exact_phrase in normalized_field:
+            add_reason(f"{label} match")
+
+    normalized_query = query_parts['normalized']
+    query_tokens = query_parts['tokens']
+    query_phrases = query_parts.get('phrases', [])
+    phrase_terms = query_parts.get('phrase_terms', [])
+
+    maybe_add_field_reason('Title', memory.title, query_tokens, normalized_query)
+    maybe_add_field_reason('Location', memory.location, query_tokens, normalized_query)
+    maybe_add_field_reason('Caption', memory.human_caption or memory.ai_caption, query_tokens, normalized_query)
+    maybe_add_field_reason('Tag', ' '.join(memory.tags or []), query_tokens, normalized_query)
+    maybe_add_field_reason('Object', ' '.join((memory.exif_json or {}).get('ai_object_tags') or []), query_tokens, normalized_query)
+    maybe_add_field_reason('Image text', (memory.exif_json or {}).get('ai_ocr_text') or '', query_tokens, normalized_query)
+    maybe_add_field_reason('Year', memory.year, query_tokens, normalized_query)
+
+    people = []
+    seen_people = set()
+    for face in memory.detected_faces.all():
+        if face.person_id and str(face.person_id) not in seen_people:
+            seen_people.add(str(face.person_id))
+            people.append(face.person.name)
+    for person in memory.identified_people.all():
+        if str(person.id) not in seen_people:
+            seen_people.add(str(person.id))
+            people.append(person.name)
+    maybe_add_field_reason('Name', ' '.join(people), query_tokens, normalized_query)
+
+    for year in query_parts['years']:
+        if memory.year == year or (memory.date and str(memory.date.year) == year):
+            add_reason(f"Year: {year}")
+
+    for decade in query_parts['decades']:
+        if memory.year and memory.year.startswith(decade[:3]):
+            add_reason(f"Decade: {decade}")
+        elif memory.date and str(memory.date.year).startswith(decade[:3]):
+            add_reason(f"Decade: {decade}")
+
+    for phrase in phrase_terms:
+        normalized_phrase = normalize_search_text(phrase)
+        if normalized_phrase:
+            if normalized_phrase in search_blob:
+                add_reason(f'Phrase: "{phrase}"')
+
+    semantic_score = 0.0
+    if query_vector is not None and memory.clip_embedding is not None:
+        semantic_score = max(cosine_similarity(query_vector, list(memory.clip_embedding)), 0.0)
+    if semantic_score >= 0.22 or (not reasons and semantic_score > 0):
+        add_reason('Semantic similarity')
+
+    if not reasons:
+        add_reason('Lexical relevance')
+
+    return reasons
 
 def get_vault_access_level(user, vault_id):
     if VaultMember.objects.filter(user=user, vault_id=vault_id).exists():
@@ -45,11 +348,16 @@ class MemoryListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
+    class MemoryPagination(PageNumberPagination):
+        page_size = 24
+        page_size_query_param = 'page_size'
+        max_page_size = 60
+
     def get_queryset(self):
         vault_id = self.kwargs['vault_id']
         if not has_vault_access(self.request.user, vault_id):
             raise PermissionDenied("You do not have access to this vault.")
-        qs = Memory.objects.visible_to_vault(vault_id).prefetch_related('detected_faces__person').order_by('-created_at')
+        qs = Memory.objects.visible_to_vault(vault_id).prefetch_related('detected_faces__person').order_by('-created_at', '-id')
 
         q = self.request.query_params.get('q')
         if q:
@@ -65,10 +373,14 @@ class MemoryListCreateView(generics.ListCreateAPIView):
         if cluster:
             qs = qs.filter(cluster_name=cluster)
 
-        decade = self.request.query_params.get('decade')
+        decade = (self.request.query_params.get('decade') or '').strip().lower()
         if decade:
-            decade_start = decade.replace('s', '')
-            qs = qs.filter(year__startswith=decade_start)
+            if decade == 'undated':
+                qs = qs.filter(Q(year='') | Q(year__isnull=True))
+            else:
+                decade_start = decade.rstrip('s')
+                if len(decade_start) == 4 and decade_start.isdigit():
+                    qs = qs.filter(year__startswith=decade_start[:3])
 
         reviewed = self.request.query_params.get('reviewed')
         if reviewed is not None:
@@ -78,7 +390,58 @@ class MemoryListCreateView(generics.ListCreateAPIView):
         if is_favorite is not None:
             qs = qs.filter(is_favorite=is_favorite.lower() == 'true')
 
+        file_type = (self.request.query_params.get('file_type') or '').strip().lower()
+        if file_type and file_type != 'all':
+            image_exts = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif', '.tif', '.tiff')
+            video_exts = ('.mp4', '.webm', '.mov', '.m4v', '.ogg')
+            audio_exts = ('.mp3', '.wav', '.m4a', '.aac', '.flac', '.oga')
+            pdf_exts = ('.pdf',)
+
+            extension_filters = {
+                'image': image_exts,
+                'video': video_exts,
+                'audio': audio_exts,
+                'pdf': pdf_exts,
+            }
+            mime_prefix_filters = {
+                'image': ('image/',),
+                'video': ('video/',),
+                'audio': ('audio/',),
+                'pdf': ('application/pdf',),
+            }
+
+            exts = extension_filters.get(file_type)
+            mime_prefixes = mime_prefix_filters.get(file_type)
+            if exts and mime_prefixes:
+                ext_q = Q()
+                for ext in exts:
+                    ext_q |= Q(original_file__iendswith=ext)
+
+                mime_q = Q()
+                for mime_prefix in mime_prefixes:
+                    mime_q |= (
+                        Q(exif_json__mime_type__istartswith=mime_prefix)
+                        | Q(exif_json__content_type__istartswith=mime_prefix)
+                        | Q(exif_json__mimetype__istartswith=mime_prefix)
+                        | Q(exif_json__media_type__istartswith=mime_prefix)
+                        | Q(exif_json__file_type__istartswith=mime_prefix)
+                    )
+
+                qs = qs.filter(ext_q | mime_q)
+
         return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+
+        if 'page' in request.query_params or 'page_size' in request.query_params:
+            paginator = self.MemoryPagination()
+            page = paginator.paginate_queryset(queryset, request, view=self)
+            serializer = self.get_serializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     def create(self, request, *args, **kwargs):
         vault_id = self.kwargs['vault_id']
@@ -151,17 +514,70 @@ class VibeSearchView(views.APIView):
     def get(self, request, vault_id):
         if not has_vault_access(request.user, vault_id):
             raise PermissionDenied("You do not have access to this vault.")
-        query = request.query_params.get('q')
+        query = (request.query_params.get('q') or '').strip()
 
         if not query:
             return Response([])
 
-        text_vector = get_clip_model().encode(query).tolist()
+        query_parts = search_ranker.tokenize_search_query(query)
+        text_vector = None
+        clip_model = get_clip_model()
+        if clip_model is not None:
+            try:
+                text_vector = clip_model.encode(query).tolist()
+            except Exception as exc:
+                logger.warning("Search query embedding failed for vault %s: %s", vault_id, exc)
 
-        memories = Memory.objects.visible_to_vault(vault_id).exclude(clip_embedding__isnull=True)\
-                                 .order_by(CosineDistance('clip_embedding', text_vector))[:10]
+        base_qs = Memory.objects.visible_to_vault(vault_id).prefetch_related(
+            'detected_faces__person',
+            'identified_people',
+        )
 
-        return Response(MemorySerializer(memories, many=True, context={'request': request}).data)
+        candidate_ids = search_ranker.get_search_candidate_ids(base_qs, query_parts, text_vector)
+        if not candidate_ids:
+            return Response([])
+
+        memory_map = {memory.id: memory for memory in base_qs.filter(id__in=candidate_ids)}
+        scored = [
+            search_ranker.score_memory(memory_map[memory_id], query_parts, text_vector)
+            for memory_id in candidate_ids
+            if memory_id in memory_map
+        ]
+        ranked = search_ranker.rerank_scored_memories(scored, query_parts, text_vector, limit=20, rerank_pool_size=80)
+
+        payload = []
+        for hit in ranked:
+            row = MemorySerializer(hit.memory, context={'request': request}).data
+            row['searchScore'] = float(round(float(hit.final_score), 4))
+            row['searchReasons'] = hit.reasons or []
+            payload.append(row)
+
+        return Response(payload)
+
+    def post(self, request, vault_id):
+        if not has_vault_access(request.user, vault_id):
+            raise PermissionDenied("You do not have access to this vault.")
+
+        query = (request.data.get('query') or request.data.get('q') or '').strip()
+        if not query:
+            return Response({"detail": "Query is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        deep = request.data.get('deep', True)
+        if isinstance(deep, str):
+            deep = deep.lower() not in {'false', '0', 'no'}
+
+        if not deep:
+            return self.get(request, vault_id)
+
+        from tasks.search import deep_search_vault_task
+
+        task = deep_search_vault_task.delay(str(vault_id), query)
+        return Response({
+            "task_id": task.id,
+            "status": "PROCESSING",
+            "progress": 0,
+            "stage": "Queued for deep search",
+        }, status=status.HTTP_202_ACCEPTED)
 
 class VaultTagCloudView(views.APIView):
     permission_classes = [IsAuthenticated]
@@ -188,14 +604,26 @@ class MemoryFiltersView(views.APIView):
 
         memories = Memory.objects.visible_to_vault(vault_id)
 
-        clusters = list(memories.exclude(cluster_name='Unsorted').order_by('cluster_name').values_list('cluster_name', flat=True).distinct())
+        clusters = list(
+            memories.exclude(cluster_name='Unsorted')
+            .order_by('cluster_name')
+            .values_list('cluster_name', flat=True)
+            .distinct()
+        )
 
         years = list(memories.exclude(year='').order_by('year').values_list('year', flat=True).distinct())
-        decades = sorted(set(f"{y[:3]}0s" for y in years if y and len(y) == 4))
+        decades = sorted(
+            set(f"{y[:3]}0s" for y in years if y and len(y) == 4),
+            key=lambda value: int(value[:4]) if value[:4].isdigit() else 0,
+        )
+        undated_count = memories.filter(Q(year='') | Q(year__isnull=True)).count()
 
         return Response({
             "clusters": clusters,
             "decades": decades,
+            "decadeCounts": {decade: memories.filter(year__startswith=decade[:3]).count() for decade in decades},
+            "undatedCount": undated_count,
+            "totalCount": memories.count(),
         })
 
 class MemoryCollectionListCreateView(views.APIView):
@@ -400,33 +828,88 @@ class VaultSettingsView(views.APIView):
 class SmartPurgeView(views.APIView):
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, vault_id):
-        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role='ADMIN')
-
+    def _build_duplicate_plan(self, vault_id, request):
         duplicates = Memory.objects.filter(vault_id=vault_id) \
             .exclude(phash='') \
             .values('phash') \
             .annotate(count=Count('id')) \
             .filter(count__gt=1)
 
-        purged_count = 0
-        bytes_saved = 0
+        groups = []
+        default_delete_ids = []
+        total_bytes = 0
 
         for dup in duplicates:
             mems = list(Memory.objects.filter(vault_id=vault_id, phash=dup['phash']).exclude(capsules__status='LOCKED'))
-
             if len(mems) < 2:
                 continue
 
-            mems.sort(key=lambda m: (
-                int(m.exif_json.get('width', 0)) * int(m.exif_json.get('height', 0)),
-                int(m.exif_json.get('filesize', 0))
-            ), reverse=True)
+            def score(mem):
+                exif = mem.exif_json or {}
+                width = int(exif.get('width', 0) or 0)
+                height = int(exif.get('height', 0) or 0)
+                filesize = int(exif.get('filesize', 0) or 0)
+                return (width * height, filesize)
 
-            for redundant in mems[1:]:
-                bytes_saved += int(redundant.exif_json.get('filesize', 0))
-                redundant.delete()
-                purged_count += 1
+            mems.sort(key=score, reverse=True)
+            keep = mems[0]
+            candidates = mems[1:]
+
+            candidate_rows = []
+            for mem in mems:
+                exif = mem.exif_json or {}
+                bytes_size = int(exif.get('filesize', 0) or 0)
+                if mem.id != keep.id:
+                    total_bytes += bytes_size
+                    default_delete_ids.append(str(mem.id))
+                candidate_rows.append({
+                    "id": str(mem.id),
+                    "title": mem.title or "Untitled",
+                    "url": request.build_absolute_uri(mem.original_file.url) if mem.original_file else "",
+                    "year": mem.year or "",
+                    "location": mem.location or "",
+                    "width": int(exif.get('width', 0) or 0),
+                    "height": int(exif.get('height', 0) or 0),
+                    "filesize": bytes_size,
+                    "suggested_keep": mem.id == keep.id,
+                })
+
+            groups.append({
+                "phash": dup['phash'],
+                "keep_id": str(keep.id),
+                "items": candidate_rows,
+            })
+
+        return groups, default_delete_ids, total_bytes
+
+    def get(self, request, vault_id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role='ADMIN')
+        groups, default_delete_ids, total_bytes = self._build_duplicate_plan(vault_id, request)
+        return Response({
+            "groups": groups,
+            "default_delete_ids": default_delete_ids,
+            "candidate_count": len(default_delete_ids),
+            "estimated_mb_saved": round(total_bytes / (1024 * 1024), 2),
+        })
+
+    def post(self, request, vault_id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role='ADMIN')
+        groups, default_delete_ids, _ = self._build_duplicate_plan(vault_id, request)
+
+        allowed_ids = {item["id"] for group in groups for item in group["items"] if not item["suggested_keep"]}
+        selected_ids = request.data.get('memory_ids')
+        if isinstance(selected_ids, list):
+            selected_ids = [str(mid) for mid in selected_ids if str(mid) in allowed_ids]
+        else:
+            selected_ids = list(default_delete_ids)
+
+        purged_count = 0
+        bytes_saved = 0
+
+        for mem in Memory.objects.filter(id__in=selected_ids, vault_id=vault_id).exclude(capsules__status='LOCKED'):
+            bytes_saved += int((mem.exif_json or {}).get('filesize', 0) or 0)
+            mem.delete()
+            purged_count += 1
 
         if purged_count > 0:
             ActionLog.objects.create(

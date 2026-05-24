@@ -10,6 +10,7 @@ import { Button } from '../components/ui/Button';
 import { CustomDatePicker } from '../components/ui/CustomDatePicker';
 import { useCapsules, useSealCapsule, useUploadMemory } from '../features/capsules/hooks/useCapsules';
 import axiosClient from '../services/axiosClient';
+import logoIcon from '../assets/logo.png';
 
 const ShatteringSeal = ({ isShattered }: { isShattered: boolean }) => {
   const fragments = useMemo(() => Array.from({ length: 25 }).map(() => ({
@@ -58,8 +59,8 @@ const ShatteringSeal = ({ isShattered }: { isShattered: boolean }) => {
 
 const FloatingMemories = ({ isOpened, imageUrls }: { isOpened: boolean, imageUrls: string[] }) => {
   const groupRef = useRef<THREE.Group>(null);
-
-  const textures = useTexture(imageUrls.length > 0 ? imageUrls : ['/placeholder.jpg']);
+  const textureUrls = useMemo(() => imageUrls.filter(Boolean), [imageUrls]);
+  const textures = useTexture(textureUrls);
 
   useFrame((state) => {
     if (isOpened && groupRef.current) {
@@ -74,12 +75,12 @@ const FloatingMemories = ({ isOpened, imageUrls }: { isOpened: boolean, imageUrl
     }
   });
 
-  if (!isOpened || imageUrls.length === 0) return null;
+  if (!isOpened || textureUrls.length === 0) return null;
 
   return (
     <group ref={groupRef} position={[0, -2, 0]}>
-      {imageUrls.map((url, i) => (
-        <mesh key={url}>
+      {textureUrls.map((url, i) => (
+        <mesh key={`${url}-${i}`}>
           <planeGeometry args={[1.5, 2]} />
           <meshStandardMaterial
             map={Array.isArray(textures) ? textures[i] : textures}
@@ -161,6 +162,14 @@ export default function Capsules() {
   const { data: capsules = [] } = useCapsules();
   const sealMutation = useSealCapsule();
   const uploadMutation = useUploadMemory();
+  const formatNumericDate = (value: string | Date) => {
+    const date = typeof value === 'string' ? new Date(value) : value;
+    return new Intl.DateTimeFormat('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      year: 'numeric',
+    }).format(date);
+  };
 
   const triggerUnlock = (capsule: any) => {
     setActiveCapsule(capsule);
@@ -288,7 +297,7 @@ export default function Capsules() {
                     </div>
                     <div className="flex-1 flex flex-col justify-center">
                       <h3 className="font-display font-bold text-[1.75rem] mb-2 text-[var(--clr-linen)] tracking-wide">{capsule.title}</h3>
-                      <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-fog)] mb-6 font-bold">SEALED UNTIL {new Date(capsule.unlock_date).toLocaleDateString()}</p>
+                      <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-fog)] mb-6 font-bold">SEALED UNTIL {formatNumericDate(capsule.unlock_date)}</p>
                     </div>
                     <div className="w-full bg-[rgba(0,0,0,0.4)] rounded-[var(--radius-md)] p-4 border border-[rgba(255,255,255,0.05)]">
                       <span className="font-display text-[2.5rem] text-[var(--clr-gold)] mr-2 leading-none">{daysRemaining}</span>
@@ -426,13 +435,13 @@ export default function Capsules() {
                          <svg width="120" height="120" viewBox="0 0 100 100" className="mx-auto drop-shadow-2xl">
                            <circle cx="50" cy="50" r="45" fill="#8B3A3A" />
                            <circle cx="50" cy="50" r="40" fill="none" stroke="#5a2323" strokeWidth="2" />
-                           <text x="50" y="58" textAnchor="middle" fill="#5a2323" fontSize="24" fontFamily="Georgia" fontWeight="bold">LK</text>
+                           <image href={logoIcon} x="15" y="15" width="70" height="70" preserveAspectRatio="xMidYMid meet" />
                          </svg>
                        </motion.div>
 
                        <motion.h2 initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.5 }} className="font-display text-[3rem] text-[var(--clr-gold)] uppercase tracking-[0.2em] drop-shadow-md">Sealed.</motion.h2>
                        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 2.0 }} className="font-ui text-[12px] text-[var(--clr-fog)] uppercase tracking-widest mt-2">
-                         {unlockDate ? `Locked until ${new Date(unlockDate).toLocaleDateString()}` : 'Capsule sealed'}
+                         {unlockDate ? `Locked until ${formatNumericDate(unlockDate)}` : 'Capsule sealed'}
                        </motion.p>
                     </div>
                   </motion.div>

@@ -10,6 +10,7 @@ import { sileo } from 'sileo';
 import { TreeCanvas } from '../features/family-tree/TreeCanvas';
 import { Button } from '../components/ui/Button';
 import { PlatformSelect } from '../components/ui/Select';
+import { Tooltip } from '../components/ui/Tooltip';
 import { useFamilyTreeData } from '../features/family-tree/hooks/useFamilyTree';
 import { useAuthStore } from '../stores/authStore';
 import axiosClient from '../services/axiosClient';
@@ -33,6 +34,7 @@ export default function FamilyTree() {
 
   const [isSafeDeleteOpen, setIsSafeDeleteOpen] = useState(false);
   const [reparentId, setReparentId] = useState('__sever__');
+  const [isStrandedCleanupOpen, setIsStrandedCleanupOpen] = useState(false);
 
   const isDragging = useRef(false);
   const lastX = useRef(0);
@@ -51,8 +53,11 @@ export default function FamilyTree() {
   const nodes = treeData?.nodes || [];
   const edges = treeData?.edges || [];
   const selectedNode = nodes.find((n: any) => n.id === selectedNodeId);
+  const activeVaultId = useAuthStore(s => s.activeVaultId);
+  const isForeignSelectedNode = Boolean(selectedNode?.vaultId && activeVaultId && selectedNode.vaultId !== activeVaultId);
+  const canEditSelectedNode = canContribute && !isForeignSelectedNode;
 
-  const reparentOptions = nodes.filter((n: any) => n.id !== selectedNodeId);
+  const reparentOptions = nodes.filter((n: any) => n.id !== selectedNodeId && n.vaultId === activeVaultId);
   const graftExistingOptions = nodes.filter((n: any) => n.id !== graftState?.targetId);
 
   const resetView = () => {
@@ -97,6 +102,29 @@ export default function FamilyTree() {
       setReparentId('__sever__');
     }
   });
+
+  const cleanupStrandedMutation = useMutation({
+    mutationFn: async (personIds: string[]) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      const results = await Promise.allSettled(
+        personIds.map((personId) =>
+          axiosClient.delete(`/vaults/${vaultId}/lineage/person/${personId}/`, { data: { reparentId: null } })
+        )
+      );
+      return results;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['familyTree'] });
+      setIsStrandedCleanupOpen(false);
+    }
+  });
+
+  const connectedNodeIds = new Set<string>();
+  edges.forEach((edge: any) => {
+    connectedNodeIds.add(edge.from);
+    connectedNodeIds.add(edge.to);
+  });
+  const strandedNodes = nodes.filter((node: any) => node.vaultId === activeVaultId && !connectedNodeIds.has(node.id));
 
   const handleAction = () => {
     if (selectedNode) navigate({ to: `/person/${selectedNode.id}` });
@@ -156,6 +184,29 @@ export default function FamilyTree() {
       loading: { title: 'Removing Relative...' },
       success: { title: 'Removed' },
       error: { title: 'Remove Failed' }
+    });
+  };
+
+  const confirmStrandedCleanup = async () => {
+    if (strandedNodes.length === 0) return;
+    const targetIds = strandedNodes.map((node: any) => node.id);
+    await sileo.promise(cleanupStrandedMutation.mutateAsync(targetIds), {
+      loading: { title: 'Clearing Stranded Nodes...' },
+      success: (results) => {
+        const failed = results.filter((r) => r.status === 'rejected').length;
+        const removed = results.length - failed;
+        if (failed > 0) {
+          return {
+            title: 'Cleanup Partially Complete',
+            description: `Removed ${removed} stranded nodes. ${failed} could not be removed.`,
+          };
+        }
+        return {
+          title: 'Cleanup Complete',
+          description: `Removed ${removed} stranded nodes.`,
+        };
+      },
+      error: { title: 'Cleanup Failed' }
     });
   };
 
@@ -301,14 +352,39 @@ export default function FamilyTree() {
           transition={{ duration: 19, repeat: Infinity, ease: 'easeInOut' }}
         />
       </div>
-      <div className="pointer-events-none absolute inset-x-0 top-[88px] z-40 flex flex-col gap-3 px-3 sm:top-[96px] sm:flex-row sm:items-start sm:justify-between sm:px-[clamp(20px,4vw,40px)]">
+      <div className="pointer-events-none absolute bottom-6 right-3 z-40 sm:right-6">
         <div className="pointer-events-auto flex max-w-full gap-2 overflow-x-auto rounded-[var(--radius-lg)] border border-[rgba(154,115,64,0.34)] bg-[rgba(232,223,203,0.92)] p-2 shadow-[0_12px_32px_rgba(20,18,17,0.14)] backdrop-blur-md">
-          <Button variant={isEditMode ? 'primary' : 'ghost'} onClick={() => setIsEditMode(v => !v)} className="shrink-0 px-4 py-2 text-[10px] sm:px-[32px] sm:py-[14px]">
-          <PencilSimple size={18} /> {isEditMode ? 'Edit Mode' : 'View Mode'}
-          </Button>
-          <Button variant="ghost" onClick={resetView} className="shrink-0 px-4 py-2 text-[10px] sm:px-[31px] sm:py-[13px]"><ArrowsOut size={18} /> Reset</Button>
+          <Tooltip content={isEditMode ? 'Switch to View Mode' : 'Switch to Edit Mode'} side="bottom">
+            <Button
+              variant="icon"
+              onClick={() => setIsEditMode(v => !v)}
+              aria-label={isEditMode ? 'Switch to view mode' : 'Switch to edit mode'}
+              className={isEditMode ? 'border-[var(--clr-gold)] bg-[var(--clr-gold)] text-[var(--clr-linen)] shadow-[var(--shadow-gold)]' : ''}
+            >
+              <PencilSimple size={18} />
+            </Button>
+          </Tooltip>
+          <Tooltip content="Reset View" side="bottom">
+            <Button variant="icon" onClick={resetView} aria-label="Reset view">
+              <ArrowsOut size={18} />
+            </Button>
+          </Tooltip>
+          {canContribute && (
+            <Tooltip content="Clear Stranded Nodes" side="bottom">
+              <Button
+                variant="icon"
+                onClick={() => setIsStrandedCleanupOpen(true)}
+                disabled={strandedNodes.length === 0 || cleanupStrandedMutation.isPending}
+                aria-label="Clear stranded nodes"
+              >
+                <Trash size={16} />
+              </Button>
+            </Tooltip>
+          )}
         </div>
+      </div>
 
+      <div className="pointer-events-none absolute right-3 top-[88px] z-40 sm:right-6 sm:top-[96px]">
         <div className="pointer-events-auto flex self-end gap-2 rounded-[var(--radius-lg)] border border-[rgba(154,115,64,0.34)] bg-[rgba(232,223,203,0.92)] p-2 shadow-[0_12px_32px_rgba(20,18,17,0.14)] backdrop-blur-md sm:self-auto">
           <Button variant="icon" aria-label="Zoom in" onClick={() => setScale(s => Math.min(1.4, s + 0.08))}><MagnifyingGlassPlus size={18} /></Button>
           <Button variant="icon" aria-label="Zoom out" onClick={() => setScale(s => Math.max(0.45, s - 0.08))}><MagnifyingGlassMinus size={18} /></Button>
@@ -333,6 +409,7 @@ export default function FamilyTree() {
             onNodeClick={setSelectedNodeId}
             selectedNodeId={selectedNodeId}
             isEditMode={isEditMode}
+            currentVaultId={activeVaultId}
             onAddRelative={(targetId, relationshipType) => setGraftState({ targetId, type: relationshipType })}
             scale={scale}
             offsetX={offsetX}
@@ -386,15 +463,25 @@ export default function FamilyTree() {
               </div>
 
               <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                <Button variant="primary" onClick={handleAction} className="flex-1 px-4 py-3 text-[10px]"><IdentificationCard size={16} /> Profile</Button>
-                {canContribute && (
+                <Button variant="primary" onClick={handleAction} className="flex-1 px-4 py-3 text-[10px]">
+                  <IdentificationCard size={16} /> Profile
+                </Button>
+                {canEditSelectedNode && (
                   <Button variant="ghost" onClick={startEditPerson} className="px-4 py-3 text-[10px]"><PencilSimple size={16} /> Edit</Button>
                 )}
               </div>
 
-              {canContribute && (
+              {canEditSelectedNode && (
                 <div className="mt-3">
                   <Button variant="danger" onClick={openSafeDelete} className="w-full"><Trash size={16} /> Remove</Button>
+                </div>
+              )}
+              {isForeignSelectedNode && (
+                <div className="mt-3 rounded-[var(--radius-md)] border border-[rgba(184,143,91,0.28)] bg-[rgba(184,143,91,0.08)] px-4 py-3">
+                  <p className="font-ui text-[10px] uppercase tracking-[0.18em] text-[var(--clr-gold-dark)] font-bold">Linked vault node</p>
+                  <p className="mt-1 font-ui text-[12px] leading-relaxed text-[var(--clr-dust)]">
+                    This person belongs to another vault and is read-only from here.
+                  </p>
                 </div>
               )}
             </div>
@@ -554,6 +641,51 @@ export default function FamilyTree() {
                   <Button variant="ghost" onClick={() => setIsSafeDeleteOpen(false)} className="flex-1 text-xs">Cancel</Button>
                   <Button variant="danger" onClick={confirmSafeDelete} className="flex-1 text-xs">Remove & Re-route</Button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Stranded nodes cleanup modal */}
+      <AnimatePresence>
+        {isStrandedCleanupOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto p-3 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setIsStrandedCleanupOpen(false)}
+            />
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="relative my-auto max-h-[calc(100svh-24px)] w-full max-w-lg overflow-y-auto bg-[var(--clr-parchment)] border-2 border-[var(--clr-danger)] rounded-[var(--radius-lg)] p-5 shadow-2xl sm:max-h-[calc(100svh-48px)] sm:p-8"
+            >
+              <h2 className="font-display text-xl uppercase tracking-widest mb-3 text-[var(--clr-danger)] sm:text-2xl">Remove Stranded Nodes</h2>
+              <p className="font-ui text-xs text-[var(--clr-dust)] leading-relaxed mb-4">
+                This will remove all relatives in this vault that have no kinship connections.
+              </p>
+              <div className="rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-linen)] p-3">
+                <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-gold-dark)] font-bold">
+                  {strandedNodes.length} node(s) queued
+                </p>
+                <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+                  {strandedNodes.slice(0, 12).map((node: any) => (
+                    <p key={node.id} className="font-ui text-sm text-[var(--clr-ink)]">{node.name}</p>
+                  ))}
+                  {strandedNodes.length > 12 && (
+                    <p className="font-ui text-xs text-[var(--clr-dust)]">...and {strandedNodes.length - 12} more</p>
+                  )}
+                </div>
+              </div>
+              <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                <Button variant="ghost" onClick={() => setIsStrandedCleanupOpen(false)} className="flex-1 text-xs">Cancel</Button>
+                <Button variant="danger" onClick={confirmStrandedCleanup} className="flex-1 text-xs" disabled={cleanupStrandedMutation.isPending || strandedNodes.length === 0}>
+                  {cleanupStrandedMutation.isPending ? 'REMOVING...' : 'Remove All Stranded'}
+                </Button>
               </div>
             </motion.div>
           </div>

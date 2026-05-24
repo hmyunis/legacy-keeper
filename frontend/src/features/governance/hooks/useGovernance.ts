@@ -12,6 +12,33 @@ export const useMembers = () => {
   });
 };
 
+export const useInvitations = (enabled = true) => {
+  const vaultId = useAuthStore(s => s.activeVaultId);
+  return useQuery({
+    queryKey: ['invitations', vaultId],
+    queryFn: () => governanceService.getInvitations(vaultId!),
+    enabled: !!vaultId && enabled,
+  });
+};
+
+export const usePacts = (enabled = true) => {
+  const vaultId = useAuthStore(s => s.activeVaultId);
+  return useQuery({
+    queryKey: ['allPacts', vaultId],
+    queryFn: () => governanceService.getPacts(vaultId!),
+    enabled: !!vaultId && enabled,
+  });
+};
+
+export const usePactHistory = (enabled = true) => {
+  const vaultId = useAuthStore(s => s.activeVaultId);
+  return useQuery({
+    queryKey: ['pactHistory', vaultId],
+    queryFn: () => governanceService.getPactHistory(vaultId!),
+    enabled: !!vaultId && enabled,
+  });
+};
+
 export const useLogs = (params: { page?: number; q?: string } = {}) => {
   const vaultId = useAuthStore(s => s.activeVaultId);
   return useQuery({
@@ -28,7 +55,11 @@ export const useGovernanceActions = () => {
     mutationFn: (data: any) => {
       const vaultId = useAuthStore.getState().activeVaultId;
       return governanceService.inviteMember(vaultId!, data);
-    }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+    },
   });
 
   const removeMember = useMutation({
@@ -40,13 +71,47 @@ export const useGovernanceActions = () => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['members'] }),
   });
 
+  const revokeInvitation = useMutation({
+    mutationFn: (invitationId: string) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return governanceService.revokeInvitation(vaultId, invitationId);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invitations'] }),
+  });
+
+  const respondToInvitation = useMutation({
+    mutationFn: ({ vaultId, invitationId, action }: { vaultId: string; invitationId: string; action: 'ACCEPT' | 'REJECT' }) => {
+      return governanceService.respondToInvitation(vaultId, invitationId, action);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+    },
+  });
+
   const requestPact = useMutation({
     mutationFn: (data: { email: string }) => {
       const vaultId = useAuthStore.getState().activeVaultId;
       if (!vaultId) throw new Error("Vault ID missing");
-      return axiosClient.post(`/vaults/${vaultId}/pacts/`, data);
+      return axiosClient.post(`/vaults/${vaultId}/pacts/`, data).then((res) => res.data);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['allPacts'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['allPacts'] });
+      queryClient.invalidateQueries({ queryKey: ['pactHistory'] });
+    },
+  });
+
+  const actOnPact = useMutation({
+    mutationFn: ({ pactId, action }: { pactId: string; action: 'ACCEPT' | 'REJECT' }) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return governanceService.actOnPact(vaultId, pactId, action);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['allPacts'] });
+      queryClient.invalidateQueries({ queryKey: ['pactHistory'] });
+    },
   });
 
   const exportLogs = useMutation({
@@ -57,5 +122,5 @@ export const useGovernanceActions = () => {
     },
   });
 
-  return { inviteMember, removeMember, requestPact, exportLogs };
+  return { inviteMember, removeMember, requestPact, actOnPact, revokeInvitation, respondToInvitation, exportLogs };
 };

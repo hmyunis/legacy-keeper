@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { User, Sparkle, Heart, ArrowUp, ArrowDown, UserPlus } from '@phosphor-icons/react';
+import { User, Sparkle, ArrowUp, ArrowDown, UserPlus } from '@phosphor-icons/react';
 import { Tooltip } from '../../components/ui/Tooltip';
 import type { Person, KinshipEdge } from './types';
 
@@ -10,6 +10,7 @@ interface TreeCanvasProps {
   onNodeClick: (nodeId: string) => void;
   selectedNodeId: string | null;
   isEditMode: boolean;
+  currentVaultId?: string | null;
   onAddRelative: (targetId: string, relationshipType: 'PARENT_OF' | 'CHILD_OF' | 'SPOUSE_OF') => void;
   scale: number;
   offsetX: number;
@@ -31,6 +32,7 @@ export const TreeCanvas = ({
   onNodeClick,
   selectedNodeId,
   isEditMode,
+  currentVaultId,
   onAddRelative,
   scale,
   offsetX,
@@ -38,64 +40,85 @@ export const TreeCanvas = ({
 }: TreeCanvasProps) => {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 
-  // Compute layered graph positions to support spouses and dual parents
+  // Compute a hierarchical top-down layout so children render below parents
   const layoutData = useMemo(() => {
     if (nodes.length === 0) return { computedNodes: [], spouseLinks: [], parentLinks: [] };
 
     const nodeMap = new Map<string, Person>(nodes.map((n) => [n.id, n]));
     const computed = new Map<string, ComputedNode>();
+    const parentLinks = edges.filter((e) => e.type === 'PARENT_OF');
+    const spouseLinksRaw = edges.filter((e) => e.type === 'SPOUSE_OF');
 
-    // Step 1: Gen-level assignment using topology traversal
+    const childrenByParent = new Map<string, string[]>();
+    const parentsByChild = new Map<string, string[]>();
+    parentLinks.forEach((e) => {
+      if (!childrenByParent.has(e.from)) childrenByParent.set(e.from, []);
+      childrenByParent.get(e.from)!.push(e.to);
+
+      if (!parentsByChild.has(e.to)) parentsByChild.set(e.to, []);
+      parentsByChild.get(e.to)!.push(e.from);
+    });
+
+    // Step 1: Assign generations from roots downward
     const generations = new Map<string, number>();
+    const indegree = new Map<string, number>(nodes.map((n) => [n.id, 0]));
+    parentLinks.forEach((e) => indegree.set(e.to, (indegree.get(e.to) ?? 0) + 1));
 
-    const assignGen = (nodeId: string, depth: number) => {
-      if (generations.has(nodeId) && generations.get(nodeId)! >= depth) return;
-      generations.set(nodeId, depth);
+    const roots = nodes.filter((n) => (indegree.get(n.id) ?? 0) === 0).map((n) => n.id);
+    const queue = roots.length > 0 ? [...roots] : [nodes[0].id];
+    queue.forEach((id) => generations.set(id, 0));
 
-      // Trailing descent branches
-      edges
-        .filter((e) => e.from === nodeId && e.type === 'PARENT_OF')
-        .forEach((e) => assignGen(e.to, depth + 1));
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const currentGen = generations.get(current) ?? 0;
+      const children = childrenByParent.get(current) ?? [];
 
-      // Upward branches (ancestors)
-      edges
-        .filter((e) => e.to === nodeId && e.type === 'PARENT_OF')
-        .forEach((e) => assignGen(e.from, depth - 1));
+      children.forEach((childId) => {
+        const nextGen = currentGen + 1;
+        const prev = generations.get(childId);
+        if (prev === undefined || nextGen > prev) {
+          generations.set(childId, nextGen);
+        }
+        queue.push(childId);
+      });
+    }
 
-      // Spouses stay on the same level
-      edges
-        .filter((e) => (e.from === nodeId || e.to === nodeId) && e.type === 'SPOUSE_OF')
-        .forEach((e) => {
-          const spouseId = e.from === nodeId ? e.to : e.from;
-          if (!generations.has(spouseId)) {
-            generations.set(spouseId, depth);
-          }
-        });
-    };
-
-    // Begin mapping from the oldest found relative (or first node)
-    const seed = nodes[0]?.id;
-    if (seed) assignGen(seed, 0);
-
-    // Normalize generations to prevent negative indices
-    const minGen = Math.min(...Array.from(generations.values()), 0);
+    // Fallback for disconnected nodes
     nodes.forEach((n) => {
-      const g = (generations.get(n.id) ?? 0) - minGen;
-      generations.set(n.id, g);
+      if (!generations.has(n.id)) generations.set(n.id, 0);
     });
 
     // Step 2: Resolve spouse pairings
     const spousePairs = new Map<string, string>();
-    edges
-      .filter((e) => e.type === 'SPOUSE_OF')
-      .forEach((e) => {
-        if (!spousePairs.has(e.from) && !spousePairs.has(e.to)) {
-          spousePairs.set(e.from, e.to);
-          spousePairs.set(e.to, e.from);
+    spouseLinksRaw.forEach((e) => {
+      if (!spousePairs.has(e.from) && !spousePairs.has(e.to)) {
+        spousePairs.set(e.from, e.to);
+        spousePairs.set(e.to, e.from);
+      }
+    });
+
+    // Keep spouses on the same generation
+    let changed = true;
+    let guard = 0;
+    while (changed && guard < nodes.length * 2) {
+      changed = false;
+      guard += 1;
+      spousePairs.forEach((spouseId, id) => {
+        const g1 = generations.get(id) ?? 0;
+        const g2 = generations.get(spouseId) ?? 0;
+        const g = Math.max(g1, g2);
+        if (g1 !== g) {
+          generations.set(id, g);
+          changed = true;
+        }
+        if (g2 !== g) {
+          generations.set(spouseId, g);
+          changed = true;
         }
       });
+    }
 
-    // Step 3: Layered spacing and grouping
+    // Step 3: Layered spacing and ordering
     const generationGroups: Record<number, string[]> = {};
     nodes.forEach((n) => {
       const g = generations.get(n.id) ?? 0;
@@ -105,11 +128,28 @@ export const TreeCanvas = ({
       }
     });
 
-    const NODE_WIDTH = 300;
-    const NODE_HEIGHT = 250;
+    const NODE_WIDTH = 280;
+    const NODE_HEIGHT = 260;
+    const generationKeys = Object.keys(generationGroups).map(Number).sort((a, b) => a - b);
+    const orderByParentCenter = new Map<string, number>();
 
-    Object.entries(generationGroups).forEach(([genStr, genNodes]) => {
-      const gen = parseInt(genStr);
+    generationKeys.forEach((gen) => {
+      const ids = generationGroups[gen] ?? [];
+      if (gen > 0) {
+        ids.forEach((id) => {
+          const parents = parentsByChild.get(id) ?? [];
+          if (parents.length === 0) return;
+          const avg = parents.reduce((acc, p) => acc + (orderByParentCenter.get(p) ?? 0), 0) / parents.length;
+          orderByParentCenter.set(id, avg);
+        });
+      } else {
+        ids.forEach((id, idx) => orderByParentCenter.set(id, idx));
+      }
+    });
+
+    generationKeys.forEach((gen) => {
+      const genNodes = [...(generationGroups[gen] ?? [])];
+      genNodes.sort((a, b) => (orderByParentCenter.get(a) ?? 0) - (orderByParentCenter.get(b) ?? 0));
       const placed = new Set<string>();
 
       // Group spouses adjacent to each other
@@ -143,20 +183,16 @@ export const TreeCanvas = ({
           x: startX + i * NODE_WIDTH,
           y: gen * NODE_HEIGHT,
         });
+        orderByParentCenter.set(id, i);
       }
     });
 
     const computedNodes = Array.from(computed.values());
 
-    const spouseLinks = edges
-      .filter((e) => e.type === 'SPOUSE_OF')
-      .map((e) => ({ from: e.from, to: e.to }));
+    const spouseLinks = spouseLinksRaw.map((e) => ({ from: e.from, to: e.to }));
+    const renderedParentLinks = parentLinks.map((e) => ({ from: e.from, to: e.to }));
 
-    const parentLinks = edges
-      .filter((e) => e.type === 'PARENT_OF')
-      .map((e) => ({ from: e.from, to: e.to }));
-
-    return { computedNodes, spouseLinks, parentLinks };
+    return { computedNodes, spouseLinks, parentLinks: renderedParentLinks };
   }, [nodes, edges]);
 
   const computedNodes = layoutData.computedNodes;
@@ -260,7 +296,7 @@ export const TreeCanvas = ({
             const isDeceased = !!node.data.deathYear;
             const isHovered = hoveredNodeId === node.id;
 
-            const isCrossVault = !!node.data.vaultId && node.data.vaultId !== nodes[0]?.vaultId;
+            const isCrossVault = !!node.data.vaultId && !!currentVaultId && node.data.vaultId !== currentVaultId;
 
             return (
               <motion.div
@@ -277,21 +313,19 @@ export const TreeCanvas = ({
                   whileHover={{ scale: 1.1, y: -4 }}
                   animate={isSelected ? { scale: 1.15, y: -6 } : {}}
                   className={`w-[88px] h-[88px] sm:w-[96px] sm:h-[96px] rounded-full p-1.5 border-[3px] transition-colors duration-500 shadow-2xl relative z-10 ${
-                    isSelected ? 'border-[var(--clr-gold-light)] bg-[var(--clr-gold)]' : 'border-[var(--clr-gold)] bg-[var(--clr-linen)]'
+                    isSelected
+                      ? 'border-[var(--clr-gold-light)] bg-[var(--clr-gold)]'
+                      : isCrossVault
+                        ? 'border-[rgba(74,124,89,0.85)] bg-[var(--clr-linen)] shadow-[0_0_0_4px_rgba(74,124,89,0.18)]'
+                        : 'border-[var(--clr-gold)] bg-[var(--clr-linen)]'
                   }`}
                 >
-                  <div className={`w-full h-full rounded-full overflow-hidden relative ${isDeceased ? 'sepia-[0.8] contrast-125' : ''}`}>
+                  <div className={`w-full h-full rounded-full overflow-hidden relative ${isDeceased ? 'sepia-[0.8] contrast-125' : ''} ${isCrossVault ? 'ring-2 ring-[rgba(74,124,89,0.82)] ring-offset-2 ring-offset-[var(--clr-linen)]' : ''}`}>
                     {node.data.photo ? (
                       <img src={node.data.photo} alt={node.data.name} className="w-full h-full object-cover" draggable={false} />
                     ) : (
                       <div className="w-full h-full bg-[var(--clr-paper)] flex items-center justify-center text-[var(--clr-gold)]">
                         <User size={40} weight="thin" />
-                      </div>
-                    )}
-
-                    {isCrossVault && (
-                      <div className="absolute inset-0 bg-[rgba(0,0,0,0.45)] flex items-center justify-center">
-                        <Heart size={22} weight="fill" className="text-[var(--clr-gold)]" />
                       </div>
                     )}
                   </div>
@@ -330,13 +364,21 @@ export const TreeCanvas = ({
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 6 }}
-                    className="absolute -bottom-16 flex gap-2 bg-[rgba(0,0,0,0.68)] rounded-full px-3 py-2 border border-[rgba(184,143,91,0.35)] shadow-lg"
+                      className={`absolute -bottom-16 flex gap-2 rounded-full px-3 py-2 border shadow-lg ${
+                        isCrossVault
+                          ? 'bg-[rgba(42,37,34,0.76)] border-[rgba(74,124,89,0.45)]'
+                          : 'bg-[rgba(0,0,0,0.68)] border-[rgba(184,143,91,0.35)]'
+                      }`}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <Tooltip content="Add Parent" side="top">
                         <button
                           aria-label="Add parent"
-                          className="w-9 h-9 rounded-full bg-[rgba(184,143,91,0.12)] hover:bg-[rgba(184,143,91,0.22)] border border-[rgba(184,143,91,0.35)] flex items-center justify-center text-[var(--clr-gold-light)]"
+                          className={`w-9 h-9 rounded-full border flex items-center justify-center transition-colors ${
+                            isCrossVault
+                              ? 'bg-[rgba(74,124,89,0.14)] hover:bg-[rgba(74,124,89,0.26)] border-[rgba(74,124,89,0.36)] text-[rgba(197,224,206,0.98)]'
+                              : 'bg-[rgba(184,143,91,0.12)] hover:bg-[rgba(184,143,91,0.22)] border-[rgba(184,143,91,0.35)] text-[var(--clr-gold-light)]'
+                          }`}
                           onClick={() => onAddRelative(node.id, 'PARENT_OF')}
                         >
                           <ArrowUp size={18} weight="bold" />
@@ -345,7 +387,11 @@ export const TreeCanvas = ({
                       <Tooltip content="Add Child" side="top">
                         <button
                           aria-label="Add child"
-                          className="w-9 h-9 rounded-full bg-[rgba(184,143,91,0.12)] hover:bg-[rgba(184,143,91,0.22)] border border-[rgba(184,143,91,0.35)] flex items-center justify-center text-[var(--clr-gold-light)]"
+                          className={`w-9 h-9 rounded-full border flex items-center justify-center transition-colors ${
+                            isCrossVault
+                              ? 'bg-[rgba(74,124,89,0.14)] hover:bg-[rgba(74,124,89,0.26)] border-[rgba(74,124,89,0.36)] text-[rgba(197,224,206,0.98)]'
+                              : 'bg-[rgba(184,143,91,0.12)] hover:bg-[rgba(184,143,91,0.22)] border-[rgba(184,143,91,0.35)] text-[var(--clr-gold-light)]'
+                          }`}
                           onClick={() => onAddRelative(node.id, 'CHILD_OF')}
                         >
                           <ArrowDown size={18} weight="bold" />
@@ -354,7 +400,11 @@ export const TreeCanvas = ({
                       <Tooltip content="Add Spouse" side="top">
                         <button
                           aria-label="Add spouse"
-                          className="w-9 h-9 rounded-full bg-[rgba(184,143,91,0.12)] hover:bg-[rgba(184,143,91,0.22)] border border-[rgba(184,143,91,0.35)] flex items-center justify-center text-[var(--clr-gold-light)]"
+                          className={`w-9 h-9 rounded-full border flex items-center justify-center transition-colors ${
+                            isCrossVault
+                              ? 'bg-[rgba(74,124,89,0.14)] hover:bg-[rgba(74,124,89,0.26)] border-[rgba(74,124,89,0.36)] text-[rgba(197,224,206,0.98)]'
+                              : 'bg-[rgba(184,143,91,0.12)] hover:bg-[rgba(184,143,91,0.22)] border-[rgba(184,143,91,0.35)] text-[var(--clr-gold-light)]'
+                          }`}
                           onClick={() => onAddRelative(node.id, 'SPOUSE_OF')}
                         >
                           <UserPlus size={18} weight="bold" />

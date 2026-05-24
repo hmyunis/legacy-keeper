@@ -5,9 +5,17 @@ import { sileo } from 'sileo';
 import { useNavigate } from '@tanstack/react-router';
 import { useResendVerification, useVerifyEmail } from '../features/auth/hooks/useAuth';
 import { useAuthStore } from '../stores/authStore';
+import { getPostAuthRoute } from '../lib/authRouting';
 
 const RESEND_COOLDOWN_SECONDS = 15;
 const RESEND_COOLDOWN_KEY = 'legacy_keeper_verify_resend_cooldown_until';
+const ACTIVATION_KEY_EXPIRY_MINUTES = 15;
+
+function formatActivationCodeInput(raw: string) {
+  const digits = raw.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 4) return digits;
+  return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+}
 
 function getRemainingCooldownSeconds() {
   const cooldownUntilRaw = localStorage.getItem(RESEND_COOLDOWN_KEY);
@@ -40,20 +48,25 @@ export default function VerifyEmail() {
 
   const handleVerify = (e: React.FormEvent) => {
     e.preventDefault();
-    if (code.length < 4) return sileo.error({ title: "Incomplete", description: "Please enter your 9-digit key." });
+    const digitsOnly = code.replace(/\D/g, '');
+    if (digitsOnly.length !== 8) {
+      return sileo.error({ title: "Incomplete", description: "Please enter your 8-digit key." });
+    }
 
     const promise = verifyMutation.mutateAsync(code);
 
     sileo.promise(promise, {
       loading: { title: "Validating Key..." },
       success: () => {
+        const currentUser = useAuthStore.getState().currentUser;
         useAuthStore.setState((state) => {
           if (state.currentUser) {
              return { currentUser: { ...state.currentUser, is_verified: true } as any };
           }
           return state;
         });
-        navigate({ to: '/onboarding' });
+        const nextRoute = getPostAuthRoute(currentUser ? ({ ...currentUser, is_verified: true } as any) : currentUser);
+        navigate({ to: nextRoute as any });
         return { title: "Vault Activated", description: "Access granted to the museum." };
       },
       error: { title: "Invalid or Expired Key", description: "Please check your email and try again." }
@@ -82,11 +95,14 @@ export default function VerifyEmail() {
         <p className="font-ui text-[14px] text-[var(--clr-fog)] leading-relaxed">
           An activation key has been sent to your email. Enter it below to initialize your family museum.
         </p>
+        <p className="font-ui text-[11px] text-[var(--clr-dust)] uppercase tracking-widest">
+          Key expires in {ACTIVATION_KEY_EXPIRY_MINUTES} minutes.
+        </p>
         <input
           type="text"
           maxLength={9}
           value={code}
-          onChange={(e) => setCode(e.target.value.toUpperCase())}
+          onChange={(e) => setCode(formatActivationCodeInput(e.target.value))}
           placeholder="####-####"
           className="w-full text-center bg-[rgba(0,0,0,0.3)] border border-[rgba(184,143,91,0.3)] rounded-full px-6 py-4 text-[var(--clr-linen)] tracking-[0.5em] text-xl font-display outline-none focus:border-[var(--clr-gold)]"
         />

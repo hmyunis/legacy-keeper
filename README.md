@@ -9,7 +9,9 @@ LegacyKeeper is a majestic, self-hosted 3D family archive. It moves beyond stand
 - **AI Restoration & Curation:** Automatically colorize, denoise, and caption old artifacts using local AI.
 - **Story Weaver:** Generates rich biographies based on tagged photos and EXIF data.
 - **Living Lineage:** Interactive federated family trees.
-- **Vibe Search:** Semantic search using CLIP embeddings (e.g., *"Sunday morning coffee in the 90s"*).
+- **Hybrid Vibe Search:** Semantic search plus lexical reranking, OCR/object-tag matching, and deep background jobs.
+- **Vault Inbox & Picker:** Users can accept or reject vault invitations, then choose which vault to open when they have access to more than one.
+- **Infinite Vault Grid:** The 2D vault view loads memories in backend-paginated batches as you scroll.
 - **Time Capsules:** Cryptographically sealed memories that unlock on a future date.
 
 ---
@@ -22,6 +24,7 @@ You can run LegacyKeeper in two ways. **Method 1 (Docker)** is highly recommende
 1. **Git** installed on your machine.
 2. [Ollama](https://ollama.com/) installed locally to run the AI LLM (Llama 3.1:8b).
    - Run: `ollama run llama3.1:8b` in your terminal to download and start the model.
+3. For local image OCR in deep search, install the `tesseract-ocr` system package in WSL.
 
 ---
 
@@ -41,10 +44,17 @@ This method spins up the Backend, Frontend, PostgreSQL, Redis, and MinIO automat
 
 2. **Configure Environment Variables:**
    ```bash
-   # Copy the docker env template
+   # Copy local env templates for app-specific secrets.
    cp backend/.env.docker backend/.env
+   cp frontend/.env.example frontend/.env
    ```
    *(Optional)* Add your `HF_TOKEN` (Hugging Face) to `backend/.env` to speed up the download of the CLIP and Face Recognition AI models.
+
+   For browser push notifications, generate a real VAPID pair and put the same public key in the frontend env:
+   ```bash
+   npx web-push generate-vapid-keys
+   ```
+   Set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` in `backend/.env`, and set `VITE_VAPID_PUBLIC_KEY` in `frontend/.env`. The Docker backend uses `.env.docker` for container hostnames, but it will fall back to the real VAPID keys in `backend/.env` when `.env.docker` still contains placeholders. Restart Docker after changing these values.
 
 3. **Build and Run:**
    ```bash
@@ -153,8 +163,14 @@ npm run dev
 
 ## 🧠 AI Pipeline Architecture
 1. **Face Recognition:** Uses `dlib` to extract 128D facial embeddings. Clusters are formed across the family tree.
-2. **Semantic Search:** Uses `sentence-transformers/clip-ViT-B-32` to convert images into 512D vectors, stored in `pgvector` for instant "vibe" lookups via Cosine Distance.
+2. **Search Ranking:** Uses a hybrid retrieval pipeline with CLIP embeddings, lexical candidate generation, OCR/object-tag boosts, and cross-encoder reranking for stronger result ordering.
 3. **Story Weaver & Captioning:** Leverages a locally running `Ollama` (Llama 3) instance to write captions based on parsed EXIF data, detected faces, and semantic tags.
+4. **Deep Search:** Background search jobs can inspect OCR text, AI captions, object tags, and document text so results keep updating without blocking the UI.
 
 ## 🛡️ Governance & Privacy
 LegacyKeeper implements a strict Role-Based Access Control (RBAC) per vault (Admin, Contributor, Viewer). Data remains entirely on your machine/server. Time capsules are mathematically locked until their expiry dates are validated via Celery Beat periodic checks.
+
+Vault invitation flow:
+- Vault admins can invite members and see whether invitations are pending, accepted, or rejected.
+- New users can choose whether they are joining a vault or creating their own during onboarding.
+- Users with access to one vault are taken straight into it; users with access to multiple vaults see a picker at login.

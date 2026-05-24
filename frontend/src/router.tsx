@@ -16,6 +16,8 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import VerifyEmail from './pages/VerifyEmail';
 import Onboarding from './pages/Onboarding';
+import VaultSelect from './pages/VaultSelect';
+import InvitationInbox from './pages/InvitationInbox';
 import Help from './pages/Help';
 import Logs from './pages/Logs';
 import Members from './pages/Members';
@@ -156,6 +158,9 @@ const settingsRoute = createRoute({
   path: 'settings',
   component: Settings,
   beforeLoad: requireAdmin,
+  validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
+    tab: typeof search.tab === 'string' ? search.tab : undefined,
+  }),
 });
 
 // ── Fullscreen immersive (no shell navbar) ────────────────────────────────
@@ -172,6 +177,26 @@ const onboardingRoute = createRoute({
   path: 'onboarding',
   component: Onboarding,
   beforeLoad: requireAuth,
+});
+
+const invitationInboxRoute = createRoute({
+  getParentRoute: () => fullscreenLayoutRoute,
+  path: 'invitation-inbox',
+  component: InvitationInbox,
+  beforeLoad: requireAuth,
+  validateSearch: (search: Record<string, unknown>): { redirect?: string } => ({
+    redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
+  }),
+});
+
+const vaultSelectRoute = createRoute({
+  getParentRoute: () => fullscreenLayoutRoute,
+  path: 'vault-select',
+  component: VaultSelect,
+  beforeLoad: requireAuth,
+  validateSearch: (search: Record<string, unknown>): { redirect?: string } => ({
+    redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
+  }),
 });
 
 const notFoundRoute = createRoute({
@@ -202,7 +227,7 @@ const routeTree = rootRoute.addChildren([
     membersRoute,
     settingsRoute,
   ]),
-  fullscreenLayoutRoute.addChildren([museumRoute, onboardingRoute]),
+  fullscreenLayoutRoute.addChildren([museumRoute, onboardingRoute, vaultSelectRoute, invitationInboxRoute]),
 ]);
 
 export const router = createRouter({ routeTree });
