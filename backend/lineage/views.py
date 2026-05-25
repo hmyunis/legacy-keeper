@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from .models import Person, KinshipEdge, PersonFaceEmbedding
 from core.models import VaultMember, get_accessible_vault_ids, ActionLog
 from .serializers import PersonSerializer, KinshipEdgeSerializer
+from .avatar_utils import save_person_avatar_from_memory_face
 from tasks.story_weaver import generate_chronicle_task
 
 class LineageGraphView(views.APIView):
@@ -273,6 +274,7 @@ class IdentifyFaceView(views.APIView):
                 name=f"Unknown Kin {str(embedding.id)[:6]}",
                 role="Unidentified"
             )
+            save_person_avatar_from_memory_face(target_person, embedding.memory, embedding.bounding_box)
 
         embedding.person = target_person
         embedding.save()

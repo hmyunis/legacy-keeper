@@ -1,4 +1,4 @@
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -77,9 +77,57 @@ function positionForIndex(index: number): Pick<ExhibitData, 'position' | 'rotati
   return { position: [-WALL_DISTANCE, y, -offset], rotation: [0, Math.PI / 2, 0] };
 }
 
+function canUseWebGL() {
+  if (typeof document === 'undefined') return false;
+
+  const canvas = document.createElement('canvas');
+  return Boolean(
+    canvas.getContext('webgl2') ||
+    canvas.getContext('webgl') ||
+    canvas.getContext('experimental-webgl')
+  );
+}
+
+function GalleryCard({
+  exhibit,
+  onSelect,
+}: {
+  exhibit: ExhibitData;
+  onSelect: (exhibit: ExhibitData) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(exhibit)}
+      className="group overflow-hidden rounded-[var(--radius-lg)] border border-[rgba(184,143,91,0.24)] bg-[rgba(20,18,17,0.82)] text-left shadow-[0_16px_48px_rgba(0,0,0,0.32)] transition-all hover:-translate-y-1 hover:border-[rgba(184,143,91,0.45)] hover:shadow-[0_20px_64px_rgba(0,0,0,0.42)]"
+    >
+      <div className="relative aspect-[4/3] overflow-hidden bg-[#171311]">
+        <img
+          src={exhibit.url}
+          alt={exhibit.title}
+          className="h-full w-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-105 group-hover:opacity-100"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#100D0C] via-transparent to-transparent opacity-90" />
+      </div>
+      <div className="p-4">
+        <p className="font-ui text-[9px] uppercase tracking-[0.2em] text-[var(--clr-gold)]">
+          {exhibit.year || 'Undated'}
+        </p>
+        <h3 className="mt-2 font-display text-[1.2rem] uppercase tracking-wide text-[var(--clr-linen)]">
+          {exhibit.title}
+        </h3>
+        <p className="mt-1 line-clamp-2 font-ui text-[12px] leading-relaxed text-[var(--clr-fog)]">
+          {exhibit.location || 'No location set'}
+        </p>
+      </div>
+    </button>
+  );
+}
+
 export default function Museum() {
   const [activeFilter, setActiveFilter] = useState('All');
   const [selectedMemory, setSelectedMemory] = useState<any | null>(null);
+  const [isWebglAvailable] = useState(() => canUseWebGL());
   const { data: memories = [], isLoading } = useVaultMemories();
   const navigate = useNavigate();
   const currentUser = useAuthStore(s => s.currentUser);
@@ -122,42 +170,79 @@ export default function Museum() {
 
   const activeLabel = activeFilter === 'All' ? 'Complete Collection' : activeFilter;
   const installedCount = Math.min(exhibits.length, MAX_INSTALLED_EXHIBITS);
+  const sharedMemoryId = new URLSearchParams(window.location.search).get('memoryId');
+
+  useEffect(() => {
+    if (!sharedMemoryId || memories.length === 0) return;
+
+    const sharedMemory = memories.find((memory: any) => String(memory.id) === sharedMemoryId);
+    if (sharedMemory) {
+      setSelectedMemory((current: any | null) => (current && String(current.id) === sharedMemoryId ? current : sharedMemory));
+    }
+  }, [memories, sharedMemoryId]);
 
   return (
     <div className="w-screen h-screen bg-[#100D0C] overflow-hidden fixed inset-0 z-50 text-[var(--clr-linen)] font-ui">
       <MemoryDetailModal isOpen={!!selectedMemory} onClose={() => setSelectedMemory(null)} memory={selectedMemory} onUpdate={setSelectedMemory} />
 
-      <Suspense fallback={<div className="flex items-center justify-center h-full w-full"><p className="font-script text-[48px] text-[var(--clr-gold)] animate-pulse">"Lighting the gallery..."</p></div>}>
-        <Canvas
-          shadows
-          dpr={[1, 1.6]}
-          camera={{ position: [0, 1.05, 8.2], fov: 58 }}
-          gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
-        >
-          <color attach="background" args={['#100D0C']} />
-          <ambientLight intensity={0.28} />
-          <directionalLight position={[4, 5, 3]} intensity={1.1} color="#F4D59B" castShadow shadow-mapSize={[2048, 2048]} />
-          <pointLight position={[-4, 1.6, 3]} intensity={0.7} distance={7} color="#8FA98A" />
-          <pointLight position={[4, 1.2, -3]} intensity={0.55} distance={7} color="#B88F5B" />
-          <MuseumHall exhibits={exhibits} onSelectExhibit={(exhibit) => {
-            const memory = filteredMemories.find((item: any) => String(item.id) === exhibit.id);
-            setSelectedMemory(memory || exhibit);
-          }} />
-          <OrbitControls
-            makeDefault
-            target={[0, 0.1, 0]}
-            enableDamping
-            dampingFactor={0.07}
-            rotateSpeed={0.48}
-            zoomSpeed={0.7}
-            enablePan={false}
-            minDistance={3.1}
-            maxDistance={9.25}
-            minPolarAngle={Math.PI * 0.24}
-            maxPolarAngle={Math.PI * 0.58}
-          />
-        </Canvas>
-      </Suspense>
+      {isWebglAvailable ? (
+        <Suspense fallback={<div className="flex items-center justify-center h-full w-full"><p className="font-script text-[48px] text-[var(--clr-gold)] animate-pulse">"Lighting the gallery..."</p></div>}>
+          <Canvas
+            shadows
+            dpr={[1, 1.6]}
+            camera={{ position: [0, 1.05, 8.2], fov: 58 }}
+            gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
+          >
+            <color attach="background" args={['#100D0C']} />
+            <ambientLight intensity={0.28} />
+            <directionalLight position={[4, 5, 3]} intensity={1.1} color="#F4D59B" castShadow shadow-mapSize={[2048, 2048]} />
+            <pointLight position={[-4, 1.6, 3]} intensity={0.7} distance={7} color="#8FA98A" />
+            <pointLight position={[4, 1.2, -3]} intensity={0.55} distance={7} color="#B88F5B" />
+            <MuseumHall exhibits={exhibits} onSelectExhibit={(exhibit) => {
+              const memory = filteredMemories.find((item: any) => String(item.id) === exhibit.id);
+              setSelectedMemory(memory || exhibit);
+            }} />
+            <OrbitControls
+              makeDefault
+              target={[0, 0.1, 0]}
+              enableDamping
+              dampingFactor={0.07}
+              rotateSpeed={0.48}
+              zoomSpeed={0.7}
+              enablePan={false}
+              minDistance={3.1}
+              maxDistance={9.25}
+              minPolarAngle={Math.PI * 0.24}
+              maxPolarAngle={Math.PI * 0.58}
+            />
+          </Canvas>
+        </Suspense>
+      ) : (
+        <div className="absolute inset-0 overflow-y-auto px-4 pb-28 pt-20 sm:px-6">
+          <div className="mx-auto max-w-[1200px]">
+            <div className="mb-6 rounded-[var(--radius-lg)] border border-[rgba(184,143,91,0.24)] bg-[rgba(20,18,17,0.84)] px-5 py-4 shadow-[0_16px_48px_rgba(0,0,0,0.32)] backdrop-blur-md">
+              <p className="font-display text-[1.1rem] uppercase tracking-wide text-[var(--clr-gold)]">
+                3D gallery unavailable in this browser
+              </p>
+              <p className="mt-1 font-ui text-[12px] leading-relaxed text-[var(--clr-fog)]">
+                WebGL is blocked or disabled here, so the museum is showing a static gallery instead.
+              </p>
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+              {exhibits.map((exhibit) => (
+                <GalleryCard
+                  key={exhibit.id}
+                  exhibit={exhibit}
+                  onSelect={(selected) => {
+                    const memory = filteredMemories.find((item: any) => String(item.id) === selected.id);
+                    setSelectedMemory(memory || selected);
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {(isLoading || (!isLoading && memories.length === 0)) && (

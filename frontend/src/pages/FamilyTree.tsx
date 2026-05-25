@@ -592,6 +592,9 @@ export default function FamilyTree() {
                     value={graftExistingId}
                     onValueChange={setGraftExistingId}
                     placeholder="Choose existing relative"
+                    searchable
+                    searchPlaceholder="Search relatives"
+                    noResultsText="No relatives match your search"
                     options={graftExistingOptions.map((person: any) => ({
                       value: person.id,
                       label: `${person.name}${person.role ? ` - ${person.role}` : ''}`,

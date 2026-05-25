@@ -32,6 +32,7 @@ from django.utils import timezone
 from tasks.ollama_client import generate_with_ollama
 from vaults.models import Memory
 from lineage.models import Person, PersonFaceEmbedding
+from lineage.avatar_utils import save_person_avatar_from_face_image
 
 logger = logging.getLogger(__name__)
 
@@ -657,6 +658,7 @@ def process_memory_task(self, memory_id):
                             name=f"Unknown Kin ({str(memory.id)[:4]})",
                             role="Unknown"
                         )
+                        save_person_avatar_from_face_image(new_person, img_rgb, location, source_id=memory.id)
                         PersonFaceEmbedding.objects.create(
                             person=new_person,
                             memory=memory,

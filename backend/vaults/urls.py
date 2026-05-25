@@ -16,6 +16,7 @@ urlpatterns = [
     path('<uuid:vault_id>/search/vibe/', views.VibeSearchView.as_view(), name='vibe-search'),
     path('<uuid:vault_id>/search/tags/', views.VaultTagCloudView.as_view(), name='tag-cloud'),
     path('<uuid:vault_id>/capsules/', views.CapsuleListCreateView.as_view(), name='capsules'),
+    path('<uuid:vault_id>/capsules/<uuid:pk>/', views.CapsuleDetailView.as_view(), name='capsule-detail'),
     path('<uuid:vault_id>/capsules/<uuid:pk>/open/', views.CapsuleOpenView.as_view(), name='capsule-open'),
     path('<uuid:vault_id>/dashboard/summary/', views.DashboardSummaryView.as_view(), name='dashboard-summary'),
     path('<uuid:vault_id>/settings/', views.VaultSettingsView.as_view(), name='vault-settings'),

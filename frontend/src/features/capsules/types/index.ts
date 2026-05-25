@@ -5,4 +5,5 @@ export interface Capsule {
   status: 'LOCKED' | 'READY' | 'OPENED';
   daysRemaining: number;
   message?: string;
+  sealedById?: string | null;
 }

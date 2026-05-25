@@ -8,6 +8,7 @@ import { useAuthStore } from '../stores/authStore';
 import { sileo } from 'sileo';
 import { useLogin, useRegister } from '../features/auth/hooks/useAuth';
 import { getPostAuthRoute } from '../lib/authRouting';
+import { parseRouteTarget } from '../lib/deepLinks';
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
@@ -43,10 +44,13 @@ export default function Auth() {
             refreshToken: data.refreshToken,
           });
           const destination = getPostAuthRoute(data.user as any, redirectTo);
-          const destinationSearch = (destination === '/vault-select' || destination === '/invitation-inbox') && redirectTo
-            ? { redirect: redirectTo }
-            : undefined;
-          void navigate({ to: destination as any, search: destinationSearch as any });
+          if ((destination === '/vault-select' || destination === '/invitation-inbox') && redirectTo) {
+            void navigate({ to: destination as any, search: { redirect: redirectTo } as any });
+            return { title: "Welcome Back", description: "Your session is now cryptographically secured." };
+          }
+
+          const resolvedDestination = parseRouteTarget(destination);
+          void navigate({ to: resolvedDestination.to as any, search: resolvedDestination.search as any });
           return { title: "Welcome Back", description: "Your session is now cryptographically secured." };
         },
         error: { title: "Access Denied", description: "Invalid credentials provided." }

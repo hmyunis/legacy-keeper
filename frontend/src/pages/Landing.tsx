@@ -26,6 +26,39 @@ const GOLD     = '#B88F5B';
 const LINEN    = '#F7F4EF';
 const CHARCOAL = '#141211';
 
+function canUseWebGL() {
+  if (typeof document === 'undefined') return false;
+
+  const canvas = document.createElement('canvas');
+  return Boolean(
+    canvas.getContext('webgl2') ||
+    canvas.getContext('webgl') ||
+    canvas.getContext('experimental-webgl')
+  );
+}
+
+function LandingFallbackAtmosphere() {
+  return (
+    <div
+      aria-hidden
+      className="absolute inset-0 overflow-hidden"
+      style={{
+        background:
+          'radial-gradient(ellipse 60% 55% at 50% 48%, rgba(184,143,91,0.16) 0%, rgba(20,18,17,0.08) 34%, rgba(20,18,17,0.96) 74%), linear-gradient(180deg, #1a1513 0%, #141211 55%, #120f0e 100%)',
+      }}
+    >
+      <div className="absolute inset-0 opacity-[0.16]" style={{
+        backgroundImage:
+          'radial-gradient(circle at 20% 30%, rgba(212,169,106,0.18) 0 2px, transparent 2px), radial-gradient(circle at 72% 24%, rgba(184,143,91,0.18) 0 1.5px, transparent 1.5px), radial-gradient(circle at 78% 74%, rgba(247,244,239,0.12) 0 1.5px, transparent 1.5px), radial-gradient(circle at 14% 78%, rgba(184,143,91,0.12) 0 2px, transparent 2px)',
+        backgroundSize: '520px 520px',
+      }} />
+      <div className="absolute left-1/2 top-[18%] h-[64%] w-[min(74vw,860px)] -translate-x-1/2 rounded-[42px] border border-[rgba(184,143,91,0.2)] bg-[rgba(20,18,17,0.42)] shadow-[0_30px_120px_rgba(0,0,0,0.35)] backdrop-blur-[2px]" />
+      <div className="absolute left-[6%] top-[28%] h-[min(48vw,360px)] w-[min(48vw,360px)] rounded-full bg-[rgba(184,143,91,0.12)] blur-[90px]" />
+      <div className="absolute right-[8%] top-[58%] h-[min(42vw,320px)] w-[min(42vw,320px)] rounded-full bg-[rgba(212,169,106,0.08)] blur-[80px]" />
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // THREE.JS — Single floating photo frame
 // ─────────────────────────────────────────────────────────────────────────────
@@ -530,7 +563,7 @@ const features: FeatureItem[] = [
     Icon : MagicWand,
     title: 'AI RESTORATION',
     sub  : 'Revival of the Past',
-    desc : 'Breathe new life into faded heirlooms. Denoise, sharpen, and colorize historical photographs — surfacing details that time tried to erase.',
+    desc : 'Restore faded heirlooms and compare the original with an AI-restored version directly in the memory viewer.',
     link : '/vault'
   },
   {
@@ -538,7 +571,7 @@ const features: FeatureItem[] = [
     Icon : TreeStructure,
     title: 'FEDERATED LINEAGE',
     sub  : 'Two Families, One Story',
-    desc : "When families unite, so do their trees. Link your vault with your partner's lineage and watch two independent histories grow toward each other — seamlessly, securely.",
+    desc : "When families unite, so do their trees. Link vaults through Lineage Pacts and keep connected family histories permissioned and private.",
     link : '/tree'
   },
   {
@@ -546,7 +579,7 @@ const features: FeatureItem[] = [
     Icon : TextAa,
     title: 'GENERATIVE CHRONICLES',
     sub  : 'Stories Written From Memory',
-    desc : 'A single button weaves tagged photos, EXIF locations, and dates into a beautifully narrated, multi-chapter biography no one had time to write before.',
+    desc : "Generate a biography from a person's linked memories, captions, dates, and notes in a few clicks.",
     link : '/person/1'
   },
   {
@@ -554,7 +587,7 @@ const features: FeatureItem[] = [
     Icon : Image,
     title: 'FACIAL UNIVERSE',
     sub  : 'Name Once. Tagged Forever.',
-    desc : 'Upload a shoebox of unsorted decades. AI clusters every face it finds. You name one person — and all 47 photos of Grandfather are tagged in a single keystroke.',
+    desc : 'Detect faces, link them to relatives, and keep identities connected across memories as the archive grows.',
     link : '/search'
   },
 ];
@@ -688,6 +721,7 @@ function StatPillar({ value, label }: { value: string; label: string }) {
 
 export default function Landing() {
   const currentUser = useAuthStore((s) => s.currentUser);
+  const isWebglAvailable = useMemo(() => canUseWebGL(), []);
 
   return (
     <>
@@ -700,16 +734,20 @@ export default function Landing() {
       >
         {/* ── Three.js canvas ── */}
         <div className="absolute inset-0 z-0">
-          <Canvas
-            camera={{ position: [0, 0.5, 8], fov: 62, near: 0.1, far: 60 }}
-            gl={{ antialias: true, alpha: false }}
-            dpr={[1, 1.5]}
-            style={{ background: CHARCOAL }}
-          >
-            <Suspense fallback={null}>
-              <HeroScene />
-            </Suspense>
-          </Canvas>
+          {isWebglAvailable ? (
+            <Canvas
+              camera={{ position: [0, 0.5, 8], fov: 62, near: 0.1, far: 60 }}
+              gl={{ antialias: true, alpha: false }}
+              dpr={[1, 1.5]}
+              style={{ background: CHARCOAL }}
+            >
+              <Suspense fallback={null}>
+                <HeroScene />
+              </Suspense>
+            </Canvas>
+          ) : (
+            <LandingFallbackAtmosphere />
+          )}
         </div>
 
         {/* ── Ambient motion, glows, dust, seal (over 3D) ── */}
@@ -855,9 +893,9 @@ export default function Landing() {
             transition={{ delay: 1.38, duration: 0.9 }}
             className="flex items-stretch gap-0 mb-10"
           >
-            <StatPillar value="2,400+"  label="Family Vaults"  />
-            <StatPillar value="340K+"   label="Memories Stored" />
-            <StatPillar value="12 Gen." label="Deepest Lineage" />
+            <StatPillar value="Private" label="Vaults" />
+            <StatPillar value="AI" label="Curation" />
+            <StatPillar value="Deep" label="Search" />
           </motion.div>
 
           {/* Social proof avatars */}
@@ -884,7 +922,7 @@ export default function Landing() {
               ))}
             </div>
             <p className="font-ui text-[12px] text-[#B0A898]">
-              Trusted by <span className="text-[#B88F5B] font-semibold">2,400+</span> families worldwide
+              Built for private family archives and shared lineage workspaces
             </p>
           </motion.div>
         </motion.div>
@@ -1006,7 +1044,7 @@ export default function Landing() {
                   And much more
                 </p>
                 <p className="font-display text-[1.05rem] text-[#2A2522] tracking-[0.015em]">
-                  Smart Deduplication · Time Capsules · Vibe Search · Memory Atlas
+                  Smart Purge · Time Capsules · Vibe Search · Lineage Pacts
                 </p>
               </div>
               <Link to="/auth" className="flex-shrink-0">
@@ -1089,7 +1127,7 @@ export default function Landing() {
 
               {/* Body */}
               <p className="font-ui text-[15px] text-[#B0A898] mb-12 font-light max-w-[440px] leading-[1.8]">
-                Free forever for your family. No subscriptions, no cloud lock-in.
+                Private by design, self-hosted, and built for family archives.
                 <br />Your memories, in a museum worthy of them.
               </p>
 

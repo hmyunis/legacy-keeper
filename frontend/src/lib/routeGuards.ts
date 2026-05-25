@@ -5,11 +5,14 @@ import { getAccessibleVaults, getPostAuthRoute, shouldShowInvitationInbox } from
 /** Redirect unauthenticated users to sign-in. */
 export function requireAuth({ location }: { location: { pathname: string } }) {
   const { isAuthenticated, currentUser, activeVaultId, setActiveVaultId } = useAuthStore.getState();
+  const requestedVaultId = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('vaultId')
+    : null;
 
   if (!isAuthenticated) {
     throw redirect({
       to: '/auth',
-      search: { redirect: location.pathname },
+      search: { redirect: typeof window !== 'undefined' ? `${window.location.pathname}${window.location.search}` : location.pathname },
     });
   }
 
@@ -22,14 +25,20 @@ export function requireAuth({ location }: { location: { pathname: string } }) {
   }
 
   const vaults = getAccessibleVaults(currentUser);
-  const activeVaultIsValid = !!activeVaultId && vaults.some((vault) => vault.id === activeVaultId);
+  const vaultFromLink = requestedVaultId && vaults.some((vault) => vault.id === requestedVaultId) ? requestedVaultId : null;
+  if (vaultFromLink && activeVaultId !== vaultFromLink) {
+    setActiveVaultId(vaultFromLink);
+  }
 
-  if (vaults.length === 1 && !activeVaultIsValid) {
+  const activeVaultIsValid = !!activeVaultId && vaults.some((vault) => vault.id === activeVaultId);
+  const effectiveActiveVaultIsValid = activeVaultIsValid || !!vaultFromLink;
+
+  if (vaults.length === 1 && !effectiveActiveVaultIsValid) {
     setActiveVaultId(vaults[0].id);
     return;
   }
 
-  if (vaults.length > 1 && !activeVaultIsValid && location.pathname !== '/vault-select') {
+  if (vaults.length > 1 && !effectiveActiveVaultIsValid && location.pathname !== '/vault-select') {
     throw redirect({ to: '/vault-select' });
   }
 

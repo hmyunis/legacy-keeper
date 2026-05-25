@@ -9,7 +9,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useSearchStore } from '../../stores/searchStore';
 import axiosClient from '../../services/axiosClient';
 import { appEnv } from '../../services/env';
-import { getDefaultVaultId } from '../../lib/authRouting';
+import { getDefaultVaultId, getAccessibleVaults } from '../../lib/authRouting';
 import { getTaskStatus } from '../../lib/tasks';
 
 export function AppLayout() {
@@ -24,6 +24,18 @@ export function AppLayout() {
     const defaultVaultId = getDefaultVaultId(currentUser);
     if (!activeVaultId && defaultVaultId) {
       setActiveVaultId(defaultVaultId);
+    }
+  }, [activeVaultId, currentUser, setActiveVaultId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !currentUser) return;
+
+    const requestedVaultId = new URLSearchParams(window.location.search).get('vaultId');
+    if (!requestedVaultId || requestedVaultId === activeVaultId) return;
+
+    const accessibleVaults = getAccessibleVaults(currentUser);
+    if (accessibleVaults.some((vault) => vault.id === requestedVaultId)) {
+      setActiveVaultId(requestedVaultId);
     }
   }, [activeVaultId, currentUser, setActiveVaultId]);
 

@@ -5,6 +5,7 @@ import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { Button } from '../components/ui/Button';
 import { useAuthStore } from '../stores/authStore';
 import { getAccessibleVaults } from '../lib/authRouting';
+import { parseRouteTarget } from '../lib/deepLinks';
 
 export default function VaultSelect() {
   const navigate = useNavigate();
@@ -20,13 +21,15 @@ export default function VaultSelect() {
   useEffect(() => {
     if (vaults.length === 1) {
       setActiveVaultId(vaults[0].id);
-      void navigate({ to: redirectTo || '/dashboard' });
+      const target = parseRouteTarget(redirectTo || '/dashboard');
+      void navigate({ to: target.to as any, search: target.search as any });
     }
   }, [navigate, redirectTo, setActiveVaultId, vaults]);
 
   const handleSelect = (vaultId: string) => {
     setActiveVaultId(vaultId);
-    void navigate({ to: redirectTo || '/dashboard' });
+    const target = parseRouteTarget(redirectTo || '/dashboard');
+    void navigate({ to: target.to as any, search: target.search as any });
   };
 
   return (

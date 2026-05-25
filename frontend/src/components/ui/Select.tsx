@@ -1,6 +1,16 @@
 import * as SelectPrimitive from '@radix-ui/react-select';
-import { CaretDown, Check } from '@phosphor-icons/react';
-import { type ComponentPropsWithoutRef, type ElementRef, forwardRef, type ReactNode } from 'react';
+import { CaretDown, Check, MagnifyingGlass } from '@phosphor-icons/react';
+import {
+  type ChangeEvent,
+  type ComponentPropsWithoutRef,
+  type ElementRef,
+  forwardRef,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -46,7 +56,7 @@ export const SelectContent = forwardRef<
       )}
       {...props}
     >
-      <SelectPrimitive.Viewport className="p-1.5">{children}</SelectPrimitive.Viewport>
+      {children}
     </SelectPrimitive.Content>
   </SelectPrimitive.Portal>
 ));
@@ -89,6 +99,9 @@ interface PlatformSelectProps {
   options: PlatformSelectOption[];
   className?: string;
   disabled?: boolean;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  noResultsText?: string;
 }
 
 export function PlatformSelect({
@@ -100,7 +113,43 @@ export function PlatformSelect({
   options,
   className,
   disabled,
+  searchable = false,
+  searchPlaceholder = 'Search options',
+  noResultsText = 'No options found',
 }: PlatformSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setSearch('');
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+  }, [open]);
+
+  const filteredOptions = useMemo(() => {
+    if (!searchable || !search.trim()) return options;
+
+    const needle = search.trim().toLowerCase();
+    return options.filter((option) => {
+      const labelText =
+        typeof option.label === 'string' || typeof option.label === 'number'
+          ? String(option.label)
+          : option.value;
+      return labelText.toLowerCase().includes(needle);
+    });
+  }, [options, search, searchable]);
+
+  const handleSearchChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setSearch(event.target.value);
+  };
+
   return (
     <Select
       value={value}
@@ -108,16 +157,46 @@ export function PlatformSelect({
       onValueChange={onValueChange}
       name={name}
       disabled={disabled}
+      open={open}
+      onOpenChange={setOpen}
     >
       <SelectTrigger className={className}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
-      <SelectContent>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </SelectItem>
-        ))}
+      <SelectContent className="p-0">
+        {searchable && (
+          <div className="border-b border-[rgba(184,143,91,0.16)] bg-[var(--clr-linen)] p-2.5">
+            <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[rgba(184,143,91,0.28)] bg-[var(--clr-paper)] px-3 py-2 shadow-[var(--shadow-inset)]">
+              <MagnifyingGlass size={16} className="shrink-0 text-[var(--clr-gold-dark)]" />
+              <input
+                ref={searchInputRef}
+                value={search}
+                onChange={handleSearchChange}
+                placeholder={searchPlaceholder}
+                className="w-full bg-transparent font-ui text-[12px] font-semibold text-[var(--clr-ink)] outline-none placeholder:text-[var(--clr-dust)]"
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                }}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
+              />
+            </div>
+          </div>
+        )}
+        <SelectPrimitive.Viewport className="max-h-[260px] overflow-y-auto p-1.5">
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+                {option.label}
+              </SelectItem>
+            ))
+          ) : (
+            <div className="px-3 py-4 text-center font-ui text-[12px] text-[var(--clr-dust)]">
+              {noResultsText}
+            </div>
+          )}
+        </SelectPrimitive.Viewport>
       </SelectContent>
     </Select>
   );

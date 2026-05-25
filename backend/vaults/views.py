@@ -768,6 +768,30 @@ class CapsuleOpenView(views.APIView):
         capsule.save()
         return Response({"status": "OPENED"})
 
+
+class CapsuleDetailView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, vault_id, pk):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
+        capsule = get_object_or_404(Capsule, id=pk)
+
+        if str(capsule.vault_id) != str(vault_id):
+            raise PermissionDenied("This capsule does not belong to the requested vault.")
+
+        if not capsule.sealed_by_id or str(capsule.sealed_by_id) != str(request.user.id):
+            raise PermissionDenied("Only the author can delete this capsule.")
+
+        capsule_title = capsule.title
+        capsule.delete()
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='capsule',
+            description=f"Deleted Time Capsule: '{capsule_title}'.",
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 class DashboardSummaryView(views.APIView):
     permission_classes = [IsAuthenticated]
 

@@ -110,6 +110,15 @@ function DashboardHero({
   members: any[];
   isLoading: boolean;
 }) {
+  const kinCount = Number(summary?.kinCount ?? members.length ?? 0);
+  const leadName = (members[0]?.name || summary?.curatorName || 'Curator').split(' ')[0];
+  const kinLabel =
+    kinCount > 1
+      ? `${leadName} + ${kinCount - 1} kin`
+      : kinCount === 1
+        ? 'Just You'
+        : 'No kin yet';
+
   return (
     <section className="dashboard-hero relative w-full min-h-[75vh] flex items-center bg-[var(--clr-charcoal)] overflow-hidden pt-12 pb-32 px-[clamp(24px,5vw,80px)] isolate">
       <DashboardHeroCanvas />
@@ -184,7 +193,7 @@ function DashboardHero({
                   ))}
                 </div>
                 <span className="font-ui text-[11px] text-[var(--clr-fog)] uppercase tracking-widest font-bold pr-2">
-                  {members.length > 1 ? `${(members[0]?.name || 'Curator').split(' ')[0]} + ${members.length - 1} kin` : 'Just You'}
+                  {kinLabel}
                 </span>
               </div>
             </>

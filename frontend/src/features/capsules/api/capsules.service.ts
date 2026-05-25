@@ -9,5 +9,8 @@ export const capsulesService = {
   },
   sealCapsule: async (vaultId: string, data: any): Promise<void> => {
     await axiosClient.post(`/vaults/${vaultId}/capsules/`, data);
+  },
+  deleteCapsule: async (vaultId: string, capsuleId: string): Promise<void> => {
+    await axiosClient.delete(`/vaults/${vaultId}/capsules/${capsuleId}/`);
   }
 };

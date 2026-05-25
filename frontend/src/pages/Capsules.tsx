@@ -1,14 +1,15 @@
 import { useState, useRef, useMemo, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LockKey, Envelope, Sparkle, X, PenNib, Image as ImageIcon } from '@phosphor-icons/react';
+import { LockKey, Envelope, Sparkle, X, PenNib, Image as ImageIcon, Trash } from '@phosphor-icons/react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, Sparkles, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { sileo } from 'sileo';
 import { useAuthStore } from '../stores/authStore';
 import { Button } from '../components/ui/Button';
+import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
 import { CustomDatePicker } from '../components/ui/CustomDatePicker';
-import { useCapsules, useSealCapsule, useUploadMemory } from '../features/capsules/hooks/useCapsules';
+import { useCapsules, useDeleteCapsule, useSealCapsule, useUploadMemory } from '../features/capsules/hooks/useCapsules';
 import axiosClient from '../services/axiosClient';
 import logoIcon from '../assets/logo.png';
 
@@ -155,11 +156,14 @@ export default function Capsules() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [isSealing, setIsSealing] = useState(false);
+  const [deleteTargetCapsule, setDeleteTargetCapsule] = useState<any | null>(null);
+  const [isDeletingCapsule, setIsDeletingCapsule] = useState(false);
 
   const activeVaultId = useAuthStore(s => s.activeVaultId);
   const currentUser = useAuthStore(s => s.currentUser);
   const canContribute = currentUser?.role === 'ADMIN' || currentUser?.role === 'CONTRIBUTOR';
   const { data: capsules = [] } = useCapsules();
+  const deleteMutation = useDeleteCapsule();
   const sealMutation = useSealCapsule();
   const uploadMutation = useUploadMemory();
   const formatNumericDate = (value: string | Date) => {
@@ -175,6 +179,37 @@ export default function Capsules() {
     setActiveCapsule(capsule);
     setView('unlocking');
     setCeremonyStatus('idle');
+  };
+
+  const canDeleteCapsule = (capsule: any) => Boolean(currentUser?.id && capsule?.sealedById && capsule.sealedById === currentUser.id);
+
+  const requestDeleteCapsule = (capsule: any) => {
+    if (!canDeleteCapsule(capsule)) {
+      sileo.error({ title: 'Not Allowed', description: 'Only the author can delete this capsule.' });
+      return;
+    }
+
+    setDeleteTargetCapsule(capsule);
+  };
+
+  const confirmDeleteCapsule = async () => {
+    if (!deleteTargetCapsule || !activeVaultId) return;
+
+    setIsDeletingCapsule(true);
+    try {
+      await deleteMutation.mutateAsync(deleteTargetCapsule.id);
+      if (activeCapsule?.id === deleteTargetCapsule.id) {
+        setView('gallery');
+        setActiveCapsule(null);
+        setCeremonyStatus('idle');
+      }
+      setDeleteTargetCapsule(null);
+      sileo.success({ title: 'Capsule Deleted', description: 'The capsule was removed from the vault.' });
+    } catch (err) {
+      sileo.error({ title: 'Delete Failed', description: 'The capsule could not be deleted.' });
+    } finally {
+      setIsDeletingCapsule(false);
+    }
   };
 
   const handleCeremonyClick = async () => {
@@ -276,6 +311,19 @@ export default function Capsules() {
                 return canOpen ? (
                   <div key={capsule.id} className="bg-[var(--clr-soot)] border-2 border-[var(--clr-gold)] rounded-[var(--radius-lg)] p-8 text-center flex flex-col items-center justify-between min-h-[380px] relative overflow-hidden group shadow-[var(--shadow-gold)]">
                     <div className="absolute inset-0 bg-[var(--clr-gold)] opacity-[0.03] animate-pulse" />
+                    {canDeleteCapsule(capsule) && (
+                      <button
+                        type="button"
+                        aria-label={`Delete ${capsule.title}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          requestDeleteCapsule(capsule);
+                        }}
+                        className="absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(20,18,17,0.72)] text-[var(--clr-fog)] transition-colors hover:border-[rgba(139,58,58,0.5)] hover:bg-[rgba(139,58,58,0.18)] hover:text-[var(--clr-danger)]"
+                      >
+                        <Trash size={16} weight="bold" />
+                      </button>
+                    )}
                     <div
                       className="w-24 h-24 bg-[var(--clr-gold)] rounded-full flex items-center justify-center text-[var(--clr-charcoal)] mb-6 shadow-[0_0_40px_rgba(184,143,91,0.6)] cursor-pointer hover:scale-110 transition-transform duration-300 relative z-10"
                       onClick={() => triggerUnlock(capsule)}
@@ -292,6 +340,19 @@ export default function Capsules() {
                   </div>
                 ) : (
                   <div key={capsule.id} className="bg-[var(--clr-soot)] border border-[rgba(184,143,91,0.2)] rounded-[var(--radius-lg)] p-8 text-center flex flex-col items-center justify-between min-h-[380px] relative overflow-hidden group hover:border-[rgba(184,143,91,0.5)] transition-all duration-500 shadow-[var(--shadow-md)]">
+                    {canDeleteCapsule(capsule) && (
+                      <button
+                        type="button"
+                        aria-label={`Delete ${capsule.title}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          requestDeleteCapsule(capsule);
+                        }}
+                        className="absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(20,18,17,0.72)] text-[var(--clr-fog)] transition-colors hover:border-[rgba(139,58,58,0.5)] hover:bg-[rgba(139,58,58,0.18)] hover:text-[var(--clr-danger)]"
+                      >
+                        <Trash size={16} weight="bold" />
+                      </button>
+                    )}
                     <div className="w-24 h-24 bg-[var(--clr-danger)] rounded-full flex items-center justify-center text-white mb-6 shadow-[0_0_32px_rgba(139,58,58,0.4)] group-hover:scale-110 transition-transform duration-500">
                       <LockKey size={36} weight="fill" />
                     </div>
@@ -482,9 +543,21 @@ export default function Capsules() {
                  <p className="font-display text-[1.25rem] text-[var(--clr-linen)] tracking-widest uppercase">{activeCapsule?.title || 'Time Capsule'} &middot; SEALED {activeCapsule ? new Date(activeCapsule.unlock_date).getFullYear() : '----'}</p>
                </motion.div>
 
-               <button onClick={() => setView('gallery')} className="pointer-events-auto text-[var(--clr-fog)] hover:text-[var(--clr-gold)] transition-colors">
-                 <X size={32} weight="thin" />
-               </button>
+               <div className="pointer-events-auto flex items-center gap-3">
+                 {activeCapsule && canDeleteCapsule(activeCapsule) && (
+                   <button
+                     type="button"
+                     onClick={() => requestDeleteCapsule(activeCapsule)}
+                     className="flex h-11 w-11 items-center justify-center rounded-full border border-[rgba(184,143,91,0.25)] bg-[rgba(184,143,91,0.08)] text-[var(--clr-gold)] transition-colors hover:border-[rgba(139,58,58,0.5)] hover:bg-[rgba(139,58,58,0.18)] hover:text-[var(--clr-danger)]"
+                     aria-label="Delete capsule"
+                   >
+                     <Trash size={18} weight="bold" />
+                   </button>
+                 )}
+                 <button onClick={() => setView('gallery')} className="text-[var(--clr-fog)] hover:text-[var(--clr-gold)] transition-colors">
+                   <X size={32} weight="thin" />
+                 </button>
+               </div>
             </div>
 
             <AnimatePresence>
@@ -528,6 +601,27 @@ export default function Capsules() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ConfirmationDialog
+        open={Boolean(deleteTargetCapsule)}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingCapsule) {
+            setDeleteTargetCapsule(null);
+          }
+        }}
+        title="Delete this capsule?"
+        description={
+          deleteTargetCapsule
+            ? `This will permanently remove "${deleteTargetCapsule.title}" and its sealed contents from the vault. Only the author can do this.`
+            : 'This will permanently remove the capsule from the vault.'
+        }
+        confirmLabel="Delete capsule"
+        cancelLabel="Keep capsule"
+        eyebrow="Danger Zone"
+        variant="danger"
+        isLoading={isDeletingCapsule}
+        onConfirm={confirmDeleteCapsule}
+      />
     </div>
   );
 }

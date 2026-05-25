@@ -116,7 +116,11 @@ export default function RestorationSlider({ onClose, originalUrl, restoredUrl, t
           <button onClick={onDownload} className="flex items-center gap-2 px-6 py-3 rounded-full border border-[rgba(184,143,91,0.3)] text-[var(--clr-fog)] font-ui font-bold text-xs uppercase tracking-widest hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)] transition-colors">
             <Download size={16} /> Download
           </button>
-          <button onClick={onShare} className="flex items-center gap-2 px-6 py-3 rounded-full border border-[rgba(184,143,91,0.3)] text-[var(--clr-fog)] font-ui font-bold text-xs uppercase tracking-widest hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)] transition-colors">
+          <button
+            onClick={onShare}
+            disabled={!onShare}
+            className="flex items-center gap-2 px-6 py-3 rounded-full border border-[rgba(184,143,91,0.3)] text-[var(--clr-fog)] font-ui font-bold text-xs uppercase tracking-widest hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[rgba(184,143,91,0.3)] disabled:hover:text-[var(--clr-fog)]"
+          >
             <Share size={16} /> Share
           </button>
         </div>

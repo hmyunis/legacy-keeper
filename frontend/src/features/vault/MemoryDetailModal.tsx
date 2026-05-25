@@ -15,6 +15,7 @@ import axiosClient from '../../services/axiosClient';
 import { useAuthStore } from '../../stores/authStore';
 import { useFamilyTreeData } from '../family-tree/hooks/useFamilyTree';
 import { downloadArtifact } from '../../lib/files';
+import { buildMemoryShareUrl } from '../../lib/deepLinks';
 import { pollTask } from '../../lib/tasks';
 import { getPendingSuggestion, isAiGeneratedTag, isAiGeneratedTitle } from './lib/aiMarkers';
 import type { VaultMemory } from './types';
@@ -115,6 +116,7 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
   const [manualKinBusyId, setManualKinBusyId] = useState<string | null>(null);
 
   const { currentUser } = useAuthStore();
+  const activeVaultId = useAuthStore((s) => s.activeVaultId);
   const canContribute = currentUser?.role === 'ADMIN' || currentUser?.role === 'CONTRIBUTOR';
 
   const queryClient = useQueryClient();
@@ -170,7 +172,7 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
   };
 
   const handleShare = async () => {
-    const shareUrl = window.location.href;
+    const shareUrl = buildMemoryShareUrl(activeVaultId || currentUser?.vaultId, String(memory.id)) || window.location.href;
     const shareData = {
       title: memory.title || 'LegacyKeeper Artifact',
       text: memory.human_caption || memory.ai_caption || 'View this family memory in LegacyKeeper.',

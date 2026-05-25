@@ -12,6 +12,11 @@ class DetectedFaceSerializer(serializers.ModelSerializer):
         fields = ('id', 'person_id', 'person_name', 'person_avatar', 'bounding_box')
 
     def get_person_avatar(self, obj):
+        request = self.context.get('request')
+        if obj.person.avatar:
+            if request:
+                return request.build_absolute_uri(obj.person.avatar.url)
+            return obj.person.avatar.url
         if obj.person.avatar_url:
             return obj.person.avatar_url
         return f"https://ui-avatars.com/api/?name={obj.person.name.replace(' ', '+')}&background=B88F5B&color=fff"
@@ -24,6 +29,11 @@ class IdentifiedPersonSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'role', 'person_avatar')
 
     def get_person_avatar(self, obj):
+        request = self.context.get('request')
+        if obj.avatar:
+            if request:
+                return request.build_absolute_uri(obj.avatar.url)
+            return obj.avatar.url
         if obj.avatar_url:
             return obj.avatar_url
         return f"https://ui-avatars.com/api/?name={obj.name.replace(' ', '+')}&background=B88F5B&color=fff"
@@ -66,10 +76,11 @@ class MemorySerializer(serializers.ModelSerializer):
 class CapsuleSerializer(serializers.ModelSerializer):
     daysRemaining = serializers.SerializerMethodField()
     memory_urls = serializers.SerializerMethodField()
+    sealedById = serializers.SerializerMethodField()
 
     class Meta:
         model = Capsule
-        fields = ('id', 'title', 'unlock_date', 'status', 'daysRemaining', 'message', 'memory_urls')
+        fields = ('id', 'title', 'unlock_date', 'status', 'daysRemaining', 'message', 'memory_urls', 'sealedById')
 
     def get_daysRemaining(self, obj):
         from django.utils import timezone
@@ -82,6 +93,9 @@ class CapsuleSerializer(serializers.ModelSerializer):
         if obj.status == 'LOCKED':
             memories = memories[:1]
         return [request.build_absolute_uri(m.original_file.url) for m in memories]
+
+    def get_sealedById(self, obj):
+        return str(obj.sealed_by_id) if obj.sealed_by_id else None
 
 class MemoryCollectionSerializer(serializers.ModelSerializer):
     memory_count = serializers.SerializerMethodField()

@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useGovernanceActions } from '../features/governance/hooks/useGovernance';
 import axiosClient from '../services/axiosClient';
 import { getAccessibleVaults, getPostInvitationRoute } from '../lib/authRouting';
+import { parseRouteTarget } from '../lib/deepLinks';
 import { sileo } from 'sileo';
 
 export default function InvitationInbox() {
@@ -42,7 +43,8 @@ export default function InvitationInbox() {
     if (pendingOnly.length === 0) {
       const nextRoute = getPostInvitationRoute(currentUser, redirectTo);
       if (nextRoute !== '/invitation-inbox') {
-        void navigate({ to: nextRoute as any });
+        const target = parseRouteTarget(nextRoute);
+        void navigate({ to: target.to as any, search: target.search as any });
       }
     }
   }, [currentUser, navigate, pendingOnly.length, redirectTo]);
@@ -78,7 +80,8 @@ export default function InvitationInbox() {
 
       const nextRoute = getPostInvitationRoute(refreshed as any, redirectTo);
       if (nextRoute !== '/invitation-inbox') {
-        void navigate({ to: nextRoute as any });
+        const target = parseRouteTarget(nextRoute);
+        void navigate({ to: target.to as any, search: target.search as any });
       } else if (refreshedVaults.length === 0) {
         void navigate({ to: '/onboarding' });
       }
@@ -174,7 +177,13 @@ export default function InvitationInbox() {
                 GO TO ONBOARDING <ArrowRight size={16} />
               </Button>
               {accessibleVaults.length > 0 && (
-                <Button variant="ghost" onClick={() => navigate({ to: getPostInvitationRoute(currentUser, redirectTo) as any })}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    const target = parseRouteTarget(getPostInvitationRoute(currentUser, redirectTo));
+                    void navigate({ to: target.to as any, search: target.search as any });
+                  }}
+                >
                   CONTINUE
                 </Button>
               )}
