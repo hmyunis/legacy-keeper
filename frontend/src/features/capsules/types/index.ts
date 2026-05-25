@@ -6,4 +6,8 @@ export interface Capsule {
   daysRemaining: number;
   message?: string;
   sealedById?: string | null;
+  is_public?: boolean;
+  targetUsers?: { id: string; name: string; email: string }[];
+  addedToVault?: boolean;
+  memory_urls?: string[];
 }

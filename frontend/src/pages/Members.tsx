@@ -1,25 +1,30 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UsersThree, UserPlus, LinkBreak, ShieldCheck, ArrowsMerge } from '@phosphor-icons/react';
+import { UsersThree, UserPlus, LinkBreak, ShieldCheck, ArrowsMerge, LinkSimple, ShareNetwork, Trash, X } from '@phosphor-icons/react';
 import { sileo } from 'sileo';
 import { Button } from '../components/ui/Button';
 import { PlatformSelect } from '../components/ui/Select';
-import { useMembers, useInvitations, usePacts, usePactHistory, useGovernanceActions } from '../features/governance/hooks/useGovernance';
+import { useMembers, useInvitations, useInviteLinks, usePacts, usePactHistory, useGovernanceActions } from '../features/governance/hooks/useGovernance';
 import { useAuthStore } from '../stores/authStore';
 
 export default function Members() {
   const [showInvite, setShowInvite] = useState(false);
+  const [showInviteLink, setShowInviteLink] = useState(false);
   const [showPactModal, setShowPactModal] = useState(false);
   const [inviteRole, setInviteRole] = useState('VIEWER');
+  const [inviteLinkRole, setInviteLinkRole] = useState('VIEWER');
+  const [inviteLinkMaxUses, setInviteLinkMaxUses] = useState('');
+  const [inviteLinkExpiresAt, setInviteLinkExpiresAt] = useState('');
   const [pactError, setPactError] = useState<string | null>(null);
   const currentUser = useAuthStore((s) => s.currentUser);
   const canAdmin = currentUser?.role === 'ADMIN';
 
   const { data: members = [] } = useMembers();
   const { data: invitations = [] } = useInvitations(canAdmin);
+  const { data: inviteLinks = [] } = useInviteLinks(canAdmin);
   const { data: allPacts = [], isLoading: isLoadingPacts } = usePacts();
   const { data: pactHistory = [] } = usePactHistory();
-  const { inviteMember, removeMember, requestPact, actOnPact, revokeInvitation } = useGovernanceActions();
+  const { inviteMember, removeMember, requestPact, actOnPact, revokeInvitation, createInviteLink, revokeInviteLink, deleteInviteLink } = useGovernanceActions();
 
   const incomingPacts = allPacts.filter((p: any) => p.is_incoming);
   const outgoingPacts = allPacts.filter((p: any) => !p.is_incoming);
@@ -35,6 +40,67 @@ export default function Members() {
       setPactError(null);
     }
   }, [showPactModal]);
+
+  const buildInviteLinkUrl = (token: string) => `${window.location.origin}/join/${token}`;
+
+  const getInviteLinkStatus = (link: any) => {
+    if (link.isDeleted || link.deletedAt) return 'DELETED';
+    if (link.isRevoked || link.revokedAt) return 'REVOKED';
+    if (link.isExpired) return 'EXPIRED';
+    if (link.maxUses && link.usesCount >= link.maxUses) return 'FULL';
+    return 'ACTIVE';
+  };
+
+  const handleShareInviteLink = async (link: any) => {
+    const url = buildInviteLinkUrl(link.token);
+    const shareData = {
+      title: 'LegacyKeeper vault invite',
+      text: `Join ${link.vaultName || 'my vault'} on LegacyKeeper.`,
+      url,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(url);
+        sileo.success({ title: 'Link Copied', description: 'Invite link copied to clipboard.' });
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        try {
+          await navigator.clipboard.writeText(url);
+          sileo.success({ title: 'Link Copied', description: 'Sharing was unavailable, so the link was copied.' });
+        } catch {
+          sileo.error({ title: 'Share Failed', description: 'Could not open sharing options.' });
+        }
+      }
+    }
+  };
+
+  const handleInviteLinkSubmit = async (e: any) => {
+    e.preventDefault();
+    const maxUses = inviteLinkMaxUses ? Number(inviteLinkMaxUses) : undefined;
+    const expiresAt = inviteLinkExpiresAt ? new Date(inviteLinkExpiresAt).toISOString() : undefined;
+
+    await sileo.promise(createInviteLink.mutateAsync({
+      role: inviteLinkRole,
+      maxUses,
+      expiresAt,
+    }), {
+      loading: { title: 'Generating Link...' },
+      success: () => {
+        setShowInviteLink(false);
+        setInviteLinkMaxUses('');
+        setInviteLinkExpiresAt('');
+        return { title: 'Invite Link Ready', description: 'Use the Share button when you want to send it.' };
+      },
+      error: (err: any) => ({
+        title: 'Failed to Create Link',
+        description: err?.response?.data?.error || 'Could not generate invite link.',
+      }),
+    });
+  };
 
   const handlePactResponse = async (pactId: string, action: 'ACCEPT' | 'REJECT', mode: 'incoming' | 'outgoing') => {
     await sileo.promise(actOnPact.mutateAsync({ pactId, action }), {
@@ -112,6 +178,22 @@ export default function Members() {
     });
   };
 
+  const handleRevokeInviteLink = (link: any) => {
+    sileo.promise(revokeInviteLink.mutateAsync(link.id), {
+      loading: { title: 'Revoking Link...' },
+      success: { title: 'Invite Link Revoked', description: 'This link can no longer be used.' },
+      error: { title: 'Failed to Revoke Link' },
+    });
+  };
+
+  const handleDeleteInviteLink = (link: any) => {
+    sileo.promise(deleteInviteLink.mutateAsync(link.id), {
+      loading: { title: 'Deleting Link...' },
+      success: { title: 'Invite Link Deleted', description: 'The link was removed from governance.' },
+      error: { title: 'Failed to Delete Link' },
+    });
+  };
+
   return (
     <div className="min-h-screen zone-light py-16 px-[clamp(24px,5vw,80px)]">
       <div className="max-w-[1000px] mx-auto">
@@ -173,6 +255,62 @@ export default function Members() {
               })}
             </div>
           </div>
+        )}
+
+        {canAdmin && (
+          <section className="mb-8 p-6 bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-2xl">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
+              <div>
+                <h4 className="font-ui text-[10px] font-black text-[var(--clr-dust)] uppercase tracking-[0.2em]">Invite Links</h4>
+                <p className="mt-1 font-ui text-[12px] text-[var(--clr-dust)]">Bulk-add kin with optional usage and expiry controls.</p>
+              </div>
+              <Button variant="ghost" className="py-2 px-4 text-[10px]" onClick={() => setShowInviteLink(true)}>
+                <LinkSimple size={16} /> Generate Link
+              </Button>
+            </div>
+
+            {inviteLinks.length === 0 ? (
+              <p className="font-ui text-sm text-[var(--clr-dust)]">No invite links have been generated yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {inviteLinks.map((link: any) => {
+                  const status = getInviteLinkStatus(link);
+                  const url = buildInviteLinkUrl(link.token);
+                  return (
+                    <div key={link.id} className="bg-white/50 p-4 rounded-xl">
+                      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <span className={`font-ui text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border ${status === 'ACTIVE' ? 'bg-[var(--clr-gold-muted)] text-[var(--clr-gold-dark)] border-[var(--clr-gold)]' : 'bg-[var(--clr-paper)] text-[var(--clr-dust)] border-[var(--clr-aged)]'}`}>
+                              {status}
+                            </span>
+                            <span className="font-ui text-[10px] font-black text-[var(--clr-dust)] uppercase tracking-widest">{link.role}</span>
+                          </div>
+                          <p className="truncate font-ui text-[12px] text-[var(--clr-ink)]">{url}</p>
+                          <p className="mt-1 font-ui text-[11px] text-[var(--clr-dust)] uppercase tracking-widest">
+                            Uses: {link.usesCount || 0}{link.maxUses ? ` / ${link.maxUses}` : ' / unlimited'} · {link.expiresAt ? `Expires ${new Date(link.expiresAt).toLocaleString()}` : 'No expiry'}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button variant="ghost" className="py-2 px-4 text-[10px]" onClick={() => handleShareInviteLink(link)}>
+                            <ShareNetwork size={16} /> Share
+                          </Button>
+                          {status === 'ACTIVE' && (
+                            <Button variant="danger" className="py-2 px-4 text-[10px]" onClick={() => handleRevokeInviteLink(link)}>
+                              <X size={16} /> Revoke
+                            </Button>
+                          )}
+                          <Button variant="danger" className="py-2 px-4 text-[10px]" onClick={() => handleDeleteInviteLink(link)}>
+                            <Trash size={16} /> Delete
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         )}
 
         <section className="mb-12 p-6 bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-2xl">
@@ -293,6 +431,46 @@ export default function Members() {
                   />
                   <Button variant="primary" type="submit" className="w-full" disabled={inviteMember.isPending}>
                     {inviteMember.isPending ? 'SENDING...' : 'SEND INVITATION'}
+                  </Button>
+                </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showInviteLink && canAdmin && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setShowInviteLink(false)} />
+              <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="relative w-full max-w-lg bg-[var(--clr-parchment)] border-2 border-[var(--clr-gold)] rounded-[var(--radius-lg)] p-10 shadow-2xl">
+                <h2 className="font-display text-2xl uppercase tracking-widest mb-2">Generate Invite Link</h2>
+                <p className="font-ui text-sm text-[var(--clr-dust)] mb-6">Leave usage and expiry blank for an unlimited link.</p>
+                <form onSubmit={handleInviteLinkSubmit} className="space-y-4">
+                  <PlatformSelect
+                    name="role"
+                    value={inviteLinkRole}
+                    onValueChange={setInviteLinkRole}
+                    options={[
+                      { value: 'VIEWER', label: 'Viewer (See only)' },
+                      { value: 'CONTRIBUTOR', label: 'Contributor (Upload & Label)' },
+                    ]}
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    value={inviteLinkMaxUses}
+                    onChange={(e) => setInviteLinkMaxUses(e.target.value)}
+                    placeholder="Max joins (optional)"
+                    className="w-full bg-[var(--clr-linen)] border border-[var(--clr-aged)] rounded-full px-6 py-4 outline-none focus:border-[var(--clr-gold)]"
+                  />
+                  <input
+                    type="datetime-local"
+                    value={inviteLinkExpiresAt}
+                    onChange={(e) => setInviteLinkExpiresAt(e.target.value)}
+                    className="w-full bg-[var(--clr-linen)] border border-[var(--clr-aged)] rounded-full px-6 py-4 outline-none focus:border-[var(--clr-gold)]"
+                  />
+                  <Button variant="primary" type="submit" className="w-full" disabled={createInviteLink.isPending}>
+                    {createInviteLink.isPending ? 'GENERATING...' : 'GENERATE & SHARE LINK'}
                   </Button>
                 </form>
               </motion.div>

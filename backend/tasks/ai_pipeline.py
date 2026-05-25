@@ -7,7 +7,7 @@ import requests
 import tempfile
 from core.vapid import send_web_push
 from io import BytesIO
-from PIL import Image, ExifTags, ImageOps
+from PIL import Image, ImageOps
 import imagehash
 import face_recognition
 import numpy as np
@@ -33,6 +33,7 @@ from tasks.ollama_client import generate_with_ollama
 from vaults.models import Memory
 from lineage.models import Person, PersonFaceEmbedding
 from lineage.avatar_utils import save_person_avatar_from_face_image
+from tasks.metadata_extractor import extract_capture_metadata, json_safe
 
 logger = logging.getLogger(__name__)
 
@@ -549,29 +550,39 @@ def process_memory_task(self, memory_id):
         media_kind = media_context["media_kind"]
         warnings = media_context["warnings"]
 
-        extracted_year = ""
-        tech_meta = {}
+        capture_metadata = extract_capture_metadata(memory, media_kind)
+        extracted_year = capture_metadata["year"]
+        if capture_metadata["date"]:
+            memory.date = capture_metadata["date"]
+        if extracted_year:
+            memory.year = extracted_year
+        if capture_metadata["location"] and not memory.location:
+            memory.location = capture_metadata["location"][:255]
+
+        embedded_exif = capture_metadata["exif"].get("embedded_exif") or {}
+        tech_meta = {
+            key: str(embedded_exif[key])
+            for key in ["Make", "Model", "LensModel", "ExposureTime", "FNumber"]
+            if embedded_exif.get(key) not in (None, "")
+        }
         is_grayscale = bool(primary_image and primary_image.mode == 'L')
-        exif_data = primary_image._getexif() if primary_image and hasattr(primary_image, "_getexif") else None
-        if exif_data:
-            for tag, value in exif_data.items():
-                decoded = ExifTags.TAGS.get(tag, tag)
-                if decoded == "DateTimeOriginal" and isinstance(value, str):
-                    extracted_year = value[:4]
-                    memory.year = extracted_year
-                if decoded in ["Make", "Model", "LensModel", "ExposureTime", "FNumber"]:
-                    tech_meta[decoded] = str(value)
 
         previous_ai_meta = {
             key: value for key, value in previous_exif.items()
             if key.startswith("ai_")
         }
-        memory.exif_json = {**previous_ai_meta, **tech_meta, **media_context["metadata"]}
+        memory.exif_json = {
+            **previous_ai_meta,
+            **tech_meta,
+            **media_context["metadata"],
+            **capture_metadata["exif"],
+        }
         memory.exif_json['ai_media_type'] = media_kind
         memory.exif_json['ai_processing_status'] = 'processing'
         if warnings:
             memory.exif_json['ai_processing_warnings'] = warnings
         memory.exif_json['filesize'] = memory.original_file.size
+        memory.exif_json = json_safe(memory.exif_json)
 
         visual_tags = []
         object_tags = []
@@ -751,6 +762,7 @@ def process_memory_task(self, memory_id):
         put_suggestion(memory, "description", generated_description)
         put_suggestion(memory, "tags", ai_generated_tags)
 
+        memory.exif_json = json_safe(memory.exif_json)
         memory.save()
 
         for member in memory.vault.members.all():
@@ -772,6 +784,7 @@ def process_memory_task(self, memory_id):
                 "ai_processing_status": "failed",
                 "ai_processing_error": str(e)[:500],
             }
+            memory.exif_json = json_safe(memory.exif_json)
             memory.save(update_fields=["exif_json"])
         except Exception:
             logger.exception(f"Could not persist AI failure state for memory {memory_id}")

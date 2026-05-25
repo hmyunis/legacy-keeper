@@ -21,6 +21,23 @@ export const useInvitations = (enabled = true) => {
   });
 };
 
+export const useInviteLinks = (enabled = true) => {
+  const vaultId = useAuthStore(s => s.activeVaultId);
+  return useQuery({
+    queryKey: ['inviteLinks', vaultId],
+    queryFn: () => governanceService.getInviteLinks(vaultId!),
+    enabled: !!vaultId && enabled,
+  });
+};
+
+export const useInviteLink = (token?: string) => {
+  return useQuery({
+    queryKey: ['inviteLink', token],
+    queryFn: () => governanceService.getInviteLink(token!),
+    enabled: !!token,
+  });
+};
+
 export const usePacts = (enabled = true) => {
   const vaultId = useAuthStore(s => s.activeVaultId);
   return useQuery({
@@ -80,6 +97,41 @@ export const useGovernanceActions = () => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invitations'] }),
   });
 
+  const createInviteLink = useMutation({
+    mutationFn: (data: any) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return governanceService.createInviteLink(vaultId, data);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['inviteLinks'] }),
+  });
+
+  const revokeInviteLink = useMutation({
+    mutationFn: (linkId: string) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return governanceService.revokeInviteLink(vaultId, linkId);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['inviteLinks'] }),
+  });
+
+  const deleteInviteLink = useMutation({
+    mutationFn: (linkId: string) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error("Vault ID missing");
+      return governanceService.deleteInviteLink(vaultId, linkId);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['inviteLinks'] }),
+  });
+
+  const claimInviteLink = useMutation({
+    mutationFn: (token: string) => governanceService.claimInviteLink(token),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardSummary'] });
+    },
+  });
+
   const respondToInvitation = useMutation({
     mutationFn: ({ vaultId, invitationId, action }: { vaultId: string; invitationId: string; action: 'ACCEPT' | 'REJECT' }) => {
       return governanceService.respondToInvitation(vaultId, invitationId, action);
@@ -122,5 +174,17 @@ export const useGovernanceActions = () => {
     },
   });
 
-  return { inviteMember, removeMember, requestPact, actOnPact, revokeInvitation, respondToInvitation, exportLogs };
+  return {
+    inviteMember,
+    removeMember,
+    requestPact,
+    actOnPact,
+    revokeInvitation,
+    respondToInvitation,
+    createInviteLink,
+    revokeInviteLink,
+    deleteInviteLink,
+    claimInviteLink,
+    exportLogs,
+  };
 };

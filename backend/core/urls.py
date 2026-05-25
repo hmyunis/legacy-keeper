@@ -24,9 +24,13 @@ urlpatterns = [
     # Governance
     path('vaults/<uuid:vault_id>/members/', views.VaultMembersListView.as_view(), name='vault-members'),
     path('vaults/<uuid:vault_id>/members/invite/', views.InviteMemberView.as_view(), name='invite-member'),
+    path('vaults/<uuid:vault_id>/members/invite-links/', views.VaultInviteLinkListCreateView.as_view(), name='vault-invite-links'),
+    path('vaults/<uuid:vault_id>/members/invite-links/<uuid:link_id>/', views.VaultInviteLinkDetailView.as_view(), name='vault-invite-link-detail'),
     path('vaults/<uuid:vault_id>/members/invitations/', views.VaultInvitationsListView.as_view(), name='vault-invitations'),
     path('vaults/<uuid:vault_id>/members/invitations/<uuid:invitation_id>/', views.VaultInvitationDetailView.as_view(), name='vault-invitation-detail'),
     path('vaults/<uuid:vault_id>/members/<int:member_id>/', views.RemoveMemberView.as_view(), name='remove-member'),
+    path('invite-links/<str:token>/', views.PublicInviteLinkView.as_view(), name='public-invite-link'),
+    path('invite-links/<str:token>/claim/', views.ClaimInviteLinkView.as_view(), name='claim-invite-link'),
     path('vaults/<uuid:vault_id>/pacts/', views.LineagePactRequestView.as_view(), name='lineage-pact'),
     path('vaults/<uuid:vault_id>/pacts/incoming/', views.LineagePactListView.as_view(), name='pact-list'),
     path('vaults/<uuid:vault_id>/pacts/history/', views.LineagePactHistoryView.as_view(), name='pact-history'),

@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
-from .models import Vault, VaultMember, ActionLog, LineagePact, VaultInvitation
+from django.utils import timezone
+from .models import Vault, VaultMember, ActionLog, LineagePact, VaultInvitation, VaultInviteLink
 
 User = get_user_model()
 
@@ -91,13 +92,14 @@ class VaultSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'primary_hue', 'grain_enabled', 'created_at')
 
 class VaultMemberSerializer(serializers.ModelSerializer):
+    userId = serializers.CharField(source='user.id', read_only=True)
     name = serializers.CharField(source='user.full_name', read_only=True)
     email = serializers.CharField(source='user.email', read_only=True)
     avatar = serializers.SerializerMethodField()
 
     class Meta:
         model = VaultMember
-        fields = ('id', 'name', 'email', 'role', 'avatar', 'joined_at')
+        fields = ('id', 'userId', 'name', 'email', 'role', 'avatar', 'joined_at')
 
     def get_avatar(self, obj):
         name_formatted = obj.user.full_name.replace(' ', '+')
@@ -148,3 +150,41 @@ class VaultInvitationSerializer(serializers.ModelSerializer):
             'rejectedAt',
             'revokedAt',
         )
+
+
+class VaultInviteLinkSerializer(serializers.ModelSerializer):
+    vaultId = serializers.CharField(source='vault.id', read_only=True)
+    vaultName = serializers.CharField(source='vault.name', read_only=True)
+    createdByName = serializers.CharField(source='created_by.full_name', read_only=True)
+    expiresAt = serializers.DateTimeField(source='expires_at', read_only=True)
+    revokedAt = serializers.DateTimeField(source='revoked_at', read_only=True)
+    deletedAt = serializers.DateTimeField(source='deleted_at', read_only=True)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    maxUses = serializers.IntegerField(source='max_uses', read_only=True)
+    usesCount = serializers.IntegerField(source='uses_count', read_only=True)
+    isExpired = serializers.SerializerMethodField()
+    isRevoked = serializers.BooleanField(source='is_revoked', read_only=True)
+    isDeleted = serializers.BooleanField(source='is_deleted', read_only=True)
+
+    class Meta:
+        model = VaultInviteLink
+        fields = (
+            'id',
+            'token',
+            'role',
+            'vaultId',
+            'vaultName',
+            'createdByName',
+            'maxUses',
+            'usesCount',
+            'expiresAt',
+            'revokedAt',
+            'deletedAt',
+            'createdAt',
+            'isExpired',
+            'isRevoked',
+            'isDeleted',
+        )
+
+    def get_isExpired(self, obj):
+        return bool(obj.expires_at and obj.expires_at <= timezone.now())

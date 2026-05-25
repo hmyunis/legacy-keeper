@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.utils import timezone
 from .models import Memory, Capsule, MemoryCollection
 from lineage.models import Person, PersonFaceEmbedding
 
@@ -45,10 +46,11 @@ class MemorySerializer(serializers.ModelSerializer):
     detected_faces = DetectedFaceSerializer(many=True, read_only=True)
     identified_people = IdentifiedPersonSerializer(many=True, read_only=True)
     is_indexed = serializers.SerializerMethodField()
+    capturedAt = serializers.SerializerMethodField()
 
     class Meta:
         model = Memory
-        fields = ('id', 'url', 'restoredUrl', 'title', 'location', 'date', 'year', 'cluster_name', 'ai_caption', 'human_caption', 'tags', 'people', 'detected_faces', 'identified_people', 'exif_json', 'ai_suggestions', 'is_reviewed', 'is_indexed', 'is_favorite')
+        fields = ('id', 'url', 'restoredUrl', 'title', 'location', 'date', 'year', 'capturedAt', 'cluster_name', 'ai_caption', 'human_caption', 'tags', 'people', 'detected_faces', 'identified_people', 'exif_json', 'ai_suggestions', 'is_reviewed', 'is_indexed', 'is_favorite')
 
     def validate(self, attrs):
         if 'date' in attrs:
@@ -73,14 +75,32 @@ class MemorySerializer(serializers.ModelSerializer):
     def get_is_indexed(self, obj):
         return obj.clip_embedding is not None
 
+    def get_capturedAt(self, obj):
+        exif = obj.exif_json or {}
+        return exif.get('capture_datetime') or exif.get('capture_date') or None
+
 class CapsuleSerializer(serializers.ModelSerializer):
     daysRemaining = serializers.SerializerMethodField()
     memory_urls = serializers.SerializerMethodField()
     sealedById = serializers.SerializerMethodField()
+    targetUsers = serializers.SerializerMethodField()
+    addedToVault = serializers.BooleanField(source='added_to_vault', read_only=True)
 
     class Meta:
         model = Capsule
-        fields = ('id', 'title', 'unlock_date', 'status', 'daysRemaining', 'message', 'memory_urls', 'sealedById')
+        fields = (
+            'id',
+            'title',
+            'unlock_date',
+            'status',
+            'daysRemaining',
+            'message',
+            'memory_urls',
+            'sealedById',
+            'is_public',
+            'targetUsers',
+            'addedToVault',
+        )
 
     def get_daysRemaining(self, obj):
         from django.utils import timezone
@@ -90,12 +110,22 @@ class CapsuleSerializer(serializers.ModelSerializer):
     def get_memory_urls(self, obj):
         request = self.context.get('request')
         memories = obj.memories.all()
-        if obj.status == 'LOCKED':
+        if obj.status == 'LOCKED' or obj.unlock_date > timezone.now():
             memories = memories[:1]
         return [request.build_absolute_uri(m.original_file.url) for m in memories]
 
     def get_sealedById(self, obj):
         return str(obj.sealed_by_id) if obj.sealed_by_id else None
+
+    def get_targetUsers(self, obj):
+        return [
+            {
+                'id': str(user.id),
+                'name': user.full_name,
+                'email': user.email,
+            }
+            for user in obj.target_users.all()
+        ]
 
 class MemoryCollectionSerializer(serializers.ModelSerializer):
     memory_count = serializers.SerializerMethodField()

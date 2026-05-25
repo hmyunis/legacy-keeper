@@ -30,6 +30,28 @@ export const useDeleteCapsule = () => {
   });
 };
 
+export const useOpenCapsule = () => {
+  const queryClient = useQueryClient();
+  const vaultId = useAuthStore(s => s.activeVaultId);
+  return useMutation({
+    mutationFn: (capsuleId: string) => capsulesService.openCapsule(vaultId!, capsuleId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['capsules'] }),
+  });
+};
+
+export const useAddCapsuleToVault = () => {
+  const queryClient = useQueryClient();
+  const vaultId = useAuthStore(s => s.activeVaultId);
+  return useMutation({
+    mutationFn: (capsuleId: string) => capsulesService.addCapsuleToVault(vaultId!, capsuleId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['capsules'] });
+      queryClient.invalidateQueries({ queryKey: ['filteredMemories'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardSummary'] });
+    },
+  });
+};
+
 export const useUploadMemory = () => {
   const vaultId = useAuthStore(s => s.activeVaultId);
   return useMutation({

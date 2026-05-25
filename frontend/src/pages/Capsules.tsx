@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LockKey, Envelope, Sparkle, X, PenNib, Image as ImageIcon, Trash } from '@phosphor-icons/react';
+import { LockKey, Envelope, Sparkle, X, PenNib, Image as ImageIcon, Trash, UsersThree, Eye, Archive } from '@phosphor-icons/react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, Sparkles, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
@@ -9,8 +9,8 @@ import { useAuthStore } from '../stores/authStore';
 import { Button } from '../components/ui/Button';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
 import { CustomDatePicker } from '../components/ui/CustomDatePicker';
-import { useCapsules, useDeleteCapsule, useSealCapsule, useUploadMemory } from '../features/capsules/hooks/useCapsules';
-import axiosClient from '../services/axiosClient';
+import { useAddCapsuleToVault, useCapsules, useDeleteCapsule, useOpenCapsule, useSealCapsule, useUploadMemory } from '../features/capsules/hooks/useCapsules';
+import { useMembers } from '../features/governance/hooks/useGovernance';
 import logoIcon from '../assets/logo.png';
 
 const ShatteringSeal = ({ isShattered }: { isShattered: boolean }) => {
@@ -153,6 +153,8 @@ export default function Capsules() {
   const [capsuleTitle, setCapsuleTitle] = useState('');
   const [unlockDate, setUnlockDate] = useState('');
   const [capsuleMessage, setCapsuleMessage] = useState('');
+  const [targetMode, setTargetMode] = useState<'everyone' | 'specific'>('everyone');
+  const [targetUserIds, setTargetUserIds] = useState<string[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [isSealing, setIsSealing] = useState(false);
@@ -163,8 +165,11 @@ export default function Capsules() {
   const currentUser = useAuthStore(s => s.currentUser);
   const canContribute = currentUser?.role === 'ADMIN' || currentUser?.role === 'CONTRIBUTOR';
   const { data: capsules = [] } = useCapsules();
+  const { data: members = [] } = useMembers();
   const deleteMutation = useDeleteCapsule();
   const sealMutation = useSealCapsule();
+  const openMutation = useOpenCapsule();
+  const addToVaultMutation = useAddCapsuleToVault();
   const uploadMutation = useUploadMemory();
   const formatNumericDate = (value: string | Date) => {
     const date = typeof value === 'string' ? new Date(value) : value;
@@ -182,6 +187,23 @@ export default function Capsules() {
   };
 
   const canDeleteCapsule = (capsule: any) => Boolean(currentUser?.id && capsule?.sealedById && capsule.sealedById === currentUser.id);
+  const selectableRecipients = members.filter((member: any) => member.userId !== currentUser?.id);
+
+  const resetCreateWizard = () => {
+    setView('gallery');
+    setCreateStep(1);
+    setCapsuleTitle('');
+    setUnlockDate('');
+    setCapsuleMessage('');
+    setSelectedFiles([]);
+    setPreviewUrls([]);
+    setTargetMode('everyone');
+    setTargetUserIds([]);
+  };
+
+  const toggleTargetUser = (userId: string) => {
+    setTargetUserIds((prev) => prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]);
+  };
 
   const requestDeleteCapsule = (capsule: any) => {
     if (!canDeleteCapsule(capsule)) {
@@ -218,7 +240,8 @@ export default function Capsules() {
       setTimeout(async () => {
         setCeremonyStatus('opened');
         if (activeCapsule) {
-          await axiosClient.post(`/vaults/${activeVaultId}/capsules/${activeCapsule.id}/open/`);
+          const opened = await openMutation.mutateAsync(activeCapsule.id);
+          setActiveCapsule(opened);
         }
         sileo.success({ title: "Seal Broken" });
       }, 600);
@@ -244,23 +267,35 @@ export default function Capsules() {
         title: capsuleTitle || "Untitled Capsule",
         unlock_date: new Date(unlockDate).toISOString(),
         message: capsuleMessage,
-        memory_ids: memoryIds
+        memory_ids: memoryIds,
+        target_user_ids: targetMode === 'specific' ? targetUserIds : [],
       });
 
       setCreateStep(4);
 
       setTimeout(() => {
         sileo.success({ title: "Artifacts Isolated", description: "Contents are now cryptographically locked." });
-        setView('gallery');
-        setCreateStep(1);
-        setSelectedFiles([]);
-        setPreviewUrls([]);
+        resetCreateWizard();
       }, 5000);
     } catch (err) {
       sileo.error({ title: "Seal Failed", description: "The timeline could not be secured." });
     } finally {
       setIsSealing(false);
     }
+  };
+
+  const handleAddCapsuleToVault = async () => {
+    if (!activeCapsule) return;
+    const updated = await sileo.promise(addToVaultMutation.mutateAsync(activeCapsule.id), {
+      loading: { title: "Adding Contents..." },
+      success: { title: "Added to Review", description: "Capsule contents are now available in the vault review queue." },
+      error: (err: any) => ({
+        title: "Could Not Add Contents",
+        description: err?.response?.data?.error || "The capsule contents could not be added.",
+      }),
+    });
+    setActiveCapsule(updated);
+    setView('gallery');
   };
 
   const handleBrowseUpload = () => {
@@ -305,7 +340,7 @@ export default function Capsules() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {capsules.map((capsule: any) => {
                 const isLapsed = new Date(capsule.unlock_date) <= new Date() && capsule.status === 'LOCKED';
-                const canOpen = capsule.status === 'OPENED' || isLapsed;
+                const canOpen = capsule.status === 'OPENED' || capsule.status === 'READY' || isLapsed;
                 const daysRemaining = Math.max(0, Math.ceil((new Date(capsule.unlock_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
 
                 return canOpen ? (
@@ -375,28 +410,29 @@ export default function Capsules() {
           <motion.div
             key="create"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-[var(--clr-parchment)] overflow-hidden flex flex-col zone-light"
+            className="fixed inset-0 z-[100] bg-[rgba(20,18,17,0.72)] overflow-y-auto p-4 sm:p-6 lg:p-10 zone-light"
           >
-            <div className="flex items-center justify-between px-[clamp(24px,5vw,80px)] py-6 border-b border-[var(--clr-aged)] bg-[rgba(247,244,239,0.9)] backdrop-blur-md relative z-20">
-              <div>
-                 <h2 className="font-display font-bold text-[1.5rem] text-[var(--clr-ink)] uppercase tracking-widest leading-none">Capsule Ceremony</h2>
-                 <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-gold-dark)] font-bold mt-1">Step {createStep} of 3</p>
+            <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-[1180px] flex-col overflow-hidden rounded-[32px] border border-[var(--clr-aged)] bg-[var(--clr-parchment)] shadow-[0_30px_120px_rgba(0,0,0,0.45)] sm:min-h-[calc(100vh-3rem)] lg:min-h-[calc(100vh-5rem)]">
+              <div className="flex items-center justify-between gap-4 px-5 py-4 sm:px-8 border-b border-[var(--clr-aged)] bg-[rgba(247,244,239,0.92)] backdrop-blur-md relative z-20">
+                <div>
+                   <h2 className="font-display font-bold text-[1.25rem] sm:text-[1.5rem] text-[var(--clr-ink)] uppercase tracking-widest leading-none">Capsule Ceremony</h2>
+                   <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-gold-dark)] font-bold mt-1">Step {Math.min(createStep, 2)} of 2</p>
+                </div>
+                <button onClick={resetCreateWizard} className="w-11 h-11 rounded-full border border-[var(--clr-aged)] text-[var(--clr-ink)] flex items-center justify-center hover:bg-[var(--clr-gold)] hover:text-white transition-colors shrink-0">
+                  <X size={20} />
+                </button>
               </div>
-              <button onClick={() => setView('gallery')} className="w-12 h-12 rounded-full border border-[var(--clr-aged)] text-[var(--clr-ink)] flex items-center justify-center hover:bg-[var(--clr-gold)] hover:text-white transition-colors">
-                <X size={20} />
-              </button>
-            </div>
 
             <div className="flex-1 relative overflow-y-auto">
               <AnimatePresence mode="wait">
 
                 {createStep === 1 && (
-                  <motion.div key="s1" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className="max-w-[1000px] mx-auto py-12 px-6 flex flex-col lg:flex-row gap-12 h-full">
-                    <div className="w-full lg:w-[40%] space-y-8">
+                  <motion.div key="s1" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className="mx-auto grid w-full gap-6 p-5 sm:p-8 lg:grid-cols-[0.9fr_1.1fr]">
+                    <div className="space-y-6">
                       <div className="w-16 h-16 rounded-full border-[2px] border-[var(--clr-gold)] text-[var(--clr-gold-dark)] flex items-center justify-center shadow-[var(--shadow-sm)] mb-8 bg-white">
                         <LockKey size={32} weight="fill" />
                       </div>
-                      <h3 className="font-display font-extrabold text-[2.5rem] leading-none uppercase text-[var(--clr-ink)] tracking-wide">Seal an Era</h3>
+                      <h3 className="font-display font-extrabold text-[clamp(2rem,4vw,2.8rem)] leading-none uppercase text-[var(--clr-ink)] tracking-wide">Seal an Era</h3>
 
                       <div className="space-y-6 pt-4">
                         <div>
@@ -411,10 +447,54 @@ export default function Capsules() {
                             className="w-full"
                           />
                         </div>
+                        <div>
+                          <label className="font-ui text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--clr-dust)] mb-2 block">Recipients</label>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setTargetMode('everyone')}
+                              className={`rounded-2xl border p-4 text-left transition-all ${targetMode === 'everyone' ? 'border-[var(--clr-gold)] bg-[var(--clr-gold-muted)]' : 'border-[var(--clr-aged)] bg-[var(--clr-paper)] hover:border-[var(--clr-gold)]'}`}
+                            >
+                              <UsersThree size={22} className="mb-2 text-[var(--clr-gold-dark)]" />
+                              <span className="block font-ui text-[11px] font-black uppercase tracking-widest text-[var(--clr-ink)]">Everyone</span>
+                              <span className="font-ui text-[11px] text-[var(--clr-dust)]">Any vault member can open it.</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setTargetMode('specific')}
+                              className={`rounded-2xl border p-4 text-left transition-all ${targetMode === 'specific' ? 'border-[var(--clr-gold)] bg-[var(--clr-gold-muted)]' : 'border-[var(--clr-aged)] bg-[var(--clr-paper)] hover:border-[var(--clr-gold)]'}`}
+                            >
+                              <Envelope size={22} className="mb-2 text-[var(--clr-gold-dark)]" />
+                              <span className="block font-ui text-[11px] font-black uppercase tracking-widest text-[var(--clr-ink)]">Specific kin</span>
+                              <span className="font-ui text-[11px] text-[var(--clr-dust)]">Only selected recipients can open it.</span>
+                            </button>
+                          </div>
+                          {targetMode === 'specific' && (
+                            <div className="mt-3 max-h-44 overflow-y-auto rounded-2xl border border-[var(--clr-aged)] bg-[var(--clr-paper)] p-2">
+                              {selectableRecipients.map((member: any) => (
+                                <button
+                                  key={member.id}
+                                  type="button"
+                                  onClick={() => toggleTargetUser(member.userId)}
+                                  className={`mb-2 flex w-full items-center justify-between rounded-xl px-4 py-3 text-left font-ui text-[12px] transition-colors last:mb-0 ${targetUserIds.includes(member.userId) ? 'bg-[var(--clr-gold-muted)] text-[var(--clr-gold-dark)]' : 'bg-white/50 text-[var(--clr-ink)] hover:bg-white'}`}
+                                >
+                                  <span>
+                                    <strong>{member.name}</strong>
+                                    <span className="block text-[10px] text-[var(--clr-dust)]">{member.email}</span>
+                                  </span>
+                                  <span className="text-[10px] font-black uppercase tracking-widest">{targetUserIds.includes(member.userId) ? 'Selected' : member.role}</span>
+                                </button>
+                              ))}
+                              {selectableRecipients.length === 0 && (
+                                <p className="p-3 font-ui text-[12px] text-[var(--clr-dust)]">No other vault members are available yet.</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    <div className="w-full lg:w-[60%] bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-[var(--radius-lg)] p-8 shadow-inner flex flex-col">
+                    <div className="min-h-[420px] bg-[var(--clr-paper)] border border-[var(--clr-aged)] rounded-[var(--radius-lg)] p-5 sm:p-7 shadow-inner flex flex-col">
                       <div className="flex justify-between items-center mb-6">
                         <h4 className="font-ui text-[12px] font-bold uppercase tracking-[0.15em] text-[var(--clr-ink)] flex items-center gap-2">
                           <ImageIcon size={18} className="text-[var(--clr-gold-dark)]"/> Contents Tray
@@ -422,7 +502,7 @@ export default function Capsules() {
                         <span className="font-ui text-[11px] text-[var(--clr-dust)]">{selectedFiles.length} Items Selected</span>
                       </div>
 
-                      <div className="flex-1 border-2 border-dashed border-[var(--clr-aged)] rounded-[var(--radius-md)] p-6 bg-[rgba(255,255,255,0.4)] flex flex-wrap gap-4 content-start overflow-y-auto">
+                      <div className="min-h-[260px] flex-1 border-2 border-dashed border-[var(--clr-aged)] rounded-[var(--radius-md)] p-4 sm:p-6 bg-[rgba(255,255,255,0.4)] flex flex-wrap gap-4 content-start overflow-y-auto">
                         {previewUrls.map((url, i) => (
                           <div key={i} className="w-[120px] h-[120px] rounded-md shadow-md border border-[var(--clr-aged)] overflow-hidden relative group">
                             <img src={url} className="w-full h-full object-cover sepia-[0.3]" />
@@ -436,24 +516,30 @@ export default function Capsules() {
                       </div>
 
                       <div className="mt-8 flex justify-end">
-                        <Button variant="primary" onClick={() => setCreateStep(2)} className="px-10 shadow-[var(--shadow-gold)]">WRITE THE LETTER →</Button>
+                        <Button variant="primary" onClick={() => {
+                          if (targetMode === 'specific' && targetUserIds.length === 0) {
+                            sileo.error({ title: 'Choose Recipients', description: 'Select at least one target user or switch to Everyone.' });
+                            return;
+                          }
+                          setCreateStep(2);
+                        }} className="px-10 shadow-[var(--shadow-gold)]">WRITE THE LETTER →</Button>
                       </div>
                     </div>
                   </motion.div>
                 )}
 
                 {createStep === 2 && (
-                  <motion.div key="s2" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className="max-w-[800px] mx-auto py-12 px-6">
+                  <motion.div key="s2" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className="max-w-[860px] mx-auto p-5 sm:p-8">
                      <div className="text-center mb-8">
                        <PenNib size={40} className="mx-auto text-[var(--clr-gold)] mb-4" />
                        <h3 className="font-script text-[48px] text-[var(--clr-dust)] leading-[0.5]">"Words across time"</h3>
                      </div>
 
-                     <div className="w-full min-h-[500px] bg-[#fdfbf7] border border-[var(--clr-aged)] rounded-md shadow-2xl p-10 relative overflow-hidden"
+                     <div className="w-full min-h-[min(48vh,460px)] bg-[#fdfbf7] border border-[var(--clr-aged)] rounded-md shadow-2xl p-6 sm:p-10 relative overflow-hidden"
                           style={{ backgroundImage: 'repeating-linear-gradient(transparent, transparent 31px, rgba(184,143,91,0.2) 31px, rgba(184,143,91,0.2) 32px)', lineHeight: '32px' }}>
                         <div className="absolute left-12 top-0 bottom-0 w-px bg-red-800/20 pointer-events-none" />
                         <textarea
-                          className="w-full h-full min-h-[400px] bg-transparent border-none outline-none resize-none font-script text-[36px] text-[var(--clr-ink)] pl-8 leading-[32px] pt-[4px]"
+                          className="w-full h-full min-h-[min(38vh,360px)] bg-transparent border-none outline-none resize-none font-script text-[clamp(28px,4vw,36px)] text-[var(--clr-ink)] pl-8 leading-[32px] pt-[4px]"
                           placeholder="My dearest family..."
                           autoFocus
                           value={capsuleMessage}
@@ -509,6 +595,7 @@ export default function Capsules() {
                 )}
 
               </AnimatePresence>
+            </div>
             </div>
           </motion.div>
         )}
@@ -581,16 +668,27 @@ export default function Capsules() {
                 >
                   <div className="absolute inset-x-0 bottom-0 h-[60%] bg-gradient-to-t from-[#0E0C0B] via-[#0E0C0B]/90 to-transparent pointer-events-none z-0" />
 
-                  <div className="relative z-10 w-full max-w-[800px] mx-auto text-center px-4 pb-[80px] pointer-events-auto">
-                    <p className="font-display text-[1.75rem] text-[var(--clr-linen)] leading-[1.6] italic drop-shadow-lg font-medium">
-                      "{activeCapsule?.message || 'This capsule has been opened and its memories are now available in the gallery.'}"
-                    </p>
-                    <div className="mt-10 flex justify-center gap-4">
-                      <Button variant="primary" onClick={() => {
-                        sileo.success({ title: "Artifacts Added", description: "Time capsule contents added to the gallery." });
+                  <div className="relative z-10 w-full max-w-[860px] mx-auto px-4 pb-[80px] pointer-events-auto">
+                    <div
+                      className="mx-auto max-h-[46vh] overflow-y-auto rounded-md border border-[rgba(184,143,91,0.45)] bg-[#fdfbf7] p-8 sm:p-10 text-left shadow-[0_24px_80px_rgba(0,0,0,0.45)]"
+                      style={{ backgroundImage: 'repeating-linear-gradient(transparent, transparent 31px, rgba(184,143,91,0.2) 31px, rgba(184,143,91,0.2) 32px)', lineHeight: '32px' }}
+                    >
+                      <div className="relative">
+                        <div className="absolute left-3 top-0 bottom-0 w-px bg-red-800/20 pointer-events-none" />
+                        <p className="whitespace-pre-wrap pl-8 font-script text-[clamp(30px,4vw,40px)] leading-[32px] text-[var(--clr-ink)]">
+                          {activeCapsule?.message || 'This capsule has been opened and its memories are now available in the gallery.'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-10 flex flex-col justify-center gap-4 sm:flex-row">
+                      <Button variant="ghost" onClick={() => {
+                        sileo.info({ title: "Viewed Only", description: "Capsule contents remain sealed out of the vault." });
                         setView('gallery');
-                      }} className="shadow-[var(--shadow-gold)] px-12 py-4">
-                        VIEW CONTENTS
+                      }} className="px-8 py-4">
+                        <Eye size={18} /> JUST VIEW
+                      </Button>
+                      <Button variant="primary" onClick={handleAddCapsuleToVault} disabled={addToVaultMutation.isPending || activeCapsule?.addedToVault} className="shadow-[var(--shadow-gold)] px-10 py-4">
+                        <Archive size={18} /> {activeCapsule?.addedToVault ? 'ALREADY ADDED' : 'ADD TO REVIEW QUEUE'}
                       </Button>
                     </div>
                   </div>

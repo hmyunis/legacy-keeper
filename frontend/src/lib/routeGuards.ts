@@ -48,13 +48,17 @@ export function requireAuth({ location }: { location: { pathname: string } }) {
 }
 
 /** Keep signed-in users out of auth flows. */
-export function redirectIfAuthenticated() {
+export function redirectIfAuthenticated({ location }: { location?: { search?: { redirect?: string } } } = {}) {
   const { isAuthenticated, currentUser, activeVaultId, setActiveVaultId } = useAuthStore.getState();
+  const redirectTo = location?.search?.redirect;
   if (isAuthenticated) {
     if (!currentUser?.is_verified) {
-      throw redirect({ to: '/verify-email' });
+      throw redirect({
+        to: '/verify-email',
+        search: redirectTo ? { redirect: redirectTo } : undefined,
+      });
     }
-    const destination = getPostAuthRoute(currentUser);
+    const destination = getPostAuthRoute(currentUser, redirectTo);
     const vaults = getAccessibleVaults(currentUser);
     if (vaults.length === 1 && !activeVaultId) {
       setActiveVaultId(vaults[0].id);

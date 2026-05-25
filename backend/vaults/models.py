@@ -7,13 +7,12 @@ from core.models import Vault, User
 class MemoryManager(models.Manager):
     def visible_to_vault(self, vault_id):
         from django.db.models import Exists, OuterRef
-        locked_capsules = Capsule.objects.filter(
+        unreleased_capsules = Capsule.objects.filter(
             memories=OuterRef('pk'),
-            status='LOCKED'
-        )
+        ).exclude(added_to_vault=True)
         return self.filter(vault_id=vault_id).annotate(
-            is_sealed=Exists(locked_capsules)
-        ).filter(is_sealed=False)
+            is_capsule_unreleased=Exists(unreleased_capsules)
+        ).filter(is_capsule_unreleased=False)
 
 class Memory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -67,6 +66,11 @@ class Capsule(models.Model):
     unlock_date = models.DateTimeField()
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='LOCKED')
     sealed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    target_users = models.ManyToManyField(User, related_name='targeted_capsules', blank=True)
+    is_public = models.BooleanField(default=True)
+    added_to_vault = models.BooleanField(default=False)
+    added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='added_capsules')
+    added_at = models.DateTimeField(null=True, blank=True)
     message = models.TextField(blank=True)
     memories = models.ManyToManyField(Memory, related_name='capsules', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

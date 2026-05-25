@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { AuthLayout } from '../components/auth/AuthLayout';
 import { Button } from '../components/ui/Button';
 import { sileo } from 'sileo';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useResendVerification, useVerifyEmail } from '../features/auth/hooks/useAuth';
 import { useAuthStore } from '../stores/authStore';
 import { getPostAuthRoute } from '../lib/authRouting';
+import { parseRouteTarget } from '../lib/deepLinks';
 
 const RESEND_COOLDOWN_SECONDS = 15;
 const RESEND_COOLDOWN_KEY = 'legacy_keeper_verify_resend_cooldown_until';
@@ -34,6 +35,12 @@ export default function VerifyEmail() {
   const [code, setCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
   const navigate = useNavigate();
+  const redirectTo = useRouterState({
+    select: (s) => {
+      const search = s.location.search as { redirect?: string };
+      return search.redirect;
+    },
+  });
   const verifyMutation = useVerifyEmail();
   const resendVerificationMutation = useResendVerification();
 
@@ -65,8 +72,9 @@ export default function VerifyEmail() {
           }
           return state;
         });
-        const nextRoute = getPostAuthRoute(currentUser ? ({ ...currentUser, is_verified: true } as any) : currentUser);
-        navigate({ to: nextRoute as any });
+        const nextRoute = getPostAuthRoute(currentUser ? ({ ...currentUser, is_verified: true } as any) : currentUser, redirectTo);
+        const target = parseRouteTarget(nextRoute);
+        navigate({ to: target.to as any, search: target.search as any });
         return { title: "Vault Activated", description: "Access granted to the museum." };
       },
       error: { title: "Invalid or Expired Key", description: "Please check your email and try again." }

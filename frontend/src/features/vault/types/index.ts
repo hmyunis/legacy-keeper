@@ -6,6 +6,7 @@ export interface VaultMemory {
   location: string;
   date: string;
   year: string;
+  capturedAt?: string | null;
   cluster_name: string;
   ai_caption: string;
   human_caption: string;

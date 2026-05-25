@@ -5,7 +5,8 @@ import csv
 import re
 from django.conf import settings
 from django.http import HttpResponse
-from django.db.models import Q
+from django.db import transaction
+from django.db.models import Q, F
 from django.utils import timezone
 from rest_framework import status, views, generics
 from rest_framework.response import Response
@@ -16,8 +17,8 @@ from django.shortcuts import get_object_or_404
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 
-from .models import Vault, VaultMember, ActionLog, LineagePact, PushSubscription, VaultInvitation
-from .serializers import CustomTokenObtainPairSerializer, UserSerializer, VaultMemberSerializer, ActionLogSerializer, LineagePactSerializer, VaultInvitationSerializer
+from .models import Vault, VaultMember, ActionLog, LineagePact, PushSubscription, VaultInvitation, VaultInviteLink
+from .serializers import CustomTokenObtainPairSerializer, UserSerializer, VaultMemberSerializer, ActionLogSerializer, LineagePactSerializer, VaultInvitationSerializer, VaultInviteLinkSerializer
 from core.utils.mail import send_notification_email
 from core.vapid import diagnose_vapid_config, send_web_push
 from lineage.models import Person
@@ -473,6 +474,182 @@ class VaultInvitationDetailView(views.APIView):
             description=f"Revoked invitation for {invitation.email}."
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def _invite_link_status(invite_link):
+    if invite_link.deleted_at:
+        return "DELETED"
+    if invite_link.revoked_at:
+        return "REVOKED"
+    if invite_link.expires_at and invite_link.expires_at <= timezone.now():
+        return "EXPIRED"
+    if not invite_link.has_capacity():
+        return "FULL"
+    return "ACTIVE"
+
+
+class VaultInviteLinkListCreateView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, vault_id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role='ADMIN')
+        links = VaultInviteLink.objects.select_related('vault', 'created_by').filter(
+            vault_id=vault_id,
+            deleted_at__isnull=True,
+        ).order_by('-created_at')
+        return Response(VaultInviteLinkSerializer(links, many=True).data)
+
+    def post(self, request, vault_id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role='ADMIN')
+        role = (request.data.get('role') or 'VIEWER').strip().upper()
+        if role not in {'VIEWER', 'CONTRIBUTOR'}:
+            return Response({"error": "Invite links can only grant viewer or contributor access."}, status=status.HTTP_400_BAD_REQUEST)
+
+        max_uses_raw = request.data.get('maxUses', request.data.get('max_uses'))
+        max_uses = None
+        if max_uses_raw not in (None, ''):
+            try:
+                max_uses = int(max_uses_raw)
+            except (TypeError, ValueError):
+                return Response({"error": "Max uses must be a whole number."}, status=status.HTTP_400_BAD_REQUEST)
+            if max_uses < 1:
+                return Response({"error": "Max uses must be at least 1."}, status=status.HTTP_400_BAD_REQUEST)
+
+        expires_at = None
+        expires_at_raw = request.data.get('expiresAt', request.data.get('expires_at'))
+        if expires_at_raw not in (None, ''):
+            try:
+                from dateutil import parser as date_parser
+                expires_at = date_parser.parse(str(expires_at_raw))
+                if timezone.is_naive(expires_at):
+                    expires_at = timezone.make_aware(expires_at)
+            except (ValueError, TypeError):
+                return Response({"error": "Expiry date is invalid."}, status=status.HTTP_400_BAD_REQUEST)
+            if expires_at <= timezone.now():
+                return Response({"error": "Expiry date must be in the future."}, status=status.HTTP_400_BAD_REQUEST)
+
+        token = VaultInviteLink.generate_token()
+        while VaultInviteLink.objects.filter(token=token).exists():
+            token = VaultInviteLink.generate_token()
+
+        invite_link = VaultInviteLink.objects.create(
+            vault_id=vault_id,
+            token=token,
+            role=role,
+            max_uses=max_uses,
+            expires_at=expires_at,
+            created_by=request.user,
+        )
+
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='governance',
+            description=f"Generated a {role.lower()} invite link."
+        )
+        return Response(VaultInviteLinkSerializer(invite_link).data, status=status.HTTP_201_CREATED)
+
+
+class VaultInviteLinkDetailView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, vault_id, link_id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role='ADMIN')
+        invite_link = get_object_or_404(VaultInviteLink, id=link_id, vault_id=vault_id, deleted_at__isnull=True)
+        action = (request.data.get('action') or '').strip().upper()
+        if action != 'REVOKE':
+            return Response({"error": "Invalid action."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not invite_link.revoked_at:
+            invite_link.revoked_at = timezone.now()
+            invite_link.save(update_fields=['revoked_at', 'updated_at'])
+            ActionLog.objects.create(
+                vault_id=vault_id,
+                user=request.user,
+                action_type='governance',
+                description="Revoked an invite link."
+            )
+        return Response(VaultInviteLinkSerializer(invite_link).data)
+
+    def delete(self, request, vault_id, link_id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role='ADMIN')
+        invite_link = get_object_or_404(VaultInviteLink, id=link_id, vault_id=vault_id, deleted_at__isnull=True)
+        invite_link.deleted_at = timezone.now()
+        invite_link.revoked_at = invite_link.revoked_at or timezone.now()
+        invite_link.save(update_fields=['deleted_at', 'revoked_at', 'updated_at'])
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='governance',
+            description="Deleted an invite link."
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PublicInviteLinkView(views.APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        invite_link = get_object_or_404(VaultInviteLink.objects.select_related('vault', 'created_by'), token=token)
+        link_status = _invite_link_status(invite_link)
+        return Response({
+            "token": invite_link.token,
+            "vaultId": str(invite_link.vault_id),
+            "vaultName": invite_link.vault.name,
+            "role": invite_link.role,
+            "status": link_status,
+            "maxUses": invite_link.max_uses,
+            "usesCount": invite_link.uses_count,
+            "expiresAt": invite_link.expires_at,
+            "createdByName": invite_link.created_by.full_name if invite_link.created_by else None,
+        })
+
+
+class ClaimInviteLinkView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, token):
+        if not request.user.is_verified:
+            return Response({"error": "Please verify your email before joining a vault."}, status=status.HTTP_403_FORBIDDEN)
+
+        with transaction.atomic():
+            invite_link = get_object_or_404(
+                VaultInviteLink.objects.select_for_update().select_related('vault'),
+                token=token,
+            )
+            link_status = _invite_link_status(invite_link)
+            if link_status != "ACTIVE":
+                return Response({"error": f"This invite link is {link_status.lower()}."}, status=status.HTTP_400_BAD_REQUEST)
+
+            membership, created = VaultMember.objects.get_or_create(
+                user=request.user,
+                vault=invite_link.vault,
+                defaults={'role': invite_link.role}
+            )
+            if not created:
+                return Response({
+                    "status": "ALREADY_MEMBER",
+                    "vaultId": str(invite_link.vault_id),
+                    "vaultName": invite_link.vault.name,
+                })
+
+            invite_link.uses_count = F('uses_count') + 1
+            invite_link.save(update_fields=['uses_count', 'updated_at'])
+            invite_link.refresh_from_db(fields=['uses_count'])
+
+            ActionLog.objects.create(
+                vault=invite_link.vault,
+                user=request.user,
+                action_type='governance',
+                description=f"Joined via invite link as {invite_link.role}."
+            )
+
+        return Response({
+            "status": "JOINED",
+            "vaultId": str(invite_link.vault_id),
+            "vaultName": invite_link.vault.name,
+            "role": membership.role,
+        }, status=status.HTTP_201_CREATED)
 
 
 class RemoveMemberView(views.APIView):

@@ -729,7 +729,11 @@ class CapsuleListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         vault_id = self.kwargs['vault_id']
         get_object_or_404(VaultMember, vault_id=vault_id, user=self.request.user)
-        return Capsule.objects.filter(vault_id=vault_id).order_by('unlock_date')
+        return Capsule.objects.filter(vault_id=vault_id).filter(
+            Q(is_public=True) |
+            Q(target_users=self.request.user) |
+            Q(sealed_by=self.request.user)
+        ).distinct().prefetch_related('target_users', 'memories').order_by('unlock_date')
 
     def perform_create(self, serializer):
         vault_id = self.kwargs['vault_id']
@@ -743,7 +747,23 @@ class CapsuleListCreateView(generics.ListCreateAPIView):
             if valid_mems != len(memory_ids):
                 raise PermissionDenied("One or more artifacts do not belong to this vault.")
 
-        capsule = serializer.save(vault_id=vault_id, sealed_by=self.request.user, status='LOCKED')
+        target_user_ids = [str(user_id) for user_id in self.request.data.get('target_user_ids', []) if user_id]
+        if target_user_ids:
+            valid_targets = list(VaultMember.objects.select_related('user').filter(
+                vault_id=vault_id,
+                user_id__in=target_user_ids,
+            ))
+            if len(valid_targets) != len(set(target_user_ids)):
+                raise PermissionDenied("One or more recipients do not belong to this vault.")
+
+        capsule = serializer.save(
+            vault_id=vault_id,
+            sealed_by=self.request.user,
+            status='LOCKED',
+            is_public=not bool(target_user_ids),
+        )
+        if target_user_ids:
+            capsule.target_users.set(target_user_ids)
         if memory_ids:
             capsule.memories.add(*memory_ids)
 
@@ -757,16 +777,59 @@ class CapsuleListCreateView(generics.ListCreateAPIView):
 class CapsuleOpenView(views.APIView):
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, vault_id, pk):
+    def _get_authorized_capsule(self, request, vault_id, pk):
         get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
-        capsule = get_object_or_404(Capsule, id=pk, vault_id=vault_id)
+        capsule = get_object_or_404(Capsule.objects.prefetch_related('target_users'), id=pk, vault_id=vault_id)
+        if (
+            not capsule.is_public
+            and capsule.sealed_by_id != request.user.id
+            and not capsule.target_users.filter(id=request.user.id).exists()
+        ):
+            raise PermissionDenied("This capsule is reserved for another recipient.")
+        return capsule
+
+    def post(self, request, vault_id, pk):
+        capsule = self._get_authorized_capsule(request, vault_id, pk)
 
         if capsule.status == 'LOCKED' and capsule.unlock_date > timezone.now():
             return Response({"error": "Temporal lock still active. Capsule cannot be opened."}, status=status.HTTP_400_BAD_REQUEST)
 
         capsule.status = 'OPENED'
-        capsule.save()
-        return Response({"status": "OPENED"})
+        capsule.save(update_fields=['status'])
+        return Response(CapsuleSerializer(capsule, context={'request': request}).data)
+
+
+class CapsuleAddToVaultView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, vault_id, pk):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
+        capsule = get_object_or_404(Capsule.objects.prefetch_related('target_users'), id=pk, vault_id=vault_id)
+
+        if (
+            not capsule.is_public
+            and capsule.sealed_by_id != request.user.id
+            and not capsule.target_users.filter(id=request.user.id).exists()
+        ):
+            raise PermissionDenied("This capsule is reserved for another recipient.")
+
+        if capsule.status == 'LOCKED' and capsule.unlock_date > timezone.now():
+            return Response({"error": "Temporal lock still active. Capsule cannot be added yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if capsule.status != 'OPENED':
+            capsule.status = 'OPENED'
+        capsule.added_to_vault = True
+        capsule.added_by = request.user
+        capsule.added_at = timezone.now()
+        capsule.save(update_fields=['status', 'added_to_vault', 'added_by', 'added_at'])
+
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='capsule',
+            description=f"Added Time Capsule '{capsule.title}' contents to the vault review queue.",
+        )
+        return Response(CapsuleSerializer(capsule, context={'request': request}).data)
 
 
 class CapsuleDetailView(views.APIView):

@@ -18,6 +18,7 @@ urlpatterns = [
     path('<uuid:vault_id>/capsules/', views.CapsuleListCreateView.as_view(), name='capsules'),
     path('<uuid:vault_id>/capsules/<uuid:pk>/', views.CapsuleDetailView.as_view(), name='capsule-detail'),
     path('<uuid:vault_id>/capsules/<uuid:pk>/open/', views.CapsuleOpenView.as_view(), name='capsule-open'),
+    path('<uuid:vault_id>/capsules/<uuid:pk>/add-to-vault/', views.CapsuleAddToVaultView.as_view(), name='capsule-add-to-vault'),
     path('<uuid:vault_id>/dashboard/summary/', views.DashboardSummaryView.as_view(), name='dashboard-summary'),
     path('<uuid:vault_id>/settings/', views.VaultSettingsView.as_view(), name='vault-settings'),
 ]

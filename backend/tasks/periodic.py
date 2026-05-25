@@ -23,7 +23,11 @@ def check_and_unlock_capsules():
             description=f"Temporal lock expired for '{capsule.title}'. Artifacts are now accessible for opening."
         )
 
-        for member in capsule.vault.members.all():
+        members = capsule.vault.members.select_related('user').all()
+        if not capsule.is_public:
+            members = members.filter(user__in=capsule.target_users.all())
+
+        for member in members:
             send_web_push(
                 user=member.user,
                 title="Time Capsule Ready",

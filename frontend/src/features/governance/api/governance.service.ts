@@ -10,6 +10,29 @@ export const governanceService = {
     const response = await axiosClient.post(`/vaults/${vaultId}/members/invite/`, payload);
     return response.data;
   },
+  getInviteLinks: async (vaultId: string) => {
+    const response = await axiosClient.get(`/vaults/${vaultId}/members/invite-links/`);
+    return extractList(response);
+  },
+  createInviteLink: async (vaultId: string, payload: any) => {
+    const response = await axiosClient.post(`/vaults/${vaultId}/members/invite-links/`, payload);
+    return response.data;
+  },
+  revokeInviteLink: async (vaultId: string, linkId: string) => {
+    const response = await axiosClient.post(`/vaults/${vaultId}/members/invite-links/${linkId}/`, { action: 'REVOKE' });
+    return response.data;
+  },
+  deleteInviteLink: async (vaultId: string, linkId: string) => {
+    await axiosClient.delete(`/vaults/${vaultId}/members/invite-links/${linkId}/`);
+  },
+  getInviteLink: async (token: string) => {
+    const response = await axiosClient.get(`/invite-links/${token}/`);
+    return response.data;
+  },
+  claimInviteLink: async (token: string) => {
+    const response = await axiosClient.post(`/invite-links/${token}/claim/`);
+    return response.data;
+  },
   getInvitations: async (vaultId: string) => {
     const response = await axiosClient.get(`/vaults/${vaultId}/members/invitations/`);
     return extractList(response);

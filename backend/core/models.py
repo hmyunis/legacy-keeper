@@ -1,4 +1,5 @@
 import uuid
+import secrets
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils.translation import gettext_lazy as _
@@ -65,6 +66,36 @@ class VaultInvitation(models.Model):
 
     class Meta:
         unique_together = ('vault', 'email')
+
+
+class VaultInviteLink(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name='invite_links')
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    role = models.CharField(max_length=15, choices=VaultMember.ROLE_CHOICES, default='VIEWER')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_vault_invite_links')
+    max_uses = models.PositiveIntegerField(null=True, blank=True)
+    uses_count = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @staticmethod
+    def generate_token():
+        return secrets.token_urlsafe(24)
+
+    @property
+    def is_revoked(self):
+        return self.revoked_at is not None
+
+    @property
+    def is_deleted(self):
+        return self.deleted_at is not None
+
+    def has_capacity(self):
+        return self.max_uses is None or self.uses_count < self.max_uses
 
 class LineagePact(models.Model):
     STATUS_CHOICES = (

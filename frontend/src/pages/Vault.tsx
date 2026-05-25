@@ -26,7 +26,7 @@ import axiosClient from '../services/axiosClient';
 import { getPendingSuggestion, isAiGeneratedTag } from '../features/vault/lib/aiMarkers';
 import { detectVaultMediaType } from '../features/vault/lib/mediaType';
 
-const ORBIT_RADIUS = 16;
+const ORBIT_RADIUS = 20;
 const FRAME_CORNERS = [
   { key: 'top-left', x: -1.12, y: 1.34, accentX: -0.98, accentY: 1.22, rotate: Math.PI / 4 },
   { key: 'top-right', x: 1.12, y: 1.34, accentX: 0.98, accentY: 1.22, rotate: -Math.PI / 4 },
@@ -169,27 +169,30 @@ function OrbitingCluster({
   const z = Math.cos(cluster.angle) * radius;
   const renderableMemories = cluster.memories.filter((mem: VaultMemory) => detectVaultMediaType(mem.url, mem.exif_json) === 'image');
 
-  const ROWS = 2;
   const count = renderableMemories.length;
-  const cols = Math.ceil(count / ROWS);
-  const SPACING_X = 3.05;
-  const SPACING_Y = 3.7;
 
   return (
     <group position={[x, 0, z]} rotation={[0, cluster.angle, 0]}>
       {!isFaded && <SpotLight position={[0, 5, 4]} angle={0.9} penumbra={0.6} intensity={4} color="#D4A96A" distance={20} />}
 
       {renderableMemories.map((mem: VaultMemory, i: number) => {
-        const r = i % ROWS;
-        const c = Math.floor(i / ROWS);
-        const xOffset = -((cols - 1) * SPACING_X) / 2 + c * SPACING_X;
-        const yOffset = ((ROWS - 1) * SPACING_Y) / 2 - r * SPACING_Y;
+        const itemsPerShell = 10;
+        const shellIndex = Math.floor(i / itemsPerShell);
+        const shellItemIndex = i - shellIndex * itemsPerShell;
+        const itemsInShell = Math.min(itemsPerShell, count - shellIndex * itemsPerShell);
+        const normalizedLane = itemsInShell === 1 ? 0.5 : shellItemIndex / Math.max(itemsInShell - 1, 1);
+        const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+        const spiralAngle = shellItemIndex * goldenAngle + shellIndex * 0.72;
+        const shellRadius = 3.9 + shellIndex * 2.7 + Math.min(count, 28) * 0.045;
+        const xOffset = itemsInShell === 1 ? 0 : Math.cos(spiralAngle) * shellRadius;
+        const zOffset = itemsInShell === 1 ? 0 : Math.sin(spiralAngle) * shellRadius * 0.82 - shellIndex * 1.35;
+        const yOffset = itemsInShell === 1 ? 0 : (normalizedLane - 0.5) * 6.1 + Math.sin(spiralAngle * 1.6) * 0.62;
 
         return (
           <Memory3DFrame
             key={mem.id}
             memory={mem}
-            position={[xOffset, yOffset, 0]}
+            position={[xOffset, yOffset, zOffset]}
             isFaded={isFaded}
             onClick={onSelect}
           />
@@ -221,7 +224,7 @@ function VaultScene({
 
   return (
     <>
-      <fog attach="fog" args={['#141211', 12, 45]} />
+      <fog attach="fog" args={['#141211', 14, 60]} />
       <ambientLight intensity={0.6} />
       <Environment preset="city" />
 
@@ -234,7 +237,7 @@ function VaultScene({
         sectionSize={5}
         sectionThickness={1}
         sectionColor="rgba(212, 169, 106, 0.25)"
-        fadeDistance={50}
+        fadeDistance={64}
         fadeStrength={2}
       />
 
@@ -253,7 +256,7 @@ function VaultScene({
       <OrbitControls
         enablePan={false}
         enableZoom={true}
-        maxDistance={35}
+        maxDistance={44}
         minDistance={6}
         autoRotate={activeCategory === 'All'}
         autoRotateSpeed={0.4}
@@ -261,6 +264,21 @@ function VaultScene({
       />
     </>
   );
+}
+
+function distributeVaultClusters(clusters: any[]) {
+  const visibleClusters = clusters.filter((cluster) => (cluster.memories || []).some((mem: VaultMemory) => detectVaultMediaType(mem.url, mem.exif_json) === 'image'));
+  const total = Math.max(visibleClusters.length, 1);
+
+  return clusters.map((cluster) => {
+    const visibleIndex = visibleClusters.findIndex((item) => item.name === cluster.name);
+    if (visibleIndex < 0) return cluster;
+
+    return {
+      ...cluster,
+      angle: (visibleIndex / total) * Math.PI * 2,
+    };
+  });
 }
 
 
@@ -359,6 +377,7 @@ export default function Vault() {
   const filterClusters = Array.isArray(filters.clusters) ? filters.clusters : [];
   const filterDecades = Array.isArray(filters.decades) ? filters.decades : [];
   const allCategories = ['All', ...filterClusters];
+  const orbitClusters = distributeVaultClusters(dynamicClusters);
 
   useEffect(() => {
     const canvas = document.createElement('canvas');
@@ -575,7 +594,7 @@ export default function Vault() {
           <div className="absolute inset-0 z-0">
             <Suspense fallback={<SceneLoader />}>
               <Canvas camera={{ position: [0, 5, 22], fov: 50, near: 0.1, far: 100 }}>
-                <VaultScene clusters={dynamicClusters} onSelectMemory={setSelectedMemory} activeCategory={activeCategory} />
+                <VaultScene clusters={orbitClusters} onSelectMemory={setSelectedMemory} activeCategory={activeCategory} />
               </Canvas>
             </Suspense>
           </div>

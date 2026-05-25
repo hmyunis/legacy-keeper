@@ -18,6 +18,7 @@ import VerifyEmail from './pages/VerifyEmail';
 import Onboarding from './pages/Onboarding';
 import VaultSelect from './pages/VaultSelect';
 import InvitationInbox from './pages/InvitationInbox';
+import JoinInvite from './pages/JoinInvite';
 import Help from './pages/Help';
 import Logs from './pages/Logs';
 import Members from './pages/Members';
@@ -87,6 +88,15 @@ const verifyEmailRoute = createRoute({
   path: 'verify-email',
   component: VerifyEmail,
   beforeLoad: requirePendingVerification,
+  validateSearch: (search: Record<string, unknown>): { redirect?: string } => ({
+    redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
+  }),
+});
+
+const joinInviteRoute = createRoute({
+  getParentRoute: () => publicLayoutRoute,
+  path: 'join/$token',
+  component: JoinInvite,
 });
 
 // ── Protected app ─────────────────────────────────────────────────────────
@@ -213,6 +223,7 @@ const routeTree = rootRoute.addChildren([
     forgotPasswordRoute,
     resetPasswordRoute,
     verifyEmailRoute,
+    joinInviteRoute,
   ]),
   appLayoutRoute.addChildren([
     dashboardRoute,

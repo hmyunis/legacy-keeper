@@ -64,7 +64,10 @@ export default function Auth() {
             accessToken: data.accessToken,
             refreshToken: data.refreshToken,
           });
-          void navigate({ to: '/verify-email' });
+          void navigate({
+            to: '/verify-email',
+            search: redirectTo ? ({ redirect: redirectTo } as any) : undefined,
+          });
           return { title: "Welcome, Curator", description: "Your account is created. Please verify your email." };
         },
         error: { title: "Registration Failed", description: "Email may already be in use." }

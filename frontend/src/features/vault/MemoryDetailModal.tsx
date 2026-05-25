@@ -33,6 +33,62 @@ type MemoryEditForm = Pick<
   'title' | 'location' | 'date' | 'year' | 'cluster_name' | 'human_caption' | 'tags'
 >;
 
+type Coordinates = { lat: number; lon: number };
+
+const COORDINATE_LOCATION_PATTERN = /^\s*([+-]?\d{1,2}(?:\.\d+)?)\s*,\s*([+-]?\d{1,3}(?:\.\d+)?)\s*$/;
+
+function toFiniteCoordinate(value: unknown) {
+  const parsed = typeof value === 'number' ? value : Number(String(value ?? '').trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeCoordinates(lat: number | null, lon: number | null): Coordinates | null {
+  if (lat === null || lon === null) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  if (lat === 0 && lon === 0) return null;
+  return { lat, lon };
+}
+
+function extractMemoryCoordinates(memory: VaultMemory): Coordinates | null {
+  const exif = memory.exif_json || {};
+  const exifCoordinates = normalizeCoordinates(
+    toFiniteCoordinate(exif.gps_latitude),
+    toFiniteCoordinate(exif.gps_longitude),
+  );
+  if (exifCoordinates) return exifCoordinates;
+
+  const coordinateMatch = String(memory.location || '').match(COORDINATE_LOCATION_PATTERN);
+  if (!coordinateMatch) return null;
+
+  return normalizeCoordinates(Number(coordinateMatch[1]), Number(coordinateMatch[2]));
+}
+
+function buildGoogleMapsUrl({ lat, lon }: Coordinates) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lon}`)}`;
+}
+
+function buildGoogleMapsSearchUrl(query: string) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+function formatCoordinates({ lat, lon }: Coordinates) {
+  return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+}
+
+function formatCaptureTimestamp(memory: VaultMemory) {
+  const value = memory.capturedAt || memory.date || memory.year;
+  if (!value) return 'Date unrecorded';
+
+  if (memory.capturedAt) {
+    const parsed = new Date(memory.capturedAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleString();
+    }
+  }
+
+  return value;
+}
+
 function IconTooltip({ label, children }: { label: string; children: ReactNode }) {
   return <Tooltip content={label}>{children}</Tooltip>;
 }
@@ -114,6 +170,8 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
   const [reprocessError, setReprocessError] = useState<string | null>(null);
   const [isAddingManualKin, setIsAddingManualKin] = useState(false);
   const [manualKinBusyId, setManualKinBusyId] = useState<string | null>(null);
+  const [reverseGeocodedLocation, setReverseGeocodedLocation] = useState('');
+  const [isReverseGeocoding, setIsReverseGeocoding] = useState(false);
 
   const { currentUser } = useAuthStore();
   const activeVaultId = useAuthStore((s) => s.activeVaultId);
@@ -137,6 +195,15 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
   const pendingDescriptionSuggestion = typeof pendingDescriptionValue === 'string' ? pendingDescriptionValue : null;
   const pendingTagSuggestion = Array.isArray(pendingTagsValue) ? pendingTagsValue.map(String).filter(Boolean) : null;
   const mediaType = detectVaultMediaType(memory.url, memory.exif_json);
+  const gpsCoordinates = extractMemoryCoordinates(memory);
+  const hasLocationText = Boolean(String(memory.location || '').trim());
+  const googleMapsUrl = gpsCoordinates
+    ? buildGoogleMapsUrl(gpsCoordinates)
+    : hasLocationText
+      ? buildGoogleMapsSearchUrl(String(memory.location).trim())
+      : null;
+  const rawCoordinateLabel = gpsCoordinates ? formatCoordinates(gpsCoordinates) : '';
+  const locationLabel = reverseGeocodedLocation || memory.location || 'Location unknown';
   const linkedKinIds = new Set([
     ...(memory.detected_faces || []).map((face) => face.person_id),
     ...(memory.identified_people || []).map((person) => person.id),
@@ -151,6 +218,50 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
       setEditForm(toMemoryEditForm(memory));
     }
   }, [memory, isEditing]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReverseGeocodedLocation('');
+    setIsReverseGeocoding(false);
+
+    if (!gpsCoordinates) return;
+
+    const cacheKey = `legacy_keeper_reverse_geocode_${gpsCoordinates.lat.toFixed(5)}_${gpsCoordinates.lon.toFixed(5)}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      setReverseGeocodedLocation(cached);
+      return;
+    }
+
+    setIsReverseGeocoding(true);
+    const params = new URLSearchParams({
+      format: 'jsonv2',
+      lat: String(gpsCoordinates.lat),
+      lon: String(gpsCoordinates.lon),
+      zoom: '14',
+      addressdetails: '1',
+    });
+
+    fetch(`https://nominatim.openstreetmap.org/reverse?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const displayName = typeof data?.display_name === 'string' ? data.display_name : '';
+        if (!cancelled && displayName) {
+          localStorage.setItem(cacheKey, displayName);
+          setReverseGeocodedLocation(displayName);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setReverseGeocodedLocation('');
+      })
+      .finally(() => {
+        if (!cancelled) setIsReverseGeocoding(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [memory.id, gpsCoordinates?.lat, gpsCoordinates?.lon]);
 
   const handleIdentify = async (faceId: string, personId: string) => {
     const identifyPromise = (async () => {
@@ -656,11 +767,23 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
                     <div className="space-y-4 mb-8">
                       <div className="flex items-center gap-3 text-[var(--clr-dust)] font-ui text-[14px]">
                         <CalendarBlank size={20} className="text-[var(--clr-gold)]" />
-                        <span>{memory.date || memory.year || 'Date unrecorded'}</span>
+                        <span>{formatCaptureTimestamp(memory)}</span>
                       </div>
                       <div className="flex items-center gap-3 text-[var(--clr-dust)] font-ui text-[14px]">
                         <MapPin size={20} className="text-[var(--clr-gold)]" />
-                        <span>{memory.location || 'Location unknown'}</span>
+                        {googleMapsUrl ? (
+                          <a
+                            href={googleMapsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group min-w-0 text-[var(--clr-dust)] underline decoration-[rgba(184,143,91,0.35)] underline-offset-4 transition-colors hover:text-[var(--clr-gold)]"
+                            title={gpsCoordinates ? `Open ${rawCoordinateLabel} in Google Maps` : `Search ${memory.location} in Google Maps`}
+                          >
+                            <span>{isReverseGeocoding && !reverseGeocodedLocation ? 'Resolving location...' : locationLabel}</span>
+                          </a>
+                        ) : (
+                          <span>{locationLabel}</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 text-[var(--clr-dust)] font-ui text-[14px]">
                         <Faders size={20} className="text-[var(--clr-gold)]" />

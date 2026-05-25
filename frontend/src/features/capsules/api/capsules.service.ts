@@ -10,6 +10,14 @@ export const capsulesService = {
   sealCapsule: async (vaultId: string, data: any): Promise<void> => {
     await axiosClient.post(`/vaults/${vaultId}/capsules/`, data);
   },
+  openCapsule: async (vaultId: string, capsuleId: string): Promise<Capsule> => {
+    const response = await axiosClient.post(`/vaults/${vaultId}/capsules/${capsuleId}/open/`);
+    return response.data;
+  },
+  addCapsuleToVault: async (vaultId: string, capsuleId: string): Promise<Capsule> => {
+    const response = await axiosClient.post(`/vaults/${vaultId}/capsules/${capsuleId}/add-to-vault/`);
+    return response.data;
+  },
   deleteCapsule: async (vaultId: string, capsuleId: string): Promise<void> => {
     await axiosClient.delete(`/vaults/${vaultId}/capsules/${capsuleId}/`);
   }
