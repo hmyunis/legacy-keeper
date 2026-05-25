@@ -901,6 +901,7 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
                         <label className="font-ui text-[9px] uppercase tracking-[0.2em] text-[var(--clr-dust)] font-bold mb-1.5 block">Collection</label>
                         <button
                           type="button"
+                          data-testid="collection-button"
                           onClick={() => setIsCollectionMenuOpen(open => !open)}
                           className="w-full bg-[var(--clr-linen)] border border-[var(--clr-aged)] rounded-[var(--radius-md)] px-4 py-3 font-ui text-[13px] text-[var(--clr-ink)] outline-none hover:border-[var(--clr-gold)] focus:border-[var(--clr-gold)] shadow-inner transition-colors flex items-center justify-between gap-3"
                         >
@@ -916,7 +917,7 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
                               exit={{ opacity: 0, y: -6 }}
                               className="mt-2 overflow-hidden rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)] shadow-[var(--shadow-md)]"
                             >
-                              <div className="border-b border-[var(--clr-aged)] p-3">
+                              <div className="border-b border-[var(--clr-aged)] p-3" data-testid="collection-creator">
                                 <div className="flex gap-2">
                                   <input
                                     type="text"
@@ -929,6 +930,7 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
                                       }
                                     }}
                                     placeholder="Create new collection..."
+                                    data-testid="new-collection-input"
                                     className="min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-linen)] px-3 py-2 font-ui text-[12px] text-[var(--clr-ink)] outline-none focus:border-[var(--clr-gold)]"
                                   />
                                   <button

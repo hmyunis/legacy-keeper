@@ -51,6 +51,7 @@ export default function MemoryCard({ memory }: MemoryCardProps) {
       whileHover={{ y: -6, scale: 1.01 }}
       transition={{ type: "spring", stiffness: 300, damping: 20 }}
       className="bg-[var(--clr-linen)] border border-[var(--clr-aged)] rounded-[var(--radius-md)] overflow-hidden shadow-[var(--shadow-md)] hover:shadow-[var(--shadow-lg)] hover:border-[var(--clr-gold)] relative group cursor-pointer z-10 hover:z-20"
+      data-testid={`memory-card-${memory.id}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
