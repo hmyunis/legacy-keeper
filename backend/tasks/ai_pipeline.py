@@ -129,6 +129,22 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 PDF_EXTENSIONS = {".pdf"}
 MAX_VIDEO_FRAMES = 20
 MAX_PDF_PAGES = 50
+AI_METADATA_PROMPT_VERSION = 2
+MAX_AI_TAGS = 7
+LOW_CONFIDENCE_TAGS = {
+    "family",
+    "family memory",
+    "memory",
+    "photo",
+    "image",
+    "picture",
+    "person",
+    "people",
+    "vintage",
+    "outdoors",
+    "indoors",
+}
+WEAK_CONTEXT_COLLECTIONS = {"", "unsorted", "uncategorized", "unknown", "misc", "miscellaneous"}
 
 def get_clip_model():
     global _clip_model
@@ -158,6 +174,119 @@ def merge_tags(*tag_groups, limit=14):
             if len(merged) >= limit:
                 return merged
     return merged
+
+
+def is_unknown_person_name(name):
+    return str(name or "").strip().lower().startswith("unknown kin")
+
+
+def get_collection_name(memory):
+    collection = str(getattr(memory, "cluster_name", "") or "").strip()
+    if collection.lower() in WEAK_CONTEXT_COLLECTIONS:
+        return ""
+    return collection[:120]
+
+
+def get_collection_context(memory, limit=6):
+    collection_name = get_collection_name(memory)
+    if not collection_name:
+        return []
+
+    siblings = (
+        Memory.objects
+        .filter(vault=memory.vault, cluster_name=collection_name)
+        .exclude(id=memory.id)
+        .order_by("-created_at")[:limit]
+    )
+    context = []
+    for sibling in siblings:
+        context.append({
+            "title": sibling.title or "",
+            "year": sibling.year or "",
+            "location": sibling.location or "",
+            "tags": merge_tags(sibling.tags or [], limit=5),
+        })
+    return context
+
+
+def normalize_confidence(value, default="medium"):
+    value = str(value or "").strip().lower()
+    if value in {"high", "medium", "low"}:
+        return value
+    return default
+
+
+def confidence_from_context(known_people, searchable_text, collection_context, visual_tags, object_tags, generated_value):
+    if not generated_value:
+        return "low"
+    if known_people or searchable_text:
+        return "high"
+    if collection_context and (visual_tags or object_tags):
+        return "high"
+    if visual_tags or object_tags:
+        return "medium"
+    return "low"
+
+
+def add_curated_tag(tags, tag_confidence, tag_sources, tag, confidence, source):
+    cleaned = clean_tag(tag)
+    if not cleaned or cleaned in LOW_CONFIDENCE_TAGS or cleaned in tag_confidence:
+        return
+    tags.append(cleaned)
+    tag_confidence[cleaned] = normalize_confidence(confidence)
+    tag_sources[cleaned] = source
+
+
+def curate_ai_tags(
+    generated_tags,
+    visual_tags,
+    object_tags,
+    known_people,
+    year,
+    location,
+    collection_name,
+    existing_tags,
+    limit=MAX_AI_TAGS,
+):
+    tags = []
+    tag_confidence = {}
+    tag_sources = {}
+
+    for name in known_people[:4]:
+        add_curated_tag(tags, tag_confidence, tag_sources, name, "high", "person_match")
+
+    if year:
+        add_curated_tag(tags, tag_confidence, tag_sources, year, "high", "capture_year")
+    if location:
+        add_curated_tag(tags, tag_confidence, tag_sources, location, "high", "artifact_location")
+    if collection_name:
+        add_curated_tag(tags, tag_confidence, tag_sources, collection_name, "medium", "collection")
+
+    visual_set = set(merge_tags(visual_tags, limit=20))
+    object_set = set(merge_tags(object_tags, limit=20))
+    existing_set = set(merge_tags(existing_tags or [], limit=20))
+
+    for tag in generated_tags or []:
+        cleaned = clean_tag(tag)
+        if not cleaned:
+            continue
+        if cleaned in visual_set or cleaned in object_set or cleaned in existing_set:
+            confidence = "medium"
+        elif cleaned in LOW_CONFIDENCE_TAGS:
+            continue
+        else:
+            confidence = "low"
+        add_curated_tag(tags, tag_confidence, tag_sources, cleaned, confidence, "metadata_model")
+
+    for tag in visual_tags:
+        add_curated_tag(tags, tag_confidence, tag_sources, tag, "medium", "visual_classifier")
+    for tag in object_tags:
+        add_curated_tag(tags, tag_confidence, tag_sources, tag, "medium", "object_classifier")
+
+    return tags[:limit], {
+        tag: {"confidence": tag_confidence[tag], "source": tag_sources[tag]}
+        for tag in tags[:limit]
+    }
 
 
 def infer_visual_tags(model, image, image_vector, limit=6):
@@ -279,7 +408,7 @@ def fallback_exhibit_description(year, location, people_names, tags):
     return "A preserved family moment awaiting curator context."
 
 
-def build_suggestion(memory, field, value):
+def build_suggestion(memory, field, value, confidence="medium", rationale=""):
     if not value:
         return None
 
@@ -292,14 +421,16 @@ def build_suggestion(memory, field, value):
         "value": value,
         "status": status,
         "source": "ai",
+        "confidence": normalize_confidence(confidence),
+        "rationale": str(rationale or "")[:240],
         "generated_at": timezone.now().isoformat(),
         "decided_at": existing.get("decided_at") if status != 'pending' else None,
         "decided_by": existing.get("decided_by") if status != 'pending' else None,
     }
 
 
-def put_suggestion(memory, field, value):
-    suggestion = build_suggestion(memory, field, value)
+def put_suggestion(memory, field, value, confidence="medium", rationale=""):
+    suggestion = build_suggestion(memory, field, value, confidence=confidence, rationale=rationale)
     if not suggestion:
         return
 
@@ -685,34 +816,54 @@ def process_memory_task(self, memory_id):
 
         manual_people_names = list(memory.identified_people.values_list('name', flat=True))
         people_context = merge_tags(detected_people_names, manual_people_names, limit=30)
+        known_people_context = [name for name in people_context if not is_unknown_person_name(name)]
+        unknown_face_count = len([name for name in people_context if is_unknown_person_name(name)])
         searchable_text = "\n\n".join(part for part in [document_text, image_ocr_text] if part)
+        collection_name = get_collection_name(memory)
+        collection_context = get_collection_context(memory)
 
         metadata_context = {
             "current_title": memory.title or "",
+            "file_name": os.path.basename(media_context.get("file_name") or ""),
+            "collection_name": collection_name,
+            "collection_neighbors": collection_context,
             "location": memory.location or "",
             "year": memory.year or "",
-            "people": people_context,
+            "known_people": known_people_context,
+            "unknown_face_count": unknown_face_count,
             "visual_tags": visual_tags,
             "object_tags": object_tags,
             "existing_tags": memory.tags or [],
             "media_type": media_kind,
-            "document_text": searchable_text,
+            "media_metadata": {
+                "width": memory.exif_json.get("width"),
+                "height": memory.exif_json.get("height"),
+                "capture_date": str(memory.date or ""),
+                "camera": tech_meta,
+            },
+            "document_text": searchable_text[:4000],
+            "ocr_text": image_ocr_text[:2000],
             "processing_warnings": warnings,
         }
         prompt = (
             "You are curating a private family museum exhibit. "
-            "Return only valid JSON with keys: title, description, tags. "
+            "Return only valid JSON with keys: title, description, tags, confidence. "
             "title must be specific, warm, and 3-8 words. "
             "description must be 1-2 polished sentences suitable for an exhibit label. "
-            "tags must be 5-10 concise lowercase tags, each under 50 characters. "
-            "Do not invent named people. Use the known people list only if present. "
-            "If document_text is present, use only its explicit contents. "
+            "tags must be 4-7 concise lowercase tags, each under 50 characters. "
+            "Avoid generic tags such as family, memory, photo, image, person, people, vintage, outdoors, or indoors. "
+            "Use collection_name and collection_neighbors as weak context only, not proof. "
+            "Do not infer events, relationships, places, dates, or named people unless the context explicitly supports them. "
+            "Use known_people only when present; never name unknown faces. "
+            "If document_text or ocr_text is present, use only explicit contents. "
+            "confidence must be an object with title, description, and tags values of high, medium, or low. "
             f"Context: {json.dumps(metadata_context, ensure_ascii=False)}"
         )
 
         generated_title = ""
         generated_description = ""
         generated_tags = []
+        generated_confidence = {}
         try:
             ollama_res = generate_with_ollama({
                 "model": settings.OLLAMA_MODEL,
@@ -722,21 +873,52 @@ def process_memory_task(self, memory_id):
                 "think": False,
                 "options": {
                     "temperature": 0.2,
-                    "num_predict": 500,
+                    "num_predict": 420,
                 },
             }, timeout=60)
 
             enrichment = parse_json_object(ollama_res.json().get("response", ""))
             generated_title = str(enrichment.get("title") or "").strip()
             generated_description = str(enrichment.get("description") or "").strip()
-            generated_tags = enrichment.get("tags") or []
+            generated_tags = merge_tags(enrichment.get("tags") or [], limit=MAX_AI_TAGS)
+            generated_confidence = enrichment.get("confidence") or {}
+            if not isinstance(generated_confidence, dict):
+                generated_confidence = {}
         except requests.exceptions.RequestException as e:
             logger.warning(f"Ollama local API failed: {e}. Applying local visual tags only.")
 
-        ai_generated_tags = merge_tags(visual_tags, object_tags, generated_tags)
+        ai_generated_tags, ai_tag_confidence = curate_ai_tags(
+            generated_tags,
+            visual_tags,
+            object_tags,
+            known_people_context,
+            memory.year,
+            memory.location,
+            collection_name,
+            memory.tags or [],
+        )
+        fallback_confidence = confidence_from_context(
+            known_people_context,
+            searchable_text,
+            collection_context,
+            visual_tags,
+            object_tags,
+            generated_title or generated_description or ai_generated_tags,
+        )
+        title_confidence = normalize_confidence(generated_confidence.get("title"), fallback_confidence)
+        description_confidence = normalize_confidence(generated_confidence.get("description"), fallback_confidence)
+        tags_confidence = normalize_confidence(generated_confidence.get("tags"), fallback_confidence)
         memory.exif_json["ai_visual_tags"] = visual_tags
         memory.exif_json["ai_object_tags"] = object_tags
         memory.exif_json["ai_suggested_tags"] = ai_generated_tags
+        memory.exif_json["ai_tag_confidence"] = ai_tag_confidence
+        memory.exif_json["ai_metadata_prompt_version"] = AI_METADATA_PROMPT_VERSION
+        memory.exif_json["ai_metadata_model"] = settings.OLLAMA_MODEL
+        if collection_name:
+            memory.exif_json["ai_collection_context"] = {
+                "name": collection_name,
+                "neighbors_used": len(collection_context),
+            }
         if document_text:
             memory.exif_json["ai_document_text"] = document_text[:12000]
         if image_ocr_text:
@@ -751,16 +933,36 @@ def process_memory_task(self, memory_id):
             generated_description = fallback_exhibit_description(
                 memory.year,
                 memory.location,
-                detected_people_names,
+                known_people_context,
                 ai_generated_tags,
             )
+            description_confidence = fallback_confidence
 
         if not generated_title:
             generated_title = fallback_exhibit_title(memory.year, memory.location, ai_generated_tags)
+            title_confidence = fallback_confidence
 
-        put_suggestion(memory, "title", generated_title[:255])
-        put_suggestion(memory, "description", generated_description)
-        put_suggestion(memory, "tags", ai_generated_tags)
+        put_suggestion(
+            memory,
+            "title",
+            generated_title[:255],
+            confidence=title_confidence,
+            rationale="Generated from confirmed people, OCR/EXIF, collection context, and visual signals.",
+        )
+        put_suggestion(
+            memory,
+            "description",
+            generated_description,
+            confidence=description_confidence,
+            rationale="Generated from confirmed people, OCR/EXIF, collection context, and visual signals.",
+        )
+        put_suggestion(
+            memory,
+            "tags",
+            ai_generated_tags,
+            confidence=tags_confidence,
+            rationale="Tags are limited to high-value context and observable visual matches.",
+        )
 
         memory.exif_json = json_safe(memory.exif_json)
         memory.save()

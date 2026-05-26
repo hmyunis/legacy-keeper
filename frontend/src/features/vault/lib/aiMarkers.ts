@@ -3,7 +3,7 @@ type AiMetadataSource = {
 };
 
 type AiSuggestionSource = {
-  ai_suggestions?: Record<string, { value: unknown; status?: string }> | null;
+  ai_suggestions?: Record<string, { value: unknown; status?: string; confidence?: string }> | null;
 };
 
 function toStringList(value: unknown): string[] {
@@ -42,5 +42,6 @@ export function isAiGeneratedTag(source: AiMetadataSource, tag: string): boolean
 export function getPendingSuggestion(source: AiSuggestionSource, field: string) {
   const suggestion = source.ai_suggestions?.[field];
   if (!suggestion || suggestion.status !== 'pending') return null;
+  if (suggestion.confidence && suggestion.confidence !== 'high') return null;
   return suggestion.value;
 }

@@ -45,7 +45,9 @@ export function Tooltip({ children, content, side = 'top', className = '' }: Too
     const gap = 10;
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
-    const triggerRect = trigger.getBoundingClientRect();
+    const triggerRect = [trigger, ...Array.from(trigger.querySelectorAll<HTMLElement>('*'))]
+      .map((element) => element.getBoundingClientRect())
+      .find((rect) => rect.width > 0 && rect.height > 0) || trigger.getBoundingClientRect();
     const tooltipRect = tooltip.getBoundingClientRect();
 
     const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));

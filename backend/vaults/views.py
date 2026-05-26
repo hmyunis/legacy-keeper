@@ -453,8 +453,16 @@ class MemoryListCreateView(generics.ListCreateAPIView):
             return Response({"file": ["No file was uploaded."]}, status=status.HTTP_400_BAD_REQUEST)
 
         title = request.data.get('title', '')
+        cluster_name = (request.data.get('cluster_name') or request.data.get('collection') or '').strip()
+        if len(cluster_name) > 100:
+            return Response({"cluster_name": ["Collection name must be 100 characters or fewer."]}, status=status.HTTP_400_BAD_REQUEST)
 
-        memory = Memory.objects.create(vault_id=vault_id, original_file=file, title=title)
+        memory = Memory.objects.create(
+            vault_id=vault_id,
+            original_file=file,
+            title=title,
+            cluster_name=cluster_name or 'Unsorted',
+        )
 
         ActionLog.objects.create(
             vault_id=vault_id, user=request.user, action_type='upload',

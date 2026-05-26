@@ -105,10 +105,10 @@ export const useCollectionActions = () => {
 
 export const useUploadMemory = () => {
   return useMutation({
-    mutationFn: ({ file, title }: { file: File; title?: string }) => {
+    mutationFn: ({ file, title, clusterName }: { file: File; title?: string; clusterName?: string }) => {
       const vaultId = useAuthStore.getState().activeVaultId;
       if (!vaultId) throw new Error("Vault ID missing");
-      return vaultService.uploadMemory(vaultId, file, title);
+      return vaultService.uploadMemory(vaultId, file, title, clusterName);
     }
   });
 };

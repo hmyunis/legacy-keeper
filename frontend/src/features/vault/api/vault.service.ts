@@ -80,10 +80,11 @@ export const vaultService = {
     await axiosClient.delete(`/vaults/${vaultId}/memories/collections/${collectionId}/`);
   },
 
-  uploadMemory: async (vaultId: string, file: File, title?: string): Promise<{ task_id: string | null, memory_id: string }> => {
+  uploadMemory: async (vaultId: string, file: File, title?: string, clusterName?: string): Promise<{ task_id: string | null, memory_id: string }> => {
     const formData = new FormData();
     formData.append('file', file);
     if (title) formData.append('title', title);
+    if (clusterName) formData.append('cluster_name', clusterName);
 
     const response = await axiosClient.post(`/vaults/${vaultId}/memories/`, formData);
     return response.data;

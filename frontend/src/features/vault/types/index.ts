@@ -21,6 +21,8 @@ export interface VaultMemory {
     value: unknown;
     status?: 'pending' | 'accepted' | 'rejected';
     source?: string;
+    confidence?: 'high' | 'medium' | 'low';
+    rationale?: string;
     generated_at?: string | null;
     decided_at?: string | null;
     decided_by?: string | null;

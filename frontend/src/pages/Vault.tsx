@@ -2,7 +2,7 @@ import { useState, useRef, Suspense, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   UploadSimple, MagicWand, X, ArrowRight, CheckCircle,
-  Binoculars, Vault as VaultIcon, MagnifyingGlass, FunnelSimple, Heart} from '@phosphor-icons/react';
+  Binoculars, Vault as VaultIcon, MagnifyingGlass, FunnelSimple, Heart, FolderOpen, Images, CaretLeft, CaretRight} from '@phosphor-icons/react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, OrbitControls, useTexture, SpotLight, Grid } from '@react-three/drei';
 import { sileo } from 'sileo';
@@ -12,11 +12,12 @@ import { Button } from '../components/ui/Button';
 import { CustomDatePicker } from '../components/ui/CustomDatePicker';
 import { Tooltip } from '../components/ui/Tooltip';
 import { AiMarker } from '../components/ui/AiMarker';
+import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
 import MemoryCard from '../components/vault/MemoryCard';
 import VaultMediaSurface from '../components/vault/VaultMediaSurface';
 import MemoryDetailModal from '../features/vault/MemoryDetailModal';
 import { Breadcrumbs } from '../components/ui/Breadcrumbs';
-import { useMemorySuggestionDecision, useUploadMemory, useVaultClusters, useInfiniteFilteredMemories, useMemoryFilters, useUpdateMemory } from '../features/vault/hooks/useVault';
+import { useDeleteMemory, useMemorySuggestionDecision, useUploadMemory, useVaultClusters, useInfiniteFilteredMemories, useMemoryFilters, useUpdateMemory } from '../features/vault/hooks/useVault';
 import { useDashboardSummary } from '../features/dashboard/hooks/useDashboard';
 import type { VaultMemory } from '../features/vault/types';
 import { pollTask } from '../lib/tasks';
@@ -33,6 +34,28 @@ const FRAME_CORNERS = [
   { key: 'bottom-left', x: -1.12, y: -1.34, accentX: -0.98, accentY: -1.22, rotate: -Math.PI / 4 },
   { key: 'bottom-right', x: 1.12, y: -1.34, accentX: 0.98, accentY: -1.22, rotate: Math.PI / 4 },
 ];
+
+type FolderImportItem = {
+  id: string;
+  file: File;
+  previewUrl: string;
+  relativePath: string;
+};
+
+type FolderImportPreview = {
+  folderName: string;
+  files: FolderImportItem[];
+  skippedCount: number;
+};
+
+function getFolderNameFromFiles(files: File[]) {
+  const firstPath = (files[0] as any)?.webkitRelativePath || files[0]?.name || 'Imported Folder';
+  return String(firstPath).split('/').filter(Boolean)[0] || 'Imported Folder';
+}
+
+function formatFileSize(bytes: number) {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function Memory3DFrame({
   memory,
@@ -320,7 +343,12 @@ export default function Vault() {
   const [uploadQueue, setUploadQueue] = useState<any[]>([]);
   const [isReviewPanelOpen, setIsReviewPanelOpen] = useState(false);
   const [isConfirmingReview, setIsConfirmingReview] = useState(false);
+  const [isDiscardingReview, setIsDiscardingReview] = useState(false);
+  const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = useState(false);
   const [pendingCuration, setPendingCuration] = useState<any>(null);
+  const [reviewQueue, setReviewQueue] = useState<any[]>([]);
+  const [reviewIndex, setReviewIndex] = useState(0);
+  const [reviewDirection, setReviewDirection] = useState(1);
   const [selectedMemory, setSelectedMemory] = useState<VaultMemory | null>(null);
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchInput, setSearchInput] = useState('');
@@ -329,10 +357,13 @@ export default function Vault() {
   const [showFavorites, setShowFavorites] = useState(() => new URLSearchParams(window.location.search).get('favorites') === 'true');
   const [selectedDecade, setSelectedDecade] = useState('');
   const [selectedFileType, setSelectedFileType] = useState<'ALL' | 'image' | 'video' | 'audio' | 'pdf'>('ALL');
+  const [folderImport, setFolderImport] = useState<FolderImportPreview | null>(null);
+  const [isImportingFolder, setIsImportingFolder] = useState(false);
 
   const debouncedSearch = useDebouncedValue(searchInput, 400);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const { data: dynamicClusters = [] } = useVaultClusters();
   const { data: filters = { clusters: [], decades: [] } } = useMemoryFilters();
@@ -343,6 +374,7 @@ export default function Vault() {
   const canContribute = currentUser?.role === 'ADMIN' || currentUser?.role === 'CONTRIBUTOR';
   const uploadMutation = useUploadMemory();
   const updateMutation = useUpdateMemory();
+  const deleteMemoryMutation = useDeleteMemory();
   const suggestionDecision = useMemorySuggestionDecision();
   const queryClient = useQueryClient();
 
@@ -352,6 +384,8 @@ export default function Vault() {
   const pendingTitleSuggestion = typeof pendingTitleValue === 'string' ? pendingTitleValue : null;
   const pendingDescriptionSuggestion = typeof pendingDescriptionValue === 'string' ? pendingDescriptionValue : null;
   const pendingTagSuggestion = Array.isArray(pendingTagsValue) ? pendingTagsValue.map(String).filter(Boolean) : null;
+  const hasReviewPrevious = reviewIndex > 0;
+  const hasReviewNext = reviewIndex < reviewQueue.length - 1;
 
   const filterParams = {
     q: debouncedSearch || undefined,
@@ -423,9 +457,65 @@ export default function Vault() {
     return () => observer.disconnect();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, viewMode]);
 
-  const handleFiles = async (files: FileList | File[]) => {
+  useEffect(() => {
+    if (!isReviewPanelOpen || isDiscardConfirmOpen || isConfirmingReview || isDiscardingReview) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      if (tagName === 'input' || tagName === 'textarea' || target?.isContentEditable) return;
+
+      if (event.key === 'ArrowLeft' && hasReviewPrevious) {
+        event.preventDefault();
+        handleNavigateReview(-1);
+      }
+      if (event.key === 'ArrowRight' && hasReviewNext) {
+        event.preventDefault();
+        handleNavigateReview(1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [hasReviewNext, hasReviewPrevious, isConfirmingReview, isDiscardConfirmOpen, isDiscardingReview, isReviewPanelOpen, reviewIndex, reviewQueue]);
+
+  const closeFolderImportPreview = () => {
+    folderImport?.files.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    setFolderImport(null);
+    if (folderInputRef.current) folderInputRef.current.value = '';
+  };
+
+  const handleFolderSelection = (files: FileList | null) => {
+    const selectedFiles = Array.from(files || []);
+    if (selectedFiles.length === 0) return;
+
+    const imageFiles = selectedFiles.filter((file) => file.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      sileo.error({ title: "No Images Found", description: "Choose a folder that contains image files." });
+      if (folderInputRef.current) folderInputRef.current.value = '';
+      return;
+    }
+
+    const folderName = getFolderNameFromFiles(selectedFiles).slice(0, 100);
+    const previewFiles = imageFiles.map((file, index) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}-${index}`,
+      file,
+      previewUrl: URL.createObjectURL(file),
+      relativePath: (file as any).webkitRelativePath || file.name,
+    }));
+
+    folderImport?.files.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    setFolderImport({
+      folderName,
+      files: previewFiles,
+      skippedCount: selectedFiles.length - imageFiles.length,
+    });
+  };
+
+  const handleFiles = async (files: FileList | File[], options?: { collectionName?: string }) => {
     const fileArray = Array.from(files);
     const isBatch = fileArray.length > 1;
+    const collectionName = options?.collectionName;
 
     const promises = fileArray.map(async (file, index) => {
       const tempId = `up-${Date.now()}-${index}`;
@@ -439,7 +529,7 @@ export default function Vault() {
       }]);
 
       try {
-        const { task_id, memory_id } = await uploadMutation.mutateAsync({ file });
+        const { task_id, memory_id } = await uploadMutation.mutateAsync({ file, clusterName: collectionName });
 
         if (task_id) {
           const processingPromise = pollTask(task_id).then(() => true).catch(() => false);
@@ -460,6 +550,9 @@ export default function Vault() {
 
         if (!isBatch && memory_id) {
           const fullMemory = await axiosClient.get(`/vaults/${activeVaultId}/memories/${memory_id}/`);
+          setReviewQueue([fullMemory.data]);
+          setReviewIndex(0);
+          setReviewDirection(1);
           setPendingCuration(fullMemory.data);
           setReviewNote(fullMemory.data.human_caption || '');
           setIsReviewPanelOpen(true);
@@ -476,10 +569,49 @@ export default function Vault() {
     queryClient.invalidateQueries({ queryKey: ['filteredMemories'] });
     queryClient.invalidateQueries({ queryKey: ['vaultClusters'] });
     queryClient.invalidateQueries({ queryKey: ['memoryFilters'] });
+    queryClient.invalidateQueries({ queryKey: ['memoryCollections'] });
 
     setTimeout(() => {
       setUploadQueue(curr => curr.filter(q => q.status !== 'READY'));
     }, 3000);
+  };
+
+  const handleConfirmFolderImport = async () => {
+    if (!folderImport || !activeVaultId) return;
+    const importPlan = folderImport;
+    setIsImportingFolder(true);
+    try {
+      await axiosClient.post(`/vaults/${activeVaultId}/memories/collections/`, { name: importPlan.folderName });
+      closeFolderImportPreview();
+      sileo.success({
+        title: "Folder Import Started",
+        description: `${importPlan.files.length} image${importPlan.files.length === 1 ? '' : 's'} queued for "${importPlan.folderName}".`
+      });
+      setActiveCategory(importPlan.folderName);
+      setViewMode('2D');
+
+      void handleFiles(importPlan.files.map((item) => item.file), { collectionName: importPlan.folderName }).catch(() => {
+        sileo.error({ title: "Folder Import Failed", description: "Some files could not be queued." });
+      });
+    } catch {
+      sileo.error({ title: "Folder Import Failed", description: "The collection or uploads could not be completed." });
+    } finally {
+      setIsImportingFolder(false);
+    }
+  };
+
+  const handleRemoveFolderPreviewItem = (itemId: string) => {
+    setFolderImport((prev) => {
+      if (!prev) return prev;
+      const removed = prev.files.find((item) => item.id === itemId);
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      const nextFiles = prev.files.filter((item) => item.id !== itemId);
+      if (nextFiles.length === 0) {
+        if (folderInputRef.current) folderInputRef.current.value = '';
+        return null;
+      }
+      return { ...prev, files: nextFiles };
+    });
   };
 
   const handleConfirmReview = async () => {
@@ -499,12 +631,84 @@ export default function Vault() {
       {
         loading: { title: "Preserving..." },
         success: () => {
-          setIsReviewPanelOpen(false);
+          removeCurrentFromReviewQueue(pendingCuration.id);
           return { title: "Memory Verified" };
         },
         error: { title: "Failed to verify memory" }
       }
     ).finally(() => setIsConfirmingReview(false));
+  };
+
+  const openReviewQueue = async () => {
+    try {
+      const { data: fetchRes } = await axiosClient.get(`/vaults/${activeVaultId}/memories/`, { params: { reviewed: false, limit: 1000 } });
+      const unreviewed = fetchRes.results || fetchRes || [];
+      if (unreviewed.length === 0) {
+        queryClient.invalidateQueries({ queryKey: ['dashboardSummary'] });
+        sileo.info({ title: "Review Queue Empty", description: "There are no pending artifacts to review." });
+        return;
+      }
+
+      setReviewQueue(unreviewed);
+      setReviewIndex(0);
+      setReviewDirection(1);
+      setPendingCuration(unreviewed[0]);
+      setReviewNote(unreviewed[0].human_caption || '');
+      setIsReviewPanelOpen(true);
+    } catch {
+      sileo.error({ title: "Review Queue Failed", description: "Could not load pending artifacts." });
+    }
+  };
+
+  const handleNavigateReview = (direction: -1 | 1) => {
+    if (direction < 0 && !hasReviewPrevious) return;
+    if (direction > 0 && !hasReviewNext) return;
+
+    const nextIndex = reviewIndex + direction;
+    const nextItem = reviewQueue[nextIndex];
+    if (!nextItem) return;
+
+    setReviewDirection(direction);
+    setReviewIndex(nextIndex);
+    setPendingCuration(nextItem);
+    setReviewNote(nextItem.human_caption || '');
+    setIsDiscardConfirmOpen(false);
+  };
+
+  const removeCurrentFromReviewQueue = (memoryId: string) => {
+    setReviewQueue((currentQueue) => {
+      const nextQueue = currentQueue.filter((item) => item.id !== memoryId);
+      if (nextQueue.length === 0) {
+        setReviewIndex(0);
+        setPendingCuration(null);
+        setReviewNote('');
+        setIsReviewPanelOpen(false);
+        return [];
+      }
+
+      const nextIndex = Math.min(reviewIndex, nextQueue.length - 1);
+      setReviewIndex(nextIndex);
+      setReviewDirection(hasReviewNext ? 1 : -1);
+      setPendingCuration(nextQueue[nextIndex]);
+      setReviewNote(nextQueue[nextIndex].human_caption || '');
+      return nextQueue;
+    });
+  };
+
+  const handleDiscardReview = async () => {
+    if (!pendingCuration || isDiscardingReview) return;
+
+    setIsDiscardingReview(true);
+    await sileo.promise(deleteMemoryMutation.mutateAsync(pendingCuration.id), {
+      loading: { title: "Discarding Artifact..." },
+      success: () => {
+        setIsDiscardConfirmOpen(false);
+        removeCurrentFromReviewQueue(pendingCuration.id);
+        queryClient.invalidateQueries({ queryKey: ['dashboardSummary'] });
+        return { title: "Artifact Discarded", description: "The pending memory was removed." };
+      },
+      error: { title: "Discard Failed", description: "The pending memory could not be removed." }
+    }).finally(() => setIsDiscardingReview(false));
   };
 
   const handleRemoveReviewTag = (tagToRemove: string) => {
@@ -522,6 +726,7 @@ export default function Vault() {
     try {
       const updated = await suggestionDecision.mutateAsync({ memoryId: pendingCuration.id, field, action });
       setPendingCuration(updated);
+      setReviewQueue((queue) => queue.map((item) => item.id === updated.id ? updated : item));
       sileo.success({
         title: action === 'accept' ? "Suggestion Accepted" : "Suggestion Dismissed",
         description: `${field === 'description' ? 'Description' : field} has been ${action === 'accept' ? 'applied' : 'left unchanged'}.`
@@ -572,7 +777,26 @@ export default function Vault() {
               <Button variant="primary" onClick={() => fileInputRef.current?.click()} className="shadow-[var(--shadow-gold)] px-6 md:px-10">
                 <UploadSimple size={20} weight="bold" /> <span className="hidden md:inline">UPLOAD MEMORY</span><span className="md:hidden">UPLOAD</span>
               </Button>
+              <Tooltip content="Import folder">
+                <Button
+                  variant="icon"
+                  aria-label="Import folder"
+                  onClick={() => folderInputRef.current?.click()}
+                  className="border-[rgba(184,143,91,0.55)] bg-[rgba(20,18,17,0.42)] text-[var(--clr-linen)] hover:text-[var(--clr-gold)]"
+                >
+                  <FolderOpen size={20} weight="bold" />
+                </Button>
+              </Tooltip>
               <input type="file" ref={fileInputRef} className="hidden" multiple onChange={(e) => e.target.files && handleFiles(e.target.files)} />
+              <input
+                type="file"
+                ref={folderInputRef}
+                className="hidden"
+                multiple
+                accept="image/*"
+                {...({ webkitdirectory: '', directory: '' } as any)}
+                onChange={(e) => handleFolderSelection(e.target.files)}
+              />
             </>
           )}
         </div>
@@ -840,6 +1064,95 @@ export default function Vault() {
         )}
       </AnimatePresence>
 
+      {/* Folder Import Preview */}
+      <AnimatePresence>
+        {folderImport && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[360] flex items-center justify-center bg-[rgba(20,18,17,0.72)] p-4 backdrop-blur-md pointer-events-auto">
+            <motion.div
+              initial={{ opacity: 0, y: 18, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.98 }}
+              className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[rgba(184,143,91,0.36)] bg-[var(--clr-linen)] shadow-2xl"
+            >
+              <div className="flex flex-col gap-4 border-b border-[var(--clr-aged)] bg-[linear-gradient(135deg,rgba(247,244,239,1),rgba(232,223,203,0.94))] p-5 sm:flex-row sm:items-start sm:justify-between sm:p-6">
+                <div className="min-w-0">
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-[rgba(184,143,91,0.35)] bg-[rgba(184,143,91,0.12)] px-3 py-1 font-ui text-[10px] font-black uppercase tracking-[0.2em] text-[var(--clr-gold-dark)]">
+                    <FolderOpen size={14} weight="fill" /> Folder Import
+                  </div>
+                  <h2 className="font-display text-[clamp(1.8rem,4vw,3rem)] uppercase leading-none tracking-wide text-[var(--clr-ink)]">{folderImport.folderName}</h2>
+                  <p className="mt-2 font-ui text-[12px] leading-relaxed text-[var(--clr-dust)]">
+                    A collection named "{folderImport.folderName}" will be created or reused. Review the images before preserving them.
+                    {folderImport.skippedCount > 0 && ` ${folderImport.skippedCount} non-image file${folderImport.skippedCount === 1 ? '' : 's'} will be skipped.`}
+                  </p>
+                </div>
+                <Tooltip content="Close">
+                  <button
+                    aria-label="Close folder import preview"
+                    onClick={closeFolderImportPreview}
+                    className="flex h-10 w-10 shrink-0 items-center justify-center self-end rounded-full border border-[var(--clr-aged)] text-[var(--clr-dust)] transition-colors hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)] sm:self-start"
+                  >
+                    <X size={18} weight="bold" />
+                  </button>
+                </Tooltip>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-5 sm:p-6">
+                <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)]/60 p-4">
+                    <p className="font-ui text-[9px] font-black uppercase tracking-[0.18em] text-[var(--clr-dust)]">Images</p>
+                    <p className="mt-1 font-display text-[1.8rem] leading-none text-[var(--clr-ink)]">{folderImport.files.length}</p>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)]/60 p-4">
+                    <p className="font-ui text-[9px] font-black uppercase tracking-[0.18em] text-[var(--clr-dust)]">Total Size</p>
+                    <p className="mt-1 font-display text-[1.8rem] leading-none text-[var(--clr-ink)]">{formatFileSize(folderImport.files.reduce((sum, item) => sum + item.file.size, 0))}</p>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)]/60 p-4">
+                    <p className="font-ui text-[9px] font-black uppercase tracking-[0.18em] text-[var(--clr-dust)]">Collection</p>
+                    <p className="mt-2 truncate font-ui text-[13px] font-bold text-[var(--clr-ink)]">{folderImport.folderName}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {folderImport.files.map((item) => (
+                    <div key={item.id} className="group overflow-hidden rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)] shadow-sm">
+                      <div className="relative aspect-[4/3] bg-[var(--clr-soot)]">
+                        <img src={item.previewUrl} alt={item.file.name} className="h-full w-full object-cover" />
+                        <button
+                          type="button"
+                          aria-label={`Remove ${item.file.name}`}
+                          onClick={() => handleRemoveFolderPreviewItem(item.id)}
+                          className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full border border-white/30 bg-black/60 text-white opacity-0 transition-opacity hover:bg-[var(--clr-danger)] group-hover:opacity-100"
+                        >
+                          <X size={14} weight="bold" />
+                        </button>
+                      </div>
+                      <div className="p-3">
+                        <p className="truncate font-ui text-[12px] font-bold text-[var(--clr-ink)]">{item.file.name}</p>
+                        <p className="mt-1 truncate font-ui text-[10px] text-[var(--clr-dust)]">{item.relativePath}</p>
+                        <p className="mt-1 font-ui text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--clr-gold-dark)]">{formatFileSize(item.file.size)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-col-reverse gap-3 border-t border-[var(--clr-aged)] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+                <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-dust)]">{folderImport.files.length} image{folderImport.files.length === 1 ? '' : 's'} ready for upload</p>
+                <div className="flex flex-col-reverse gap-3 sm:flex-row">
+                  <Button variant="ghost" onClick={closeFolderImportPreview} className="w-full sm:w-auto">
+                    <X size={16} /> Cancel
+                  </Button>
+                  <Button variant="primary" onClick={handleConfirmFolderImport} disabled={isImportingFolder || folderImport.files.length === 0} className="w-full sm:w-auto">
+                    {isImportingFolder ? <MagicWand size={18} className="animate-spin" /> : <Images size={18} weight="bold" />}
+                    {isImportingFolder ? 'Importing...' : 'Confirm Import'}
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Drag & Drop Visuals */}
       <AnimatePresence>
         {isDragging && (
@@ -893,17 +1206,7 @@ export default function Vault() {
             <Button
                 variant="primary"
                 className="py-2 px-6 text-[11px] shrink-0"
-                onClick={async () => {
-                    const { data: fetchRes } = await axiosClient.get(`/vaults/${activeVaultId}/memories/`, { params: { reviewed: false, limit: 1 } });
-                    const unreviewed = fetchRes.results?.[0] || fetchRes[0];
-                    if (unreviewed) {
-                        setPendingCuration(unreviewed);
-                        setReviewNote(unreviewed.human_caption || '');
-                        setIsReviewPanelOpen(true);
-                    } else {
-                        queryClient.invalidateQueries({ queryKey: ['dashboardSummary'] });
-                    }
-                }}
+                onClick={openReviewQueue}
             >
                 START REVIEW
             </Button>
@@ -923,7 +1226,47 @@ export default function Vault() {
       <AnimatePresence>
         {isReviewPanelOpen && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[400] bg-[rgba(20,18,17,0.92)] backdrop-blur-md flex items-center justify-center p-3 sm:p-5 md:p-8 pointer-events-auto">
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="w-full max-w-5xl bg-[var(--clr-parchment)] rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] border border-[rgba(184,143,91,0.3)] overflow-hidden grid grid-rows-[minmax(220px,38vh)_1fr] md:grid-rows-1 md:grid-cols-[minmax(320px,0.95fr)_minmax(360px,1.05fr)] max-h-[92vh]">
+            {reviewQueue.length > 1 && (
+              <>
+                <Tooltip content="Previous pending artifact">
+                  <button
+                    type="button"
+                    aria-label="Previous pending artifact"
+                    disabled={!hasReviewPrevious || isConfirmingReview || isDiscardingReview}
+                    onClick={() => handleNavigateReview(-1)}
+                    className="absolute left-2 top-1/2 z-[410] flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-[rgba(184,143,91,0.45)] bg-[rgba(20,18,17,0.72)] text-[var(--clr-linen)] shadow-lg backdrop-blur-md transition-colors hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)] disabled:cursor-not-allowed disabled:opacity-35 md:left-3 md:h-12 md:w-12"
+                  >
+                    <CaretLeft size={24} weight="bold" />
+                  </button>
+                </Tooltip>
+                <Tooltip content="Next pending artifact">
+                  <button
+                    type="button"
+                    aria-label="Next pending artifact"
+                    disabled={!hasReviewNext || isConfirmingReview || isDiscardingReview}
+                    onClick={() => handleNavigateReview(1)}
+                    className="absolute right-2 top-1/2 z-[410] flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-[rgba(184,143,91,0.45)] bg-[rgba(20,18,17,0.72)] text-[var(--clr-linen)] shadow-lg backdrop-blur-md transition-colors hover:border-[var(--clr-gold)] hover:text-[var(--clr-gold)] disabled:cursor-not-allowed disabled:opacity-35 md:right-3 md:h-12 md:w-12"
+                  >
+                    <CaretRight size={24} weight="bold" />
+                  </button>
+                </Tooltip>
+              </>
+            )}
+            <AnimatePresence mode="wait" custom={reviewDirection}>
+              <motion.div
+                key={pendingCuration?.id || 'review-empty'}
+                custom={reviewDirection}
+                variants={{
+                  enter: (direction: number) => ({ x: direction > 0 ? 90 : -90, opacity: 0, scale: 0.97 }),
+                  center: { x: 0, opacity: 1, scale: 1 },
+                  exit: (direction: number) => ({ x: direction > 0 ? -90 : 90, opacity: 0, scale: 0.97 }),
+                }}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+                className="w-full max-w-5xl bg-[var(--clr-parchment)] rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] border border-[rgba(184,143,91,0.3)] overflow-hidden grid grid-rows-[minmax(220px,38vh)_1fr] md:grid-rows-1 md:grid-cols-[minmax(320px,0.95fr)_minmax(360px,1.05fr)] max-h-[92vh]"
+              >
               <div className="bg-[var(--clr-soot)] relative flex items-center justify-center p-4 sm:p-6 overflow-hidden">
                 <div className="absolute top-4 right-4 z-20">
                   <Tooltip content="Close">
@@ -948,6 +1291,11 @@ export default function Vault() {
                   <div>
                     <span className="font-ui text-[10px] uppercase font-black tracking-widest text-[var(--clr-gold)]">Digital Curation</span>
                     <h3 className="font-display font-extrabold text-[1.65rem] text-[var(--clr-ink)] leading-none uppercase tracking-wider">Verify Artifact</h3>
+                    {reviewQueue.length > 1 && (
+                      <p className="mt-1 font-ui text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--clr-dust)]">
+                        {reviewIndex + 1} of {reviewQueue.length} pending
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1057,14 +1405,46 @@ export default function Vault() {
                   </div>
                 </div>
 
-                <div className="pt-5 mt-6 border-t border-[var(--clr-aged)] flex flex-col-reverse sm:flex-row justify-between sm:items-center gap-3">
-                  <button onClick={() => setIsReviewPanelOpen(false)} className="font-ui text-[10px] font-bold uppercase tracking-widest text-[var(--clr-dust)] hover:text-[var(--clr-ink)] transition-colors px-2 py-2">Review Later</button>
-                  <Button variant="primary" className="px-6 py-3 w-full sm:w-auto" disabled={isConfirmingReview} onClick={handleConfirmReview}>
+                <div className="pt-5 mt-6 border-t border-[var(--clr-aged)] flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
+                    <button
+                      onClick={() => setIsReviewPanelOpen(false)}
+                      disabled={isConfirmingReview || isDiscardingReview}
+                      className="font-ui text-[10px] font-bold uppercase tracking-widest text-[var(--clr-dust)] hover:text-[var(--clr-ink)] transition-colors px-2 py-2 disabled:opacity-50"
+                    >
+                      Review Later
+                    </button>
+                    <button
+                      onClick={() => setIsDiscardConfirmOpen(true)}
+                      disabled={isConfirmingReview || isDiscardingReview}
+                      className="font-ui text-[10px] font-bold uppercase tracking-widest text-[var(--clr-danger)] hover:bg-[rgba(139,58,58,0.1)] transition-colors px-3 py-2 rounded-full disabled:opacity-50"
+                    >
+                      {isDiscardingReview ? 'Discarding...' : 'Discard Artifact'}
+                    </button>
+                  </div>
+                  <Button variant="primary" className="px-6 py-3 w-full sm:w-auto" disabled={isConfirmingReview || isDiscardingReview} onClick={handleConfirmReview}>
                     {isConfirmingReview ? 'PRESERVING...' : 'CONFIRM & PRESERVE'} <ArrowRight weight="bold" />
                   </Button>
                 </div>
+                <ConfirmationDialog
+                  open={isDiscardConfirmOpen}
+                  onOpenChange={setIsDiscardConfirmOpen}
+                  variant="danger"
+                  eyebrow="Discard Pending Artifact"
+                  title="Remove From Vault?"
+                  description={
+                    <>
+                      This will permanently remove <strong className="text-[var(--clr-ink)]">{pendingCuration?.title || 'Untitled Artifact'}</strong> from the vault instead of preserving it. This cannot be undone.
+                    </>
+                  }
+                  confirmLabel="Discard"
+                  cancelLabel="Keep Reviewing"
+                  isLoading={isDiscardingReview}
+                  onConfirm={handleDiscardReview}
+                />
               </div>
             </motion.div>
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
