@@ -11,11 +11,11 @@ import { Button } from '../components/ui/Button';
 import { Tooltip } from '../components/ui/Tooltip';
 import MemoryCard from '../components/vault/MemoryCard';
 import MemoryDetailModal from '../features/vault/MemoryDetailModal';
+import { ShareAccessDialog } from '../features/share/ShareAccessDialog';
 import { useGenerateStory } from '../features/chronicles/hooks/useChronicles';
 import { chroniclesService } from '../features/chronicles/api/chronicles.service';
 import { useAuthStore } from '../stores/authStore';
 import { pollTask } from '../lib/tasks';
-import { buildPersonShareUrl } from '../lib/deepLinks';
 import axiosClient from '../services/axiosClient';
 import type { PersonProfile as PersonProfileType } from '../features/chronicles/types';
 
@@ -45,6 +45,7 @@ export default function PersonProfile() {
 
   const [selectedMemory, setSelectedMemory] = useState<any | null>(null);
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const speechChunksRef = useRef<string[]>([]);
   const speechIndexRef = useRef(0);
@@ -192,27 +193,7 @@ export default function PersonProfile() {
   });
 
   const handleNativeShare = async () => {
-    const shareUrl = buildPersonShareUrl(profile?.vaultId || vaultId, String(personId)) || window.location.href;
-    const shareData = {
-      title: `${profile?.name} - Biography`,
-      text: profile?.biography || `Explore the lineage chronicle of ${profile?.name}.`,
-      url: shareUrl,
-    };
-
-    if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-        sileo.success({ title: 'Profile Shared' });
-      } catch (err) {
-        if (err instanceof DOMException && err.name !== 'AbortError') {
-          sileo.error({ title: 'Sharing Failed' });
-        }
-      }
-      return;
-    }
-
-    await navigator.clipboard.writeText(shareUrl);
-    sileo.success({ title: 'Link Copied', description: 'Share URL copied to clipboard.' });
+    setIsShareDialogOpen(true);
   };
 
   const handleTriggerPrint = () => window.print();
@@ -374,6 +355,15 @@ export default function PersonProfile() {
         onClose={() => setSelectedMemory(null)}
         memory={selectedMemory}
         onUpdate={handleMemoryUpdate}
+      />
+      <ShareAccessDialog
+        open={isShareDialogOpen}
+        onOpenChange={setIsShareDialogOpen}
+        itemType="PERSON"
+        itemId={String(personId)}
+        vaultId={profile.vaultId || vaultId}
+        title={`${profile.name} - Biography`}
+        text={profile.biography || `Explore the lineage chronicle of ${profile.name}.`}
       />
 
       <section className="bg-[var(--clr-charcoal)] relative overflow-hidden pt-[calc(var(--shell-offset-top)+64px)] pb-28 px-[clamp(20px,5vw,80px)]">

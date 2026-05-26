@@ -1,5 +1,7 @@
 export interface VaultMemory {
   id: string;
+  vaultId?: string;
+  vaultName?: string;
   url: string;
   restoredUrl?: string;
   title: string;

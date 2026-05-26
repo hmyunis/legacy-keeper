@@ -2,7 +2,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from .models import Vault, VaultMember, ActionLog, LineagePact, VaultInvitation, VaultInviteLink
+from .models import Vault, VaultMember, ActionLog, LineagePact, VaultInvitation, VaultInviteLink, SharedArtifact
 
 User = get_user_model()
 
@@ -188,3 +188,27 @@ class VaultInviteLinkSerializer(serializers.ModelSerializer):
 
     def get_isExpired(self, obj):
         return bool(obj.expires_at and obj.expires_at <= timezone.now())
+
+
+class SharedArtifactSerializer(serializers.ModelSerializer):
+    vaultId = serializers.CharField(source='vault.id', read_only=True)
+    vaultName = serializers.CharField(source='vault.name', read_only=True)
+    createdByName = serializers.CharField(source='created_by.full_name', read_only=True)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    isRevoked = serializers.BooleanField(source='is_revoked', read_only=True)
+
+    class Meta:
+        model = SharedArtifact
+        fields = (
+            'id',
+            'token',
+            'item_type',
+            'object_id',
+            'audience',
+            'vault_scope',
+            'vaultId',
+            'vaultName',
+            'createdByName',
+            'createdAt',
+            'isRevoked',
+        )

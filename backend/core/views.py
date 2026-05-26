@@ -17,8 +17,8 @@ from django.shortcuts import get_object_or_404
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 
-from .models import Vault, VaultMember, ActionLog, LineagePact, PushSubscription, VaultInvitation, VaultInviteLink
-from .serializers import CustomTokenObtainPairSerializer, UserSerializer, VaultMemberSerializer, ActionLogSerializer, LineagePactSerializer, VaultInvitationSerializer, VaultInviteLinkSerializer
+from .models import Vault, VaultMember, ActionLog, LineagePact, PushSubscription, VaultInvitation, VaultInviteLink, SharedArtifact
+from .serializers import CustomTokenObtainPairSerializer, UserSerializer, VaultMemberSerializer, ActionLogSerializer, LineagePactSerializer, VaultInvitationSerializer, VaultInviteLinkSerializer, SharedArtifactSerializer
 from core.utils.mail import send_notification_email
 from core.vapid import diagnose_vapid_config, send_web_push
 from lineage.models import Person
@@ -650,6 +650,177 @@ class ClaimInviteLinkView(views.APIView):
             "vaultName": invite_link.vault.name,
             "role": membership.role,
         }, status=status.HTTP_201_CREATED)
+
+
+def _user_vault_ids(user):
+    if not user or not user.is_authenticated:
+        return []
+    return list(VaultMember.objects.filter(user=user).values_list('vault_id', flat=True))
+
+
+def _has_lineage_pact_access(user, vault_id):
+    user_vault_ids = _user_vault_ids(user)
+    if not user_vault_ids:
+        return False
+    if any(str(user_vault_id) == str(vault_id) for user_vault_id in user_vault_ids):
+        return True
+    return LineagePact.objects.filter(
+        (
+            Q(requester_vault_id=vault_id, target_vault_id__in=user_vault_ids) |
+            Q(target_vault_id=vault_id, requester_vault_id__in=user_vault_ids)
+        ),
+        status='ACCEPTED',
+    ).exists()
+
+
+def _can_authenticated_user_view_share(user, share):
+    if not user or not user.is_authenticated:
+        return False
+    if share.vault_scope == SharedArtifact.SCOPE_ANY_VAULT:
+        return VaultMember.objects.filter(user=user).exists()
+    if share.vault_scope == SharedArtifact.SCOPE_LINEAGE_PACT:
+        return _has_lineage_pact_access(user, share.vault_id)
+    return VaultMember.objects.filter(user=user, vault_id=share.vault_id).exists()
+
+
+def _can_authenticated_user_open_item(user, share):
+    if not user or not user.is_authenticated:
+        return False
+    return VaultMember.objects.filter(user=user, vault_id=share.vault_id).exists()
+
+
+def _get_share_item(share):
+    if share.item_type == SharedArtifact.ITEM_MEMORY:
+        from vaults.models import Memory
+        return get_object_or_404(Memory, id=share.object_id, vault_id=share.vault_id)
+    if share.item_type == SharedArtifact.ITEM_PERSON:
+        return get_object_or_404(Person, id=share.object_id, vault_id=share.vault_id)
+    raise ValueError("Unsupported share item type.")
+
+
+def _build_share_redirect_path(share):
+    if share.item_type == SharedArtifact.ITEM_MEMORY:
+        return f"/museum?vaultId={share.vault_id}&memoryId={share.object_id}"
+    if share.item_type == SharedArtifact.ITEM_PERSON:
+        return f"/person/{share.object_id}?vaultId={share.vault_id}"
+    return "/dashboard"
+
+
+def _build_share_public_payload(request, share, item):
+    if share.item_type == SharedArtifact.ITEM_MEMORY:
+        from vaults.serializers import MemorySerializer
+        item_data = MemorySerializer(item, context={'request': request}).data
+    else:
+        from lineage.serializers import PersonSerializer
+        from vaults.models import Memory
+        item_data = PersonSerializer(item, context={'request': request}).data
+        memory_count = Memory.objects.filter(
+            Q(detected_faces__person=item) | Q(identified_people=item)
+        ).distinct().count()
+        item_data.update({
+            "vaultId": str(item.vault_id),
+            "vaultName": item.vault.name,
+            "memoryCount": memory_count,
+        })
+
+    return {
+        "mode": "public",
+        "token": share.token,
+        "itemType": share.item_type,
+        "vaultId": str(share.vault_id),
+        "vaultName": share.vault.name,
+        "audience": share.audience,
+        "vaultScope": share.vault_scope,
+        "item": item_data,
+        "redirectPath": _build_share_redirect_path(share),
+    }
+
+
+class SharedArtifactCreateView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        item_type = (request.data.get('itemType') or request.data.get('item_type') or '').strip().upper()
+        object_id = request.data.get('itemId') or request.data.get('object_id')
+        vault_id = request.data.get('vaultId') or request.data.get('vault_id')
+        audience = (request.data.get('audience') or SharedArtifact.AUDIENCE_PUBLIC).strip().upper()
+        vault_scope = (request.data.get('vaultScope') or request.data.get('vault_scope') or SharedArtifact.SCOPE_SAME_VAULT).strip().upper()
+
+        if item_type not in dict(SharedArtifact.ITEM_TYPE_CHOICES):
+            return Response({"error": "Unsupported share item type."}, status=status.HTTP_400_BAD_REQUEST)
+        if audience not in dict(SharedArtifact.AUDIENCE_CHOICES):
+            return Response({"error": "Unsupported share audience."}, status=status.HTTP_400_BAD_REQUEST)
+        if vault_scope not in dict(SharedArtifact.VAULT_SCOPE_CHOICES):
+            return Response({"error": "Unsupported vault access scope."}, status=status.HTTP_400_BAD_REQUEST)
+        if not vault_id or not object_id:
+            return Response({"error": "vaultId and itemId are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
+
+        if item_type == SharedArtifact.ITEM_MEMORY:
+            from vaults.models import Memory
+            get_object_or_404(Memory, id=object_id, vault_id=vault_id)
+        else:
+            get_object_or_404(Person, id=object_id, vault_id=vault_id)
+
+        token = SharedArtifact.generate_token()
+        while SharedArtifact.objects.filter(token=token).exists():
+            token = SharedArtifact.generate_token()
+
+        share = SharedArtifact.objects.create(
+            vault_id=vault_id,
+            token=token,
+            item_type=item_type,
+            object_id=object_id,
+            audience=audience,
+            vault_scope=vault_scope,
+            created_by=request.user,
+        )
+
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='share',
+            description=f"Created a share link for {item_type.lower()} {object_id}.",
+            target_id=object_id,
+            target_type=item_type,
+        )
+        return Response(SharedArtifactSerializer(share).data, status=status.HTTP_201_CREATED)
+
+
+class SharedArtifactResolveView(views.APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        share = get_object_or_404(
+            SharedArtifact.objects.select_related('vault', 'created_by'),
+            token=token,
+            revoked_at__isnull=True,
+        )
+        item = _get_share_item(share)
+
+        if request.user.is_authenticated:
+            if _can_authenticated_user_open_item(request.user, share):
+                return Response({
+                    "mode": "redirect",
+                    "redirectPath": _build_share_redirect_path(share),
+                    "vaultId": str(share.vault_id),
+                    "itemType": share.item_type,
+                    "itemId": str(share.object_id),
+                })
+            if share.audience == SharedArtifact.AUDIENCE_PUBLIC or _can_authenticated_user_view_share(request.user, share):
+                return Response(_build_share_public_payload(request, share, item))
+            if share.audience != SharedArtifact.AUDIENCE_PUBLIC:
+                return Response({"error": "This share is not available to your vault."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(_build_share_public_payload(request, share, item))
+
+        if share.audience != SharedArtifact.AUDIENCE_PUBLIC:
+            return Response({
+                "error": "Sign in to open this share.",
+                "requiresAuth": True,
+            }, status=status.HTTP_401_UNAUTHORIZED)
+
+        return Response(_build_share_public_payload(request, share, item))
 
 
 class RemoveMemberView(views.APIView):

@@ -4,6 +4,7 @@ from vaults.models import Memory
 from rest_framework import views, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.shortcuts import get_object_or_404
 
@@ -117,8 +118,22 @@ class PersonProfileView(views.APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, vault_id, id):
-        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user)
-        vault_ids = get_accessible_vault_ids(vault_id)
+        member = VaultMember.objects.filter(vault_id=vault_id, user=request.user).first()
+        base_vault_id = vault_id
+        if not member:
+            from core.models import LineagePact
+            pact = LineagePact.objects.filter(
+                (
+                    Q(requester_vault_id=vault_id, target_vault__members__user=request.user) |
+                    Q(target_vault_id=vault_id, requester_vault__members__user=request.user)
+                ),
+                status='ACCEPTED',
+            ).first()
+            if not pact:
+                raise PermissionDenied("You do not have access to this lineage profile.")
+            base_vault_id = pact.target_vault_id if str(pact.requester_vault_id) == str(vault_id) else pact.requester_vault_id
+
+        vault_ids = get_accessible_vault_ids(base_vault_id)
         person = get_object_or_404(Person, id=id, vault_id__in=vault_ids)
 
         memories = Memory.objects.filter(

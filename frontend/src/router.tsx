@@ -19,6 +19,7 @@ import Onboarding from './pages/Onboarding';
 import VaultSelect from './pages/VaultSelect';
 import InvitationInbox from './pages/InvitationInbox';
 import JoinInvite from './pages/JoinInvite';
+import SharedArtifact from './pages/SharedArtifact';
 import Help from './pages/Help';
 import Logs from './pages/Logs';
 import Members from './pages/Members';
@@ -97,6 +98,12 @@ const joinInviteRoute = createRoute({
   getParentRoute: () => publicLayoutRoute,
   path: 'join/$token',
   component: JoinInvite,
+});
+
+const sharedArtifactRoute = createRoute({
+  getParentRoute: () => publicLayoutRoute,
+  path: 'share/$token',
+  component: SharedArtifact,
 });
 
 // ── Protected app ─────────────────────────────────────────────────────────
@@ -224,6 +231,7 @@ const routeTree = rootRoute.addChildren([
     resetPasswordRoute,
     verifyEmailRoute,
     joinInviteRoute,
+    sharedArtifactRoute,
   ]),
   appLayoutRoute.addChildren([
     dashboardRoute,

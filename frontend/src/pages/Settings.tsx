@@ -136,6 +136,34 @@ export default function Settings() {
     () => Object.entries(selectedPurgeIds).filter(([, checked]) => checked).map(([id]) => id),
     [selectedPurgeIds]
   );
+  const purgeReviewSummary = useMemo(() => {
+    const totalCandidates = purgeGroups.reduce((count, group) => count + (group.items?.length || 0), 0);
+    const keptCount = Math.max(totalCandidates - selectedIdsList.length, 0);
+    const selectedBytes = purgeGroups.reduce((total, group) => {
+      return total + (group.items || []).reduce((groupTotal: number, item: any) => {
+        return groupTotal + (selectedPurgeIds[item.id] ? Number(item.filesize || 0) : 0);
+      }, 0);
+    }, 0);
+    return {
+      totalCandidates,
+      keptCount,
+      estimatedMb: (selectedBytes / (1024 * 1024)).toFixed(2),
+    };
+  }, [purgeGroups, selectedIdsList.length, selectedPurgeIds]);
+
+  const handleSelectKeepArtifact = (group: any, keepId: string) => {
+    setSelectedPurgeIds((prev) => {
+      const next = { ...prev };
+      (group.items || []).forEach((item: any) => {
+        next[item.id] = item.id !== keepId;
+      });
+      return next;
+    });
+  };
+
+  const handleTogglePurgeArtifact = (itemId: string, checked: boolean) => {
+    setSelectedPurgeIds((prev) => ({ ...prev, [itemId]: checked }));
+  };
 
   const handleConfirmSmartPurge = async () => {
     sileo.promise(smartPurgeMutation.mutateAsync(selectedIdsList), {
@@ -466,7 +494,7 @@ export default function Settings() {
             <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} className="relative w-full max-w-5xl max-h-[88vh] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--clr-aged)] bg-[var(--clr-linen)] shadow-2xl flex flex-col">
               <div className="p-5 sm:p-6 border-b border-[var(--clr-aged)]">
                 <h3 className="font-display text-[1.5rem] uppercase tracking-widest text-[var(--clr-ink)]">Review Smart Purge</h3>
-                <p className="font-ui text-[12px] text-[var(--clr-dust)] mt-1">AI preselected redundant copies. Uncheck anything you want to keep.</p>
+                <p className="font-ui text-[12px] text-[var(--clr-dust)] mt-1">Choose the keeper for each duplicate cluster, then fine-tune exactly which artifacts are purged.</p>
               </div>
               <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
                 {purgeGroups.length === 0 ? (
@@ -474,37 +502,73 @@ export default function Settings() {
                     <p className="font-ui text-[13px] text-[var(--clr-dust)]">No duplicate groups detected. Your archive is pristine.</p>
                   </div>
                 ) : (
-                  purgeGroups.map((group) => (
+                  purgeGroups.map((group) => {
+                    const keptItems = (group.items || []).filter((item: any) => !selectedPurgeIds[item.id]);
+                    return (
                     <div key={group.phash} className="rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)]/35 p-4">
-                      <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-gold-dark)] mb-3">Duplicate Cluster</p>
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-gold-dark)]">Duplicate Cluster</p>
+                          <p className="font-ui text-[10px] text-[var(--clr-dust)] mt-1">{keptItems.length} kept • {(group.items?.length || 0) - keptItems.length} selected for purge</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const suggested = (group.items || []).find((item: any) => item.suggested_keep) || group.items?.[0];
+                            if (suggested) handleSelectKeepArtifact(group, suggested.id);
+                          }}
+                          className="rounded-full border border-[var(--clr-aged)] px-3 py-1.5 font-ui text-[9px] font-black uppercase tracking-[0.14em] text-[var(--clr-gold-dark)] hover:border-[var(--clr-gold)] hover:bg-[rgba(184,143,91,0.1)]"
+                        >
+                          Reset AI Pick
+                        </button>
+                      </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {group.items.map((item: any) => {
-                          const isKeep = item.suggested_keep;
+                          const isKeep = !selectedPurgeIds[item.id];
                           const checked = !!selectedPurgeIds[item.id];
                           return (
-                            <label key={item.id} className={`flex items-center gap-3 rounded-[var(--radius-sm)] border p-2 ${isKeep ? 'border-[var(--clr-success)] bg-[rgba(74,124,89,0.08)]' : 'border-[var(--clr-aged)] bg-[var(--clr-linen)]'}`}>
-                              <input
-                                type="checkbox"
-                                disabled={isKeep}
-                                checked={isKeep ? false : checked}
-                                onChange={(e) => setSelectedPurgeIds((prev) => ({ ...prev, [item.id]: e.target.checked }))}
-                              />
-                              <img src={item.url} alt={item.title} className="h-14 w-14 rounded object-cover border border-[var(--clr-aged)]" />
-                              <div className="min-w-0">
-                                <p className="font-ui text-[12px] font-bold text-[var(--clr-ink)] truncate">{item.title}</p>
-                                <p className="font-ui text-[10px] text-[var(--clr-dust)]">{item.width}x{item.height} • {(item.filesize / (1024 * 1024)).toFixed(2)} MB</p>
-                                {isKeep && <p className="font-ui text-[9px] uppercase tracking-widest text-[var(--clr-success)] font-bold mt-1">AI Keep (best quality)</p>}
+                            <div key={item.id} className={`rounded-[var(--radius-sm)] border p-3 transition-colors ${isKeep ? 'border-[var(--clr-success)] bg-[rgba(74,124,89,0.08)]' : 'border-[var(--clr-aged)] bg-[var(--clr-linen)]'}`}>
+                              <div className="flex items-start gap-3">
+                                <img src={item.url} alt={item.title} className="h-20 w-20 rounded object-cover border border-[var(--clr-aged)]" />
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-ui text-[12px] font-bold text-[var(--clr-ink)] truncate">{item.title}</p>
+                                  <p className="font-ui text-[10px] text-[var(--clr-dust)]">{item.width}x{item.height} • {(item.filesize / (1024 * 1024)).toFixed(2)} MB</p>
+                                  <p className="font-ui text-[10px] text-[var(--clr-dust)]">{item.year || 'Undated'}{item.location ? ` • ${item.location}` : ''}</p>
+                                  {item.suggested_keep && <p className="font-ui text-[9px] uppercase tracking-widest text-[var(--clr-success)] font-bold mt-1">AI best quality</p>}
+                                </div>
                               </div>
-                            </label>
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectKeepArtifact(group, item.id)}
+                                  className={`rounded-full border px-3 py-2 font-ui text-[9px] font-black uppercase tracking-[0.14em] transition-colors ${isKeep ? 'border-[var(--clr-success)] bg-[var(--clr-success)] text-white' : 'border-[var(--clr-aged)] text-[var(--clr-dust)] hover:border-[var(--clr-success)] hover:text-[var(--clr-success)]'}`}
+                                >
+                                  Keep
+                                </button>
+                                <label className={`flex cursor-pointer items-center justify-center gap-2 rounded-full border px-3 py-2 font-ui text-[9px] font-black uppercase tracking-[0.14em] transition-colors ${checked ? 'border-[var(--clr-danger)] bg-[rgba(139,58,58,0.1)] text-[var(--clr-danger)]' : 'border-[var(--clr-aged)] text-[var(--clr-dust)] hover:border-[var(--clr-danger)] hover:text-[var(--clr-danger)]'}`}>
+                                  <input
+                                    type="checkbox"
+                                    className="h-3.5 w-3.5"
+                                    checked={checked}
+                                    disabled={keptItems.length === 1 && isKeep}
+                                    onChange={(e) => handleTogglePurgeArtifact(item.id, e.target.checked)}
+                                  />
+                                  Purge
+                                </label>
+                              </div>
+                            </div>
                           );
                         })}
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
               <div className="p-5 sm:p-6 border-t border-[var(--clr-aged)] flex items-center justify-between gap-3">
-                <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-dust)]">{selectedIdsList.length} selected for deletion</p>
+                <p className="font-ui text-[11px] uppercase tracking-widest text-[var(--clr-dust)]">
+                  {selectedIdsList.length} purge • {purgeReviewSummary.keptCount} keep • ~{purgeReviewSummary.estimatedMb} MB
+                </p>
                 <div className="flex items-center gap-3">
                   <Button variant="ghost" onClick={() => setIsPurgeDialogOpen(false)}>Cancel</Button>
                   <Button variant="primary" onClick={handleConfirmSmartPurge} disabled={smartPurgeMutation.isPending || selectedIdsList.length === 0}>

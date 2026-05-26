@@ -40,6 +40,8 @@ class IdentifiedPersonSerializer(serializers.ModelSerializer):
         return f"https://ui-avatars.com/api/?name={obj.name.replace(' ', '+')}&background=B88F5B&color=fff"
 
 class MemorySerializer(serializers.ModelSerializer):
+    vaultId = serializers.CharField(source='vault.id', read_only=True)
+    vaultName = serializers.CharField(source='vault.name', read_only=True)
     url = serializers.FileField(source='original_file', read_only=True)
     restoredUrl = serializers.FileField(source='restored_file', read_only=True)
     people = serializers.SerializerMethodField()
@@ -50,7 +52,7 @@ class MemorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Memory
-        fields = ('id', 'url', 'restoredUrl', 'title', 'location', 'date', 'year', 'capturedAt', 'cluster_name', 'ai_caption', 'human_caption', 'tags', 'people', 'detected_faces', 'identified_people', 'exif_json', 'ai_suggestions', 'is_reviewed', 'is_indexed', 'is_favorite')
+        fields = ('id', 'vaultId', 'vaultName', 'url', 'restoredUrl', 'title', 'location', 'date', 'year', 'capturedAt', 'cluster_name', 'ai_caption', 'human_caption', 'tags', 'people', 'detected_faces', 'identified_people', 'exif_json', 'ai_suggestions', 'is_reviewed', 'is_indexed', 'is_favorite')
 
     def validate(self, attrs):
         if 'date' in attrs:

@@ -983,17 +983,25 @@ class SmartPurgeView(views.APIView):
         get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role='ADMIN')
         groups, default_delete_ids, _ = self._build_duplicate_plan(vault_id, request)
 
-        allowed_ids = {item["id"] for group in groups for item in group["items"] if not item["suggested_keep"]}
+        allowed_ids = {item["id"] for group in groups for item in group["items"]}
         selected_ids = request.data.get('memory_ids')
         if isinstance(selected_ids, list):
-            selected_ids = [str(mid) for mid in selected_ids if str(mid) in allowed_ids]
+            selected_ids = {str(mid) for mid in selected_ids if str(mid) in allowed_ids}
         else:
-            selected_ids = list(default_delete_ids)
+            selected_ids = set(default_delete_ids)
+
+        for group in groups:
+            group_ids = {item["id"] for item in group["items"]}
+            if group_ids and group_ids.issubset(selected_ids):
+                return Response(
+                    {"error": "Each duplicate group must keep at least one artifact."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         purged_count = 0
         bytes_saved = 0
 
-        for mem in Memory.objects.filter(id__in=selected_ids, vault_id=vault_id).exclude(capsules__status='LOCKED'):
+        for mem in Memory.objects.filter(id__in=list(selected_ids), vault_id=vault_id).exclude(capsules__status='LOCKED'):
             bytes_saved += int((mem.exif_json or {}).get('filesize', 0) or 0)
             mem.delete()
             purged_count += 1

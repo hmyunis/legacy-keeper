@@ -28,6 +28,10 @@ export function buildPersonShareUrl(vaultId: string | null | undefined, personId
   return buildAppUrl(`/person/${personId}`, { vaultId });
 }
 
+export function buildShareUrl(token: string) {
+  return buildAppUrl(`/share/${token}`);
+}
+
 export function parseRouteTarget(target: string, fallbackPath = '/dashboard') {
   const resolved = target || fallbackPath;
   const url = new URL(resolved, getOrigin() || 'http://localhost');

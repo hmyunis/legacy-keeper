@@ -10,12 +10,12 @@ import { CustomDatePicker } from '../../components/ui/CustomDatePicker';
 import { Tooltip } from '../../components/ui/Tooltip';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
 import { AiMarker } from '../../components/ui/AiMarker';
+import { ShareAccessDialog } from '../share/ShareAccessDialog';
 import { useCollectionActions, useDeleteMemory, useMemoryCollections, useMemorySuggestionDecision, useUpdateMemory } from './hooks/useVault';
 import axiosClient from '../../services/axiosClient';
 import { useAuthStore } from '../../stores/authStore';
 import { useFamilyTreeData } from '../family-tree/hooks/useFamilyTree';
 import { downloadArtifact } from '../../lib/files';
-import { buildMemoryShareUrl } from '../../lib/deepLinks';
 import { pollTask } from '../../lib/tasks';
 import { getPendingSuggestion, isAiGeneratedTag, isAiGeneratedTitle } from './lib/aiMarkers';
 import type { VaultMemory } from './types';
@@ -172,6 +172,7 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
   const [manualKinBusyId, setManualKinBusyId] = useState<string | null>(null);
   const [reverseGeocodedLocation, setReverseGeocodedLocation] = useState('');
   const [isReverseGeocoding, setIsReverseGeocoding] = useState(false);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
   const { currentUser } = useAuthStore();
   const activeVaultId = useAuthStore((s) => s.activeVaultId);
@@ -283,26 +284,7 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
   };
 
   const handleShare = async () => {
-    const shareUrl = buildMemoryShareUrl(activeVaultId || currentUser?.vaultId, String(memory.id)) || window.location.href;
-    const shareData = {
-      title: memory.title || 'LegacyKeeper Artifact',
-      text: memory.human_caption || memory.ai_caption || 'View this family memory in LegacyKeeper.',
-      url: shareUrl,
-    };
-
-    try {
-      if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
-        await navigator.share(shareData);
-        sileo.success({ title: "Share Sheet Opened", description: "Choose where to send this artifact." });
-        return;
-      }
-
-      await navigator.clipboard.writeText(shareUrl);
-      sileo.success({ title: "Link Copied", description: "Native sharing is not available in this browser." });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      sileo.error({ title: "Share Failed", description: "The artifact could not be shared." });
-    }
+    setIsShareDialogOpen(true);
   };
 
   const handleToggleFavorite = async () => {
@@ -1188,6 +1170,15 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
             cancelLabel="Keep Exhibit"
             isLoading={deleteMutation.isPending}
             onConfirm={handleDelete}
+          />
+          <ShareAccessDialog
+            open={isShareDialogOpen}
+            onOpenChange={setIsShareDialogOpen}
+            itemType="MEMORY"
+            itemId={String(memory.id)}
+            vaultId={memory.vaultId || activeVaultId || currentUser?.vaultId}
+            title={memory.title || 'LegacyKeeper Artifact'}
+            text={memory.human_caption || memory.ai_caption || 'View this family memory in LegacyKeeper.'}
           />
         </div>
       )}

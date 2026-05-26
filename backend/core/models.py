@@ -97,6 +97,51 @@ class VaultInviteLink(models.Model):
     def has_capacity(self):
         return self.max_uses is None or self.uses_count < self.max_uses
 
+
+class SharedArtifact(models.Model):
+    ITEM_MEMORY = 'MEMORY'
+    ITEM_PERSON = 'PERSON'
+    ITEM_TYPE_CHOICES = (
+        (ITEM_MEMORY, 'Memory'),
+        (ITEM_PERSON, 'Person'),
+    )
+
+    AUDIENCE_PUBLIC = 'PUBLIC'
+    AUDIENCE_AUTHENTICATED = 'AUTHENTICATED'
+    AUDIENCE_CHOICES = (
+        (AUDIENCE_PUBLIC, 'Everyone with the link'),
+        (AUDIENCE_AUTHENTICATED, 'Authenticated users only'),
+    )
+
+    SCOPE_SAME_VAULT = 'SAME_VAULT'
+    SCOPE_LINEAGE_PACT = 'LINEAGE_PACT'
+    SCOPE_ANY_VAULT = 'ANY_VAULT'
+    VAULT_SCOPE_CHOICES = (
+        (SCOPE_SAME_VAULT, 'Same vault'),
+        (SCOPE_LINEAGE_PACT, 'Same vault or lineage pact'),
+        (SCOPE_ANY_VAULT, 'Any vault'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name='shared_artifacts')
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    item_type = models.CharField(max_length=12, choices=ITEM_TYPE_CHOICES)
+    object_id = models.UUIDField(db_index=True)
+    audience = models.CharField(max_length=20, choices=AUDIENCE_CHOICES, default=AUDIENCE_PUBLIC)
+    vault_scope = models.CharField(max_length=20, choices=VAULT_SCOPE_CHOICES, default=SCOPE_SAME_VAULT)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='shared_artifacts')
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @staticmethod
+    def generate_token():
+        return secrets.token_urlsafe(24)
+
+    @property
+    def is_revoked(self):
+        return self.revoked_at is not None
+
 class LineagePact(models.Model):
     STATUS_CHOICES = (
         ('PENDING', 'Pending'),
