@@ -45,8 +45,20 @@ function yearForMemory(memory: any) {
 
 function resolveMemoryImageUrl(memory: any) {
   const rawUrl = memory.restoredUrl || memory.url || memory.original_file || DEFAULT_EXHIBIT_TEXTURE;
-  if (!rawUrl || rawUrl.startsWith('data:') || rawUrl.startsWith('blob:') || /^https?:\/\//i.test(rawUrl)) {
+  if (!rawUrl || rawUrl.startsWith('data:') || rawUrl.startsWith('blob:')) {
     return rawUrl || DEFAULT_EXHIBIT_TEXTURE;
+  }
+
+  if (/^https?:\/\//i.test(rawUrl)) {
+    try {
+      const parsed = new URL(rawUrl);
+      if (['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)) {
+        return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      }
+    } catch {
+      return rawUrl;
+    }
+    return rawUrl;
   }
 
   try {

@@ -178,12 +178,7 @@ CELERY_TASK_SERIALIZER = 'json'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 OLLAMA_URL = config('OLLAMA_URL', default='http://host.docker.internal:11434')
-OLLAMA_MODEL = config('OLLAMA_MODEL', default='llama3.1:8b')
-
-USE_MAILEROO = config('USE_MAILEROO', default=False, cast=bool)
-MAILEROO_API_KEY = config('MAILEROO_API_KEY', default='')
-DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='museum@yourfamily.com')
-DEFAULT_FROM_NAME = config('DEFAULT_FROM_NAME', default='LegacyKeeper Museum')
+OLLAMA_MODEL = config('OLLAMA_MODEL', default='qwen3.5:0.8b')
 
 _VAPID_PLACEHOLDERS = {
     '',
@@ -222,6 +217,22 @@ def _vapid_config(key, default=''):
     return value
 
 
+def _maileroo_config(key, default=''):
+    value = config(key, default=default)
+    normalized = str(value or '').strip().strip("'\"")
+    if normalized:
+        return normalized
+
+    local_value = _read_local_env_value(key)
+    if local_value:
+        return local_value
+    return value
+
+
 VAPID_PUBLIC_KEY = _vapid_config('VAPID_PUBLIC_KEY', default='')
 VAPID_PRIVATE_KEY = _vapid_config('VAPID_PRIVATE_KEY', default='')
-VAPID_ADMIN_EMAIL = config('VAPID_ADMIN_EMAIL', default=DEFAULT_FROM_EMAIL)
+USE_MAILEROO = str(_maileroo_config('USE_MAILEROO', default='False')).strip().lower() in {'1', 'true', 'yes', 'on'}
+MAILEROO_API_KEY = _maileroo_config('MAILEROO_API_KEY', default='')
+DEFAULT_FROM_EMAIL = _maileroo_config('DEFAULT_FROM_EMAIL', default='museum@yourfamily.com')
+DEFAULT_FROM_NAME = _maileroo_config('DEFAULT_FROM_NAME', default='LegacyKeeper Museum')
+VAPID_ADMIN_EMAIL = _maileroo_config('VAPID_ADMIN_EMAIL', default=DEFAULT_FROM_EMAIL)

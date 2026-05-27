@@ -21,6 +21,7 @@ from .serializers import MemorySerializer, CapsuleSerializer, MemoryCollectionSe
 from django.db.models import Q, Count, F
 from . import search_ranking as search_ranker
 from rest_framework.pagination import PageNumberPagination
+from core.utils.media import normalize_media_url
 
 _clip_model = None
 logger = logging.getLogger(__name__)
@@ -889,7 +890,7 @@ class DashboardSummaryView(views.APIView):
         unreviewed_count = Memory.objects.visible_to_vault(vault_id).filter(is_reviewed=False).count()
 
         recent_exhibits = Memory.objects.visible_to_vault(vault_id).order_by('-created_at')[:4]
-        hero_images = [request.build_absolute_uri(m.original_file.url) for m in recent_exhibits]
+        hero_images = [normalize_media_url(m.original_file.url) for m in recent_exhibits if m.original_file]
 
         return Response({
             "vaultName": vault.name,
@@ -960,7 +961,7 @@ class SmartPurgeView(views.APIView):
                 candidate_rows.append({
                     "id": str(mem.id),
                     "title": mem.title or "Untitled",
-                    "url": request.build_absolute_uri(mem.original_file.url) if mem.original_file else "",
+                    "url": normalize_media_url(mem.original_file.url) if mem.original_file else "",
                     "year": mem.year or "",
                     "location": mem.location or "",
                     "width": int(exif.get('width', 0) or 0),

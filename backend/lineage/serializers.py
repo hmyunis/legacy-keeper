@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from core.utils.media import normalize_media_url
 from .models import Person, KinshipEdge
 
 class PersonSerializer(serializers.ModelSerializer):
@@ -13,11 +14,8 @@ class PersonSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'role', 'photo', 'birthYear', 'deathYear', 'biography', 'vaultId', 'vaultName')
 
     def get_photo(self, obj):
-        request = self.context.get('request')
         if obj.avatar:
-            if request:
-                return request.build_absolute_uri(obj.avatar.url)
-            return obj.avatar.url
+            return normalize_media_url(obj.avatar.url)
         if obj.avatar_url:
             return obj.avatar_url
         name_formatted = obj.name.replace(' ', '+')

@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.utils import timezone
 from .models import Memory, Capsule, MemoryCollection
 from lineage.models import Person, PersonFaceEmbedding
+from core.utils.media import normalize_media_url
 
 class DetectedFaceSerializer(serializers.ModelSerializer):
     person_id = serializers.CharField(source='person.id', read_only=True)
@@ -13,11 +14,8 @@ class DetectedFaceSerializer(serializers.ModelSerializer):
         fields = ('id', 'person_id', 'person_name', 'person_avatar', 'bounding_box')
 
     def get_person_avatar(self, obj):
-        request = self.context.get('request')
         if obj.person.avatar:
-            if request:
-                return request.build_absolute_uri(obj.person.avatar.url)
-            return obj.person.avatar.url
+            return normalize_media_url(obj.person.avatar.url)
         if obj.person.avatar_url:
             return obj.person.avatar_url
         return f"https://ui-avatars.com/api/?name={obj.person.name.replace(' ', '+')}&background=B88F5B&color=fff"
@@ -30,11 +28,8 @@ class IdentifiedPersonSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'role', 'person_avatar')
 
     def get_person_avatar(self, obj):
-        request = self.context.get('request')
         if obj.avatar:
-            if request:
-                return request.build_absolute_uri(obj.avatar.url)
-            return obj.avatar.url
+            return normalize_media_url(obj.avatar.url)
         if obj.avatar_url:
             return obj.avatar_url
         return f"https://ui-avatars.com/api/?name={obj.name.replace(' ', '+')}&background=B88F5B&color=fff"
@@ -42,8 +37,8 @@ class IdentifiedPersonSerializer(serializers.ModelSerializer):
 class MemorySerializer(serializers.ModelSerializer):
     vaultId = serializers.CharField(source='vault.id', read_only=True)
     vaultName = serializers.CharField(source='vault.name', read_only=True)
-    url = serializers.FileField(source='original_file', read_only=True)
-    restoredUrl = serializers.FileField(source='restored_file', read_only=True)
+    url = serializers.SerializerMethodField()
+    restoredUrl = serializers.SerializerMethodField()
     people = serializers.SerializerMethodField()
     detected_faces = DetectedFaceSerializer(many=True, read_only=True)
     identified_people = IdentifiedPersonSerializer(many=True, read_only=True)
@@ -81,6 +76,12 @@ class MemorySerializer(serializers.ModelSerializer):
         exif = obj.exif_json or {}
         return exif.get('capture_datetime') or exif.get('capture_date') or None
 
+    def get_url(self, obj):
+        return normalize_media_url(obj.original_file.url) if obj.original_file else None
+
+    def get_restoredUrl(self, obj):
+        return normalize_media_url(obj.restored_file.url) if obj.restored_file else None
+
 class CapsuleSerializer(serializers.ModelSerializer):
     daysRemaining = serializers.SerializerMethodField()
     memory_urls = serializers.SerializerMethodField()
@@ -110,11 +111,10 @@ class CapsuleSerializer(serializers.ModelSerializer):
         return max(delta.days, 0)
 
     def get_memory_urls(self, obj):
-        request = self.context.get('request')
         memories = obj.memories.all()
         if obj.status == 'LOCKED' or obj.unlock_date > timezone.now():
             memories = memories[:1]
-        return [request.build_absolute_uri(m.original_file.url) for m in memories]
+        return [normalize_media_url(m.original_file.url) for m in memories if m.original_file]
 
     def get_sealedById(self, obj):
         return str(obj.sealed_by_id) if obj.sealed_by_id else None

@@ -24,6 +24,19 @@ const AI_THINKING_STEPS = [
 
 const normalizeMediaUrl = (value?: string | null) => {
   if (!value) return value;
+
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      if (['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)) {
+        return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      }
+    } catch {
+      return value;
+    }
+    return value;
+  }
+
   if (/^[a-z][a-z\d+\-.]*:/i.test(value)) return value;
 
   try {

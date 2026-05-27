@@ -3,6 +3,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from .models import Vault, VaultMember, ActionLog, LineagePact, VaultInvitation, VaultInviteLink, SharedArtifact
+from .utils.media import normalize_media_url
 
 User = get_user_model()
 
@@ -30,7 +31,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_avatar(self, obj):
         if obj.avatar:
-            return self.context['request'].build_absolute_uri(obj.avatar.url)
+            return normalize_media_url(obj.avatar.url)
         return f"https://ui-avatars.com/api/?name={obj.full_name.replace(' ', '+')}&background=B88F5B&color=fff"
 
     def get_vaultId(self, obj):
