@@ -16,8 +16,8 @@ class Person(models.Model):
     role = models.CharField(
         max_length=100, blank=True
     )  # Curator/Identity Role (e.g., Patriarch, Matriarch)
-    birth_year = models.CharField(max_length=4, blank=True)
-    death_year = models.CharField(max_length=4, null=True, blank=True)
+    birth_year = models.CharField(max_length=20, blank=True)
+    death_year = models.CharField(max_length=20, null=True, blank=True)
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)  # Native avatar upload
     avatar_url = models.URLField(blank=True)  # Retrocompatible remote fallback
     biography = models.TextField(blank=True)
