@@ -35,6 +35,13 @@ export default function FamilyTree() {
   const [isSafeDeleteOpen, setIsSafeDeleteOpen] = useState(false);
   const [reparentId, setReparentId] = useState('__sever__');
   const [isStrandedCleanupOpen, setIsStrandedCleanupOpen] = useState(false);
+  const [relationshipToDetach, setRelationshipToDetach] = useState<null | {
+    fromPersonId: string;
+    toPersonId: string;
+    type: 'PARENT_OF' | 'SPOUSE_OF';
+    label: string;
+    counterpartName: string;
+  }>(null);
 
   const isDragging = useRef(false);
   const lastX = useRef(0);
@@ -56,6 +63,50 @@ export default function FamilyTree() {
   const activeVaultId = useAuthStore(s => s.activeVaultId);
   const isForeignSelectedNode = Boolean(selectedNode?.vaultId && activeVaultId && selectedNode.vaultId !== activeVaultId);
   const canEditSelectedNode = canContribute && !isForeignSelectedNode;
+  const selectedRelationships = selectedNode ? (() => {
+    const items: Array<{
+      fromPersonId: string;
+      toPersonId: string;
+      type: 'PARENT_OF' | 'SPOUSE_OF';
+      label: string;
+      counterpartName: string;
+    }> = [];
+    const seen = new Set<string>();
+
+    edges.forEach((edge: any) => {
+      if (edge.from !== selectedNode.id && edge.to !== selectedNode.id) return;
+
+      const counterpartId = edge.from === selectedNode.id ? edge.to : edge.from;
+      const counterpart = nodes.find((node: any) => node.id === counterpartId);
+      const type = edge.type as 'PARENT_OF' | 'SPOUSE_OF';
+      const dedupeKey = type === 'SPOUSE_OF'
+        ? [type, [edge.from, edge.to].sort().join(':')].join('|')
+        : [type, edge.from, edge.to].join('|');
+
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+
+      const isParentView = type === 'PARENT_OF' && edge.from === selectedNode.id;
+      const isChildView = type === 'PARENT_OF' && edge.to === selectedNode.id;
+      const label = type === 'SPOUSE_OF'
+        ? 'Spouse'
+        : isParentView
+          ? 'Child'
+          : isChildView
+            ? 'Parent'
+            : 'Relative';
+
+      items.push({
+        fromPersonId: edge.from,
+        toPersonId: edge.to,
+        type,
+        label,
+        counterpartName: counterpart?.name || 'Unknown',
+      });
+    });
+
+    return items;
+  })() : [];
 
   const reparentOptions = nodes.filter((n: any) => n.id !== selectedNodeId && n.vaultId === activeVaultId);
   const graftExistingOptions = nodes.filter((n: any) => n.id !== graftState?.targetId);
@@ -116,6 +167,19 @@ export default function FamilyTree() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['familyTree'] });
       setIsStrandedCleanupOpen(false);
+    }
+  });
+
+  const detachRelationshipMutation = useMutation({
+    mutationFn: async (payload: { fromPersonId: string; toPersonId: string; type: 'PARENT_OF' | 'SPOUSE_OF' }) => {
+      const vaultId = useAuthStore.getState().activeVaultId;
+      if (!vaultId) throw new Error('Vault ID missing');
+      const response = await axiosClient.delete(`/vaults/${vaultId}/lineage/relationship/`, { data: payload });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['familyTree'] });
+      setRelationshipToDetach(null);
     }
   });
 
@@ -208,6 +272,40 @@ export default function FamilyTree() {
       },
       error: { title: 'Cleanup Failed' }
     });
+  };
+
+  const openDetachDialog = (relationship: {
+    fromPersonId: string;
+    toPersonId: string;
+    type: 'PARENT_OF' | 'SPOUSE_OF';
+    label: string;
+    counterpartName: string;
+  }) => {
+    setRelationshipToDetach(relationship);
+  };
+
+  const closeDetachDialog = () => {
+    setRelationshipToDetach(null);
+  };
+
+  const confirmDetachRelationship = async () => {
+    if (!relationshipToDetach) return;
+
+    await sileo.promise(
+      detachRelationshipMutation.mutateAsync({
+        fromPersonId: relationshipToDetach.fromPersonId,
+        toPersonId: relationshipToDetach.toPersonId,
+        type: relationshipToDetach.type,
+      }),
+      {
+        loading: { title: 'Detaching Relationship...' },
+        success: { title: 'Relationship Detached' },
+        error: (err: any) => ({
+          title: 'Detach Failed',
+          description: err?.response?.data?.error || 'Could not remove this relationship.',
+        }),
+      }
+    );
   };
 
   const submitGraft = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -321,6 +419,7 @@ export default function FamilyTree() {
         setGraftExistingId('');
         setIsEditingPerson(false);
         setIsSafeDeleteOpen(false);
+        setRelationshipToDetach(null);
       }
     };
     window.addEventListener('keydown', handler);
@@ -476,6 +575,34 @@ export default function FamilyTree() {
                   <Button variant="danger" onClick={openSafeDelete} className="w-full"><Trash size={16} /> Remove</Button>
                 </div>
               )}
+              {canEditSelectedNode && selectedRelationships.length > 0 && (
+                <div className="mt-4 rounded-[var(--radius-lg)] border border-[var(--clr-aged)] bg-[rgba(247,244,239,0.88)] p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-ui text-[10px] font-black uppercase tracking-[0.2em] text-[var(--clr-dust)]">Relationships</p>
+                      <p className="mt-1 font-ui text-[12px] text-[var(--clr-dust)]">Detach a parent or spouse link without deleting the person.</p>
+                    </div>
+                    <span className="font-ui text-[10px] font-black uppercase tracking-widest text-[var(--clr-gold-dark)]">{selectedRelationships.length}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {selectedRelationships.map((relationship: any) => (
+                      <div key={`${relationship.fromPersonId}-${relationship.toPersonId}-${relationship.type}`} className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--clr-aged)] bg-white/60 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate font-ui text-[12px] font-bold text-[var(--clr-ink)]">{relationship.counterpartName}</p>
+                          <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-dust)]">{relationship.label}</p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          className="shrink-0 py-2 px-3 text-[10px]"
+                          onClick={() => openDetachDialog(relationship)}
+                        >
+                          <Trash size={14} /> Detach
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {isForeignSelectedNode && (
                 <div className="mt-3 rounded-[var(--radius-md)] border border-[rgba(184,143,91,0.28)] bg-[rgba(184,143,91,0.08)] px-4 py-3">
                   <p className="font-ui text-[10px] uppercase tracking-[0.18em] text-[var(--clr-gold-dark)] font-bold">Linked vault node</p>
@@ -486,6 +613,50 @@ export default function FamilyTree() {
               )}
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {relationshipToDetach && selectedNode && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center overflow-y-auto p-3 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={closeDetachDialog}
+            />
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="relative my-auto w-full max-w-lg rounded-[var(--radius-lg)] border-2 border-[var(--clr-danger)] bg-[var(--clr-parchment)] p-5 shadow-2xl sm:p-8"
+            >
+              <h2 className="mb-3 font-display text-xl uppercase tracking-widest text-[var(--clr-danger)] sm:text-2xl">
+                Detach Relationship
+              </h2>
+              <p className="font-ui text-sm leading-relaxed text-[var(--clr-dust)]">
+                This will detach <strong>{selectedNode.name}</strong> from <strong>{relationshipToDetach.counterpartName}</strong> ({relationshipToDetach.label.toLowerCase()}).
+              </p>
+              <p className="mt-3 rounded-2xl border border-[rgba(139,58,58,0.25)] bg-[rgba(139,58,58,0.08)] px-4 py-3 font-ui text-[12px] text-[var(--clr-danger)]">
+                The relationship edge will be removed, but neither person will be deleted.
+              </p>
+              <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                <Button variant="ghost" onClick={closeDetachDialog} className="flex-1 text-xs">
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={confirmDetachRelationship}
+                  className="flex-1 text-xs"
+                  disabled={detachRelationshipMutation.isPending}
+                >
+                  <Trash size={16} />
+                  {detachRelationshipMutation.isPending ? 'DETACHING...' : 'Detach'}
+                </Button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 

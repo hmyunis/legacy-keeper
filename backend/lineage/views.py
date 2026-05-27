@@ -1,4 +1,5 @@
 from django.db.models import Q
+from collections import deque
 from vaults.serializers import MemorySerializer
 from vaults.models import Memory
 from rest_framework import views, status
@@ -13,6 +14,35 @@ from core.models import VaultMember, get_accessible_vault_ids, ActionLog
 from .serializers import PersonSerializer, KinshipEdgeSerializer
 from .avatar_utils import save_person_avatar_from_memory_face
 from tasks.story_weaver import generate_chronicle_task
+
+
+def _would_create_lineage_cycle(vault_ids, parent_id, child_id):
+    if str(parent_id) == str(child_id):
+        return True
+
+    edges = KinshipEdge.objects.filter(vault_id__in=vault_ids, relationship_type="PARENT_OF").values_list(
+        "from_person_id", "to_person_id"
+    )
+    adjacency = {}
+    for from_id, to_id in edges:
+        adjacency.setdefault(str(from_id), set()).add(str(to_id))
+
+    target = str(parent_id)
+    start = str(child_id)
+    queue = deque([start])
+    visited = {start}
+
+    while queue:
+        current = queue.popleft()
+        if current == target:
+            return True
+        for next_id in adjacency.get(current, set()):
+            if next_id in visited:
+                continue
+            visited.add(next_id)
+            queue.append(next_id)
+
+    return False
 
 class LineageGraphView(views.APIView):
     permission_classes = [IsAuthenticated]
@@ -69,6 +99,25 @@ class GraftBranchView(views.APIView):
                 )
 
             if relationship_type == "CHILD_OF":
+                parent_candidate = target
+                child_candidate = linked_person
+            elif relationship_type == "PARENT_OF":
+                parent_candidate = linked_person
+                child_candidate = target
+            else:
+                parent_candidate = child_candidate = None
+
+            if relationship_type in {"CHILD_OF", "PARENT_OF"} and _would_create_lineage_cycle(
+                vault_ids,
+                parent_candidate.id,
+                child_candidate.id,
+            ):
+                return Response(
+                    {"detail": "That relationship would create a loop in the lineage tree."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if relationship_type == "CHILD_OF":
                 KinshipEdge.objects.get_or_create(
                     vault_id=vault_id,
                     from_person=target,
@@ -97,6 +146,75 @@ class GraftBranchView(views.APIView):
                 )
 
         return Response({"personId": str(linked_person.id)}, status=status.HTTP_201_CREATED)
+
+
+class RelationshipDetailView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, vault_id):
+        get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role__in=['ADMIN', 'CONTRIBUTOR'])
+
+        from_person_id = request.data.get('fromPersonId')
+        to_person_id = request.data.get('toPersonId')
+        relationship_type = request.data.get('type')
+
+        if not from_person_id or not to_person_id or not relationship_type:
+            return Response(
+                {"error": "fromPersonId, toPersonId, and type are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from_person = get_object_or_404(Person, id=from_person_id, vault_id=vault_id)
+        to_person = get_object_or_404(Person, id=to_person_id, vault_id=vault_id)
+
+        if relationship_type == 'SPOUSE_OF':
+            deleted_count, _ = KinshipEdge.objects.filter(
+                vault_id=vault_id,
+                relationship_type='SPOUSE_OF',
+            ).filter(
+                Q(from_person=from_person, to_person=to_person) |
+                Q(from_person=to_person, to_person=from_person)
+            ).delete()
+
+            if deleted_count == 0:
+                return Response({"error": "That spouse relationship does not exist."}, status=status.HTTP_404_NOT_FOUND)
+
+            ActionLog.objects.create(
+                vault_id=vault_id,
+                user=request.user,
+                action_type='edit',
+                description=f"Detached spouse relationship between '{from_person.name}' and '{to_person.name}'."
+            )
+            return Response({"status": "UNLINKED"})
+
+        if relationship_type != 'PARENT_OF':
+            return Response({"error": "Unsupported relationship type."}, status=status.HTTP_400_BAD_REQUEST)
+
+        deleted_count, _ = KinshipEdge.objects.filter(
+            vault_id=vault_id,
+            relationship_type='PARENT_OF',
+            from_person=from_person,
+            to_person=to_person,
+        ).delete()
+
+        if deleted_count == 0:
+            deleted_count, _ = KinshipEdge.objects.filter(
+                vault_id=vault_id,
+                relationship_type='PARENT_OF',
+                from_person=to_person,
+                to_person=from_person,
+            ).delete()
+
+        if deleted_count == 0:
+            return Response({"error": "That parent relationship does not exist."}, status=status.HTTP_404_NOT_FOUND)
+
+        ActionLog.objects.create(
+            vault_id=vault_id,
+            user=request.user,
+            action_type='edit',
+            description=f"Detached lineage relationship between '{from_person.name}' and '{to_person.name}'."
+        )
+        return Response({"status": "UNLINKED"})
 
 class GenerateChronicleView(views.APIView):
     permission_classes = [IsAuthenticated]

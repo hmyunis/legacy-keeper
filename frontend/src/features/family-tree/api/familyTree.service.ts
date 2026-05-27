@@ -14,5 +14,13 @@ export const familyTreeService = {
   ): Promise<{ personId: string }> => {
     const response = await axiosClient.post(`/vaults/${vaultId}/lineage/graft/`, data);
     return response.data;
+  },
+
+  deleteRelationship: async (
+    vaultId: string,
+    payload: { fromPersonId: string; toPersonId: string; type: 'PARENT_OF' | 'SPOUSE_OF' }
+  ): Promise<{ status: string }> => {
+    const response = await axiosClient.delete(`/vaults/${vaultId}/lineage/relationship/`, { data: payload });
+    return response.data;
   }
 };

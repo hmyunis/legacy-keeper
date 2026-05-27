@@ -46,8 +46,14 @@ export const TreeCanvas = ({
 
     const nodeMap = new Map<string, Person>(nodes.map((n) => [n.id, n]));
     const computed = new Map<string, ComputedNode>();
-    const parentLinks = edges.filter((e) => e.type === 'PARENT_OF');
-    const spouseLinksRaw = edges.filter((e) => e.type === 'SPOUSE_OF');
+    const parentLinks = edges.filter((e) => e.type === 'PARENT_OF').filter((e, idx, arr) => {
+      const key = `${e.from}->${e.to}`;
+      return arr.findIndex((item) => `${item.from}->${item.to}` === key) === idx;
+    });
+    const spouseLinksRaw = edges.filter((e) => e.type === 'SPOUSE_OF').filter((e, idx, arr) => {
+      const key = [e.from, e.to].sort().join('::');
+      return arr.findIndex((item) => [item.from, item.to].sort().join('::') === key) === idx;
+    });
 
     const childrenByParent = new Map<string, string[]>();
     const parentsByChild = new Map<string, string[]>();
@@ -66,10 +72,13 @@ export const TreeCanvas = ({
 
     const roots = nodes.filter((n) => (indegree.get(n.id) ?? 0) === 0).map((n) => n.id);
     const queue = roots.length > 0 ? [...roots] : [nodes[0].id];
+    const visited = new Set<string>();
     queue.forEach((id) => generations.set(id, 0));
 
     while (queue.length > 0) {
       const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
       const currentGen = generations.get(current) ?? 0;
       const children = childrenByParent.get(current) ?? [];
 
@@ -79,7 +88,9 @@ export const TreeCanvas = ({
         if (prev === undefined || nextGen > prev) {
           generations.set(childId, nextGen);
         }
-        queue.push(childId);
+        if (!visited.has(childId)) {
+          queue.push(childId);
+        }
       });
     }
 
