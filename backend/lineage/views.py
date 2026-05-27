@@ -127,7 +127,7 @@ class PersonProfileView(views.APIView):
                     Q(requester_vault_id=vault_id, target_vault__members__user=request.user) |
                     Q(target_vault_id=vault_id, requester_vault__members__user=request.user)
                 ),
-                status='ACCEPTED',
+                status__in=['ACCEPTED', 'UNLINK_PENDING'],
             ).first()
             if not pact:
                 raise PermissionDenied("You do not have access to this lineage profile.")

@@ -336,7 +336,7 @@ def get_vault_access_level(user, vault_id):
     is_pact_active = LineagePact.objects.filter(
         (Q(requester_vault_id=vault_id, target_vault__members__user=user) |
          Q(target_vault_id=vault_id, requester_vault__members__user=user)),
-        status='ACCEPTED'
+        status__in=['ACCEPTED', 'UNLINK_PENDING']
     ).exists()
 
     return 'FEDERATED' if is_pact_active else None

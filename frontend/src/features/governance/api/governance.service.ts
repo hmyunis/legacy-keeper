@@ -52,7 +52,7 @@ export const governanceService = {
     const response = await axiosClient.get(`/vaults/${vaultId}/pacts/history/`);
     return extractList(response);
   },
-  actOnPact: async (vaultId: string, pactId: string, action: 'ACCEPT' | 'REJECT') => {
+  actOnPact: async (vaultId: string, pactId: string, action: 'ACCEPT' | 'REJECT' | 'UNLINK') => {
     const response = await axiosClient.post(`/vaults/${vaultId}/pacts/${pactId}/action/`, { action });
     return response.data;
   },

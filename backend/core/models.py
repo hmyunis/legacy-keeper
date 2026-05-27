@@ -57,7 +57,7 @@ class VaultInvitation(models.Model):
     email = models.EmailField()
     role = models.CharField(max_length=15, choices=VaultMember.ROLE_CHOICES, default='VIEWER')
     invited_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_vault_invitations')
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
     accepted_at = models.DateTimeField(null=True, blank=True)
     rejected_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
@@ -146,11 +146,20 @@ class LineagePact(models.Model):
     STATUS_CHOICES = (
         ('PENDING', 'Pending'),
         ('ACCEPTED', 'Accepted'),
+        ('UNLINK_PENDING', 'Unlink Pending'),
     )
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     requester_vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name='requested_pacts')
     target_vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name='received_pacts')
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    unlink_requested_by_vault = models.ForeignKey(
+        Vault,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='unlink_requested_pacts',
+    )
+    unlink_requested_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class ActionLog(models.Model):
@@ -174,6 +183,6 @@ def get_accessible_vault_ids(vault_id):
     from django.db.models import Q
     pacts = LineagePact.objects.filter(
         Q(requester_vault_id=vault_id) | Q(target_vault_id=vault_id),
-        status='ACCEPTED'
+        status__in=['ACCEPTED', 'UNLINK_PENDING']
     )
     return [vault_id] + [p.target_vault_id if str(p.requester_vault_id) == str(vault_id) else p.requester_vault_id for p in pacts]

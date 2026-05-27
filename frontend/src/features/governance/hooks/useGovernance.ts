@@ -155,7 +155,7 @@ export const useGovernanceActions = () => {
   });
 
   const actOnPact = useMutation({
-    mutationFn: ({ pactId, action }: { pactId: string; action: 'ACCEPT' | 'REJECT' }) => {
+    mutationFn: ({ pactId, action }: { pactId: string; action: 'ACCEPT' | 'REJECT' | 'UNLINK' }) => {
       const vaultId = useAuthStore.getState().activeVaultId;
       if (!vaultId) throw new Error("Vault ID missing");
       return governanceService.actOnPact(vaultId, pactId, action);

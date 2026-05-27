@@ -11,12 +11,15 @@ export default function Members() {
   const [showInvite, setShowInvite] = useState(false);
   const [showInviteLink, setShowInviteLink] = useState(false);
   const [showPactModal, setShowPactModal] = useState(false);
+  const [showUnlinkModal, setShowUnlinkModal] = useState(false);
   const [inviteRole, setInviteRole] = useState('VIEWER');
   const [inviteLinkRole, setInviteLinkRole] = useState('VIEWER');
   const [inviteLinkMaxUses, setInviteLinkMaxUses] = useState('');
   const [inviteLinkExpiresAt, setInviteLinkExpiresAt] = useState('');
   const [pactError, setPactError] = useState<string | null>(null);
+  const [selectedUnlinkPact, setSelectedUnlinkPact] = useState<any | null>(null);
   const currentUser = useAuthStore((s) => s.currentUser);
+  const activeVaultId = useAuthStore((s) => s.activeVaultId);
   const canAdmin = currentUser?.role === 'ADMIN';
 
   const { data: members = [] } = useMembers();
@@ -115,6 +118,36 @@ export default function Members() {
         description: err?.response?.data?.error || "Could not process the pact request."
       })
     });
+  };
+
+  const openUnlinkDialog = (pact: any) => {
+    setSelectedUnlinkPact(pact);
+    setShowUnlinkModal(true);
+  };
+
+  const closeUnlinkDialog = () => {
+    setShowUnlinkModal(false);
+    setSelectedUnlinkPact(null);
+  };
+
+  const handleConfirmUnlink = async () => {
+    if (!selectedUnlinkPact) return;
+
+    const counterpartName = selectedUnlinkPact.is_incoming ? selectedUnlinkPact.requester_name : selectedUnlinkPact.target_vault_name;
+    const isRequestingApproval = selectedUnlinkPact.status === 'UNLINK_PENDING' && selectedUnlinkPact.unlink_requested_by_vault_id !== activeVaultId;
+
+    await sileo.promise(actOnPact.mutateAsync({ pactId: selectedUnlinkPact.id, action: 'UNLINK' }), {
+      loading: { title: isRequestingApproval ? 'Approving Unlink...' : 'Requesting Unlink...' },
+      success: (res: any) => res?.status === 'UNLINKED'
+        ? { title: 'Pact Unlinked', description: `Connection removed with ${counterpartName}.` }
+        : { title: 'Unlink Requested', description: `The other vault admin must approve removal with ${counterpartName}.` },
+      error: (err: any) => ({
+        title: 'Failed to Unlink',
+        description: err?.response?.data?.error || 'Could not remove the lineage connection.',
+      }),
+    });
+
+    closeUnlinkDialog();
   };
 
   const handleInviteSubmit = async (e: any) => {
@@ -379,14 +412,40 @@ export default function Members() {
               {pactHistory.map((p: any) => {
                 const counterpartName = p.is_incoming ? p.requester_name : p.target_vault_name;
                 const connectedOn = p.created_at ? new Date(p.created_at).toLocaleDateString() : 'Unknown';
+                const isUnlinkPending = p.status === 'UNLINK_PENDING';
+                const requestedByCurrentVault = !!activeVaultId && p.unlink_requested_by_vault_id === activeVaultId;
                 return (
                   <div key={p.id} className="flex items-center justify-between bg-white/50 p-4 rounded-xl">
-                    <p className="font-ui text-sm text-[var(--clr-ink)]">
-                      Linked with <strong>{counterpartName}</strong>
-                    </p>
-                    <span className="font-ui text-[10px] font-black text-[var(--clr-dust)] uppercase tracking-widest">
-                      Since {connectedOn}
-                    </span>
+                    <div>
+                      <p className="font-ui text-sm text-[var(--clr-ink)]">
+                        Linked with <strong>{counterpartName}</strong>
+                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="block font-ui text-[10px] font-black text-[var(--clr-dust)] uppercase tracking-widest">
+                          Since {connectedOn}
+                        </span>
+                        {isUnlinkPending && (
+                          <span className="inline-flex items-center rounded-full border border-[rgba(184,143,91,0.35)] bg-[rgba(184,143,91,0.1)] px-2 py-1 font-ui text-[9px] font-black uppercase tracking-[0.16em] text-[var(--clr-gold-dark)]">
+                            {requestedByCurrentVault ? 'Awaiting approval' : 'Approval requested'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {canAdmin && (
+                      requestedByCurrentVault && isUnlinkPending ? (
+                        <span className="font-ui text-[10px] font-black uppercase tracking-widest text-[var(--clr-dust)]">
+                          Waiting on the other admin
+                        </span>
+                      ) : (
+                        <Button
+                          variant={isUnlinkPending ? 'primary' : 'danger'}
+                          className="py-2 px-4 text-[10px]"
+                          onClick={() => openUnlinkDialog(p)}
+                        >
+                          <LinkBreak size={16} /> {isUnlinkPending ? 'Approve unlink' : 'Unlink'}
+                        </Button>
+                      )
+                    )}
                   </div>
                 );
               })}
@@ -506,6 +565,64 @@ export default function Members() {
                       {requestPact.isPending ? 'PROCESSING...' : 'SEND PACT REQUEST'}
                     </Button>
                   </form>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showUnlinkModal && selectedUnlinkPact && (
+            <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-black/60 backdrop-blur-md"
+                onClick={closeUnlinkDialog}
+              />
+              <motion.div
+                initial={{ scale: 0.92, opacity: 0, y: 10 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.92, opacity: 0, y: 10 }}
+                className="relative w-full max-w-lg bg-[var(--clr-parchment)] border-2 border-[var(--clr-gold)] rounded-[var(--radius-lg)] p-10 shadow-2xl"
+              >
+                <div className="text-center space-y-5">
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-[rgba(184,143,91,0.35)] bg-[rgba(184,143,91,0.08)] text-[var(--clr-gold)]">
+                    <LinkBreak size={34} weight="bold" />
+                  </div>
+                  <h2 className="font-display text-2xl uppercase tracking-widest">
+                    {selectedUnlinkPact.status === 'UNLINK_PENDING' && selectedUnlinkPact.unlink_requested_by_vault_id !== activeVaultId
+                      ? 'Approve Lineage Unlink'
+                      : 'Request Lineage Unlink'}
+                  </h2>
+                  <p className="font-ui text-sm text-[var(--clr-dust)] leading-relaxed">
+                    {selectedUnlinkPact.status === 'UNLINK_PENDING' && selectedUnlinkPact.unlink_requested_by_vault_id !== activeVaultId
+                      ? 'The other vault admin already requested this unlink. Approving it will permanently remove the pact after this confirmation.'
+                      : 'This will request removal of the pact. The other vault admin must also agree before the connection is removed.'}
+                  </p>
+                  <div className="rounded-2xl border border-[var(--clr-aged)] bg-[var(--clr-paper)] px-4 py-3 text-left">
+                    <p className="font-ui text-[10px] font-black uppercase tracking-[0.18em] text-[var(--clr-dust)]">Connection</p>
+                    <p className="mt-1 font-ui text-sm text-[var(--clr-ink)]">
+                      Linked with <strong>{selectedUnlinkPact.is_incoming ? selectedUnlinkPact.requester_name : selectedUnlinkPact.target_vault_name}</strong>
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+                    <Button variant="ghost" onClick={closeUnlinkDialog} className="w-full sm:w-auto">
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="danger"
+                      onClick={handleConfirmUnlink}
+                      className="w-full sm:w-auto"
+                      disabled={actOnPact.isPending}
+                    >
+                      <LinkBreak size={16} />
+                      {selectedUnlinkPact.status === 'UNLINK_PENDING' && selectedUnlinkPact.unlink_requested_by_vault_id !== activeVaultId
+                        ? 'Approve Unlink'
+                        : 'Request Unlink'}
+                    </Button>
+                  </div>
                 </div>
               </motion.div>
             </div>

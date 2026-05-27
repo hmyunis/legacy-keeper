@@ -121,8 +121,8 @@ class LineagePactHistoryView(generics.ListAPIView):
         vault_id = self.kwargs['vault_id']
         get_object_or_404(VaultMember, vault_id=vault_id, user=self.request.user)
         return LineagePact.objects.filter(
-            Q(target_vault_id=vault_id, status='ACCEPTED') |
-            Q(requester_vault_id=vault_id, status='ACCEPTED')
+            Q(target_vault_id=vault_id, status__in=['ACCEPTED', 'UNLINK_PENDING']) |
+            Q(requester_vault_id=vault_id, status__in=['ACCEPTED', 'UNLINK_PENDING'])
         ).order_by('-created_at')
 
 class LineagePactActionView(views.APIView):
@@ -130,7 +130,10 @@ class LineagePactActionView(views.APIView):
 
     def post(self, request, vault_id, pact_id):
         get_object_or_404(VaultMember, vault_id=vault_id, user=request.user, role='ADMIN')
-        pact = get_object_or_404(LineagePact, id=pact_id, status='PENDING')
+        pact = get_object_or_404(
+            LineagePact.objects.select_related('requester_vault', 'target_vault', 'unlink_requested_by_vault'),
+            id=pact_id
+        )
         is_target_vault = str(pact.target_vault_id) == str(vault_id)
         is_requester_vault = str(pact.requester_vault_id) == str(vault_id)
         if not is_target_vault and not is_requester_vault:
@@ -138,6 +141,8 @@ class LineagePactActionView(views.APIView):
 
         action = (request.data.get('action') or '').upper()
         if action == 'ACCEPT':
+            if pact.status != 'PENDING':
+                return Response({"error": "Only pending pacts can be accepted."}, status=status.HTTP_400_BAD_REQUEST)
             if not is_target_vault:
                 return Response({"error": "Only the receiving vault can accept this pact."}, status=status.HTTP_400_BAD_REQUEST)
             pact.status = 'ACCEPTED'
@@ -153,28 +158,89 @@ class LineagePactActionView(views.APIView):
             )
             return Response({"status": "ACCEPTED"})
 
-        if action != 'REJECT':
-            return Response({"error": "Invalid action. Use ACCEPT or REJECT."}, status=status.HTTP_400_BAD_REQUEST)
+        if action == 'REJECT':
+            if pact.status != 'PENDING':
+                return Response({"error": "Only pending pacts can be rejected."}, status=status.HTTP_400_BAD_REQUEST)
 
-        if is_target_vault:
-            log_text = f"Declined Lineage Pact with '{pact.requester_vault.name}'."
-            remote_text = f"Lineage Pact was declined by '{pact.target_vault.name}'."
-            remote_vault_id = pact.requester_vault_id
-        else:
-            log_text = f"Revoked outgoing Lineage Pact request to '{pact.target_vault.name}'."
-            remote_text = f"Lineage Pact request was revoked by '{pact.requester_vault.name}'."
-            remote_vault_id = pact.target_vault_id
+            if is_target_vault:
+                log_text = f"Declined Lineage Pact with '{pact.requester_vault.name}'."
+                remote_text = f"Lineage Pact was declined by '{pact.target_vault.name}'."
+                remote_vault_id = pact.requester_vault_id
+            else:
+                log_text = f"Revoked outgoing Lineage Pact request to '{pact.target_vault.name}'."
+                remote_text = f"Lineage Pact request was revoked by '{pact.requester_vault.name}'."
+                remote_vault_id = pact.target_vault_id
 
-        ActionLog.objects.create(
-            vault_id=vault_id, user=request.user, action_type='governance',
-            description=log_text
-        )
-        ActionLog.objects.create(
-            vault_id=remote_vault_id, user=None, action_type='governance',
-            description=remote_text
-        )
-        pact.delete()
-        return Response({"status": "REJECTED"})
+            ActionLog.objects.create(
+                vault_id=vault_id, user=request.user, action_type='governance',
+                description=log_text
+            )
+            ActionLog.objects.create(
+                vault_id=remote_vault_id, user=None, action_type='governance',
+                description=remote_text
+            )
+            pact.delete()
+            return Response({"status": "REJECTED"})
+
+        if action == 'UNLINK':
+            if pact.status == 'PENDING':
+                return Response({"error": "Only accepted pacts can be unlinked."}, status=status.HTTP_400_BAD_REQUEST)
+
+            counterpart_vault = pact.requester_vault if is_target_vault else pact.target_vault
+            requesting_vault = pact.requester_vault if pact.unlink_requested_by_vault_id == pact.requester_vault_id else pact.target_vault
+            unlinking_vault = pact.unlink_requested_by_vault if pact.status == 'UNLINK_PENDING' else None
+
+            if pact.status == 'ACCEPTED':
+                pact.status = 'UNLINK_PENDING'
+                pact.unlink_requested_by_vault_id = vault_id
+                pact.unlink_requested_at = timezone.now()
+                pact.save(update_fields=['status', 'unlink_requested_by_vault', 'unlink_requested_at'])
+
+                ActionLog.objects.create(
+                    vault_id=vault_id,
+                    user=request.user,
+                    action_type='governance',
+                    description=f"Requested unlink of Lineage Pact with '{counterpart_vault.name}'."
+                )
+                ActionLog.objects.create(
+                    vault_id=counterpart_vault.id,
+                    user=None,
+                    action_type='governance',
+                    description=f"Unlink approval requested by '{requesting_vault.name}'."
+                )
+                return Response({"status": "UNLINK_REQUESTED"})
+
+            if pact.status == 'UNLINK_PENDING':
+                if not unlinking_vault:
+                    return Response(
+                        {"error": "This pact is waiting for unlink approval, but the request state is incomplete."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if str(unlinking_vault.id) == str(vault_id):
+                    return Response(
+                        {"error": "This unlink request is already waiting for the other vault admin."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                ActionLog.objects.create(
+                    vault_id=vault_id,
+                    user=request.user,
+                    action_type='governance',
+                    description=f"Approved unlink of Lineage Pact with '{counterpart_vault.name}'."
+                )
+                ActionLog.objects.create(
+                    vault_id=unlinking_vault.id,
+                    user=None,
+                    action_type='governance',
+                    description=f"Lineage Pact with '{counterpart_vault.name}' was unlinked after mutual approval."
+                )
+                pact.delete()
+                return Response({"status": "UNLINKED"})
+
+            return Response({"error": "Only accepted pacts can be unlinked."}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"error": "Invalid action. Use ACCEPT, REJECT, or UNLINK."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class InitVaultView(views.APIView):
@@ -669,7 +735,7 @@ def _has_lineage_pact_access(user, vault_id):
             Q(requester_vault_id=vault_id, target_vault_id__in=user_vault_ids) |
             Q(target_vault_id=vault_id, requester_vault_id__in=user_vault_ids)
         ),
-        status='ACCEPTED',
+        status__in=['ACCEPTED', 'UNLINK_PENDING'],
     ).exists()
 
 

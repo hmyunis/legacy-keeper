@@ -116,15 +116,33 @@ class ActionLogSerializer(serializers.ModelSerializer):
 class LineagePactSerializer(serializers.ModelSerializer):
     requester_name = serializers.CharField(source='requester_vault.name', read_only=True)
     target_vault_name = serializers.CharField(source='target_vault.name', read_only=True)
+    unlink_requested_by_vault_id = serializers.SerializerMethodField()
+    unlink_requested_by_vault_name = serializers.SerializerMethodField()
     is_incoming = serializers.SerializerMethodField()
 
     class Meta:
         model = LineagePact
-        fields = ('id', 'requester_name', 'target_vault_name', 'status', 'is_incoming', 'created_at')
+        fields = (
+            'id',
+            'requester_name',
+            'target_vault_name',
+            'status',
+            'unlink_requested_by_vault_id',
+            'unlink_requested_by_vault_name',
+            'unlink_requested_at',
+            'is_incoming',
+            'created_at',
+        )
 
     def get_is_incoming(self, obj):
         current_vault_id = self.context['view'].kwargs.get('vault_id')
         return str(obj.target_vault_id) == str(current_vault_id)
+
+    def get_unlink_requested_by_vault_id(self, obj):
+        return str(obj.unlink_requested_by_vault_id) if obj.unlink_requested_by_vault_id else None
+
+    def get_unlink_requested_by_vault_name(self, obj):
+        return obj.unlink_requested_by_vault.name if obj.unlink_requested_by_vault else None
 
 
 class VaultInvitationSerializer(serializers.ModelSerializer):
