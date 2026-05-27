@@ -1,17 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import React from 'react';
 import { Breadcrumbs } from './Breadcrumbs';
 
 const routerState = vi.hoisted(() => ({ pathname: '/dashboard/vault/123' }));
 
 vi.mock('@tanstack/react-router', () => ({
-  useRouterState: () => routerState.pathname,
-  Link: ({ to, children, ...props }: any) => <a href={to} {...props}>{children}</a>,
+  useRouterState: ({ select }: { select: (s: { location: { pathname: string } }) => string }) =>
+    select({ location: { pathname: routerState.pathname } }),
+  Link: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 describe('Breadcrumbs', () => {
   it('renders mapped breadcrumb labels and skips numeric ids', () => {
-    render(<Breadcrumbs />);
+    render(<Breadcrumbs /> as React.ReactElement);
 
     expect(screen.getByText('Museum')).toBeInTheDocument();
     expect(screen.getByText('Great Hall')).toBeInTheDocument();
@@ -21,7 +23,7 @@ describe('Breadcrumbs', () => {
 
   it('returns null for root path', () => {
     routerState.pathname = '/';
-    const { container } = render(<Breadcrumbs />);
+    const { container } = render(<Breadcrumbs /> as React.ReactElement);
     expect(container.firstChild).toBeNull();
   });
 });
