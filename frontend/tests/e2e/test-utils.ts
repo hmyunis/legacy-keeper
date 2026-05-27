@@ -112,6 +112,8 @@ export async function seedAuthState(
 }
 
 export async function installApiMocks(page: Page, fixture: ApiFixture = {}) {
+  const capsules = Array.isArray(fixture.capsules) ? [...fixture.capsules] : [];
+
   await page.route(/\/api\/(auth|vaults|tasks|shares|invite-links)\//, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -167,8 +169,14 @@ export async function installApiMocks(page: Page, fixture: ApiFixture = {}) {
     if (method === 'POST' && pathname.endsWith('/lineage/graft/')) return reply(fixture.graftBranch ?? { personId: 'person-new' });
 
     // Capsules
-    if (method === 'GET' && pathname.endsWith('/capsules/')) return reply(fixture.capsules ?? []);
-    if (method === 'POST' && pathname.endsWith('/capsules/')) return reply(fixture.sealCapsule ?? {});
+    if (method === 'GET' && pathname.endsWith('/capsules/')) return reply(capsules);
+    if (method === 'POST' && pathname.endsWith('/capsules/')) {
+      const createdCapsule = fixture.sealCapsule ?? {};
+      if (createdCapsule && typeof createdCapsule === 'object') {
+        capsules.unshift(createdCapsule);
+      }
+      return reply(createdCapsule);
+    }
     if (method === 'POST' && pathname.includes('/capsules/') && pathname.endsWith('/open/')) return reply(fixture.openCapsule ?? {});
 
     // General Memories Mocks
