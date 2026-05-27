@@ -13,6 +13,35 @@ import { useAuthStore } from '../stores/authStore';
 
 const HERO_CHARCOAL = '#141211';
 
+function canUseWebGL() {
+  if (typeof document === 'undefined') return false;
+
+  const canvas = document.createElement('canvas');
+  try {
+    const context =
+      canvas.getContext('webgl2') ||
+      canvas.getContext('webgl') ||
+      canvas.getContext('experimental-webgl');
+    return Boolean(context);
+  } catch {
+    return false;
+  }
+}
+
+function DashboardHeroCanvasFallback() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-[var(--clr-charcoal)]"
+    >
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_42%,rgba(184,143,91,0.22),transparent_32%),radial-gradient(circle_at_42%_52%,rgba(247,244,239,0.08),transparent_28%),linear-gradient(135deg,rgba(20,18,17,0.96),rgba(20,18,17,0.62))]" />
+      <div className="absolute right-[8%] top-1/2 h-[420px] w-[420px] -translate-y-1/2 rounded-full border border-[rgba(184,143,91,0.24)] opacity-60" />
+      <div className="absolute right-[14%] top-1/2 h-[300px] w-[300px] -translate-y-1/2 rounded-full border border-[rgba(212,169,106,0.26)] opacity-70" />
+      <div className="absolute right-[20%] top-1/2 h-[170px] w-[170px] -translate-y-1/2 rounded-full border border-[rgba(247,244,239,0.16)] opacity-70" />
+    </div>
+  );
+}
+
 function AstrolabeRings() {
   const groupRef = useRef<THREE.Group>(null);
 
@@ -74,6 +103,12 @@ function DashboardHeroScene() {
 
 /** Isolated from parallax/mouse updates so WebGL does not remount or resize every frame. */
 const DashboardHeroCanvas = memo(function DashboardHeroCanvas() {
+  const [isWebglAvailable, setIsWebglAvailable] = useState(() => canUseWebGL());
+
+  if (!isWebglAvailable) {
+    return <DashboardHeroCanvasFallback />;
+  }
+
   return (
     <div
       aria-hidden
@@ -84,6 +119,9 @@ const DashboardHeroCanvas = memo(function DashboardHeroCanvas() {
         dpr={[1, 1.5]}
         gl={{ alpha: true, antialias: true, powerPreference: 'high-performance' }}
         style={{ background: 'transparent' }}
+        onCreated={({ gl }) => {
+          gl.domElement.addEventListener('webglcontextlost', () => setIsWebglAvailable(false), { once: true });
+        }}
       >
         <Suspense fallback={null}>
           <DashboardHeroScene />

@@ -505,10 +505,12 @@ export default function Settings() {
                   purgeGroups.map((group) => {
                     const keptItems = (group.items || []).filter((item: any) => !selectedPurgeIds[item.id]);
                     return (
-                    <div key={group.phash} className="rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)]/35 p-4">
+                    <div key={group.group_key || group.phash} className="rounded-[var(--radius-md)] border border-[var(--clr-aged)] bg-[var(--clr-paper)]/35 p-4">
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <div>
-                          <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-gold-dark)]">Duplicate Cluster</p>
+                          <p className="font-ui text-[10px] uppercase tracking-widest text-[var(--clr-gold-dark)]">
+                            {group.match_type === 'exact_file' ? 'Exact File Duplicate' : 'Visual Duplicate Cluster'}
+                          </p>
                           <p className="font-ui text-[10px] text-[var(--clr-dust)] mt-1">{keptItems.length} kept • {(group.items?.length || 0) - keptItems.length} selected for purge</p>
                         </div>
                         <button

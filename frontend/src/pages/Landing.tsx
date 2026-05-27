@@ -580,7 +580,7 @@ const features: FeatureItem[] = [
     title: 'GENERATIVE CHRONICLES',
     sub  : 'Stories Written From Memory',
     desc : "Generate a biography from a person's linked memories, captions, dates, and notes in a few clicks.",
-    link : '/person/1'
+    link : '/tree'
   },
   {
     num  : '04',
@@ -855,8 +855,8 @@ export default function Landing() {
                 <Link to="/museum">
                   <Button
                     variant="ghost"
-                    className="text-[13px] px-11 py-[15px]"
-                    style={{ backdropFilter: 'blur(12px)', background: 'rgba(184,143,91,0.07)' }}
+                    className="text-[13px] px-11 py-[15px] !border-[var(--clr-linen)] !bg-[var(--clr-linen)] !text-[var(--clr-charcoal)] hover:!bg-[var(--clr-gold-light)] hover:!border-[var(--clr-gold-light)]"
+                    style={{ backdropFilter: 'blur(12px)', boxShadow: '0 6px 28px rgba(247,244,239,0.18)' }}
                   >
                     ENTER MUSEUM →
                   </Button>
@@ -876,8 +876,8 @@ export default function Landing() {
                 <Link to="/museum">
                   <Button
                     variant="ghost"
-                    className="text-[13px] px-11 py-[15px]"
-                    style={{ backdropFilter: 'blur(12px)', background: 'rgba(184,143,91,0.07)' }}
+                    className="text-[13px] px-11 py-[15px] !border-[var(--clr-linen)] !bg-[var(--clr-linen)] !text-[var(--clr-charcoal)] hover:!bg-[var(--clr-gold-light)] hover:!border-[var(--clr-gold-light)]"
+                    style={{ backdropFilter: 'blur(12px)', boxShadow: '0 6px 28px rgba(247,244,239,0.18)' }}
                   >
                     ENTER MUSEUM →
                   </Button>

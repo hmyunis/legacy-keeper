@@ -1,9 +1,11 @@
 import datetime
+import hashlib
 import logging
 import math
 import random
 import re
 import unicodedata
+from collections import defaultdict
 from difflib import SequenceMatcher
 from rest_framework import generics, views, status
 from rest_framework.response import Response
@@ -12,6 +14,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.db import transaction
 from pgvector.django import CosineDistance
 
 from .models import Memory, Capsule, MemoryCollection
@@ -921,60 +924,243 @@ class VaultSettingsView(views.APIView):
         vault.save()
         return Response({"status": "SUCCESS", "message": "Settings updated."})
 
-class SmartPurgeView(views.APIView):
+class ConfirmAllPendingMemoriesView(views.APIView):
     permission_classes = [IsAuthenticated]
 
-    def _build_duplicate_plan(self, vault_id, request):
-        duplicates = Memory.objects.filter(vault_id=vault_id) \
-            .exclude(phash='') \
-            .values('phash') \
-            .annotate(count=Count('id')) \
-            .filter(count__gt=1)
+    def post(self, request, vault_id):
+        member = VaultMember.objects.filter(user=request.user, vault_id=vault_id).first()
+        if not member or member.role == 'VIEWER':
+            raise PermissionDenied("You lack contribution rights to verify pending artifacts.")
 
+        with transaction.atomic():
+            pending_memories = list(
+                Memory.objects.visible_to_vault(vault_id)
+                .filter(is_reviewed=False)
+                .select_for_update()
+            )
+            confirmed_count = len(pending_memories)
+            if confirmed_count:
+                Memory.objects.filter(id__in=[memory.id for memory in pending_memories]).update(is_reviewed=True)
+                ActionLog.objects.create(
+                    vault_id=vault_id,
+                    user=request.user,
+                    action_type='edit',
+                    description=f"Verified {confirmed_count} pending artifact{'s' if confirmed_count != 1 else ''} in bulk.",
+                )
+
+        return Response({
+            "status": "SUCCESS",
+            "confirmed": confirmed_count,
+        })
+
+class SmartPurgeView(views.APIView):
+    permission_classes = [IsAuthenticated]
+    PHASH_DISTANCE_THRESHOLD = 4
+
+    def _safe_int(self, value, default=0):
+        try:
+            return int(value or default)
+        except (TypeError, ValueError):
+            return default
+
+    def _file_size(self, mem):
+        exif = mem.exif_json or {}
+        cached_size = self._safe_int(exif.get('filesize'))
+        if cached_size:
+            return cached_size
+        try:
+            return int(mem.original_file.size or 0)
+        except Exception:
+            return 0
+
+    def _file_sha256(self, mem):
+        exif = mem.exif_json or {}
+        cached_hash = (exif.get('sha256') or exif.get('file_sha256') or '').strip()
+        if cached_hash:
+            return cached_hash
+
+        if not mem.original_file:
+            return ''
+
+        try:
+            digest = hashlib.sha256()
+            with mem.original_file.open('rb') as file_obj:
+                for chunk in iter(lambda: file_obj.read(1024 * 1024), b''):
+                    digest.update(chunk)
+            file_hash = digest.hexdigest()
+        except Exception as exc:
+            logger.warning("Smart Purge could not fingerprint memory %s: %s", mem.id, exc)
+            return ''
+
+        mem.exif_json = {
+            **exif,
+            'sha256': file_hash,
+            'filesize': self._file_size(mem),
+        }
+        mem.save(update_fields=['exif_json'])
+        return file_hash
+
+    def _ensure_phash(self, mem):
+        phash = (mem.phash or '').strip()
+        if phash:
+            return phash
+
+        if not mem.original_file:
+            return ''
+
+        try:
+            from PIL import Image
+            import imagehash
+
+            with mem.original_file.open('rb') as file_obj:
+                image = Image.open(file_obj)
+                phash = str(imagehash.phash(image.convert('RGB')))
+        except Exception as exc:
+            logger.info("Smart Purge could not compute pHash for memory %s: %s", mem.id, exc)
+            return ''
+
+        mem.phash = phash
+        mem.save(update_fields=['phash'])
+        return phash
+
+    def _phash_distance(self, left, right):
+        left = (left or '').strip().lower()
+        right = (right or '').strip().lower()
+        if not left or not right or len(left) != len(right):
+            return None
+
+        try:
+            return bin(int(left, 16) ^ int(right, 16)).count('1')
+        except ValueError:
+            return 0 if left == right else None
+
+    def _group_key_for_mems(self, mems, index):
+        exact_hash = getattr(mems[0], '_purge_sha256', '') if mems else ''
+        if exact_hash and all(getattr(mem, '_purge_sha256', '') == exact_hash for mem in mems):
+            return f"sha256:{exact_hash}"
+        return f"phash:{index}"
+
+    def _add_group(self, groups, seen_group_signatures, mems, group_key):
+        mems = list(mems)
+        if len(mems) < 2:
+            return 0, []
+
+        signature = tuple(sorted(str(mem.id) for mem in mems))
+        if signature in seen_group_signatures:
+            return 0, []
+        seen_group_signatures.add(signature)
+
+        def score(mem):
+            exif = mem.exif_json or {}
+            width = self._safe_int(exif.get('width'))
+            height = self._safe_int(exif.get('height'))
+            filesize = self._file_size(mem)
+            reviewed = 1 if mem.is_reviewed else 0
+            favorite = 1 if mem.is_favorite else 0
+            return (favorite, reviewed, width * height, filesize, mem.created_at or timezone.now())
+
+        mems.sort(key=score, reverse=True)
+        keep = mems[0]
+
+        total_bytes = 0
+        default_delete_ids = []
+        candidate_rows = []
+        for mem in mems:
+            exif = mem.exif_json or {}
+            bytes_size = self._file_size(mem)
+            if mem.id != keep.id:
+                total_bytes += bytes_size
+                default_delete_ids.append(str(mem.id))
+            candidate_rows.append({
+                "id": str(mem.id),
+                "title": mem.title or "Untitled",
+                "url": normalize_media_url(mem.original_file.url) if mem.original_file else "",
+                "year": mem.year or "",
+                "location": mem.location or "",
+                "width": self._safe_int(exif.get('width')),
+                "height": self._safe_int(exif.get('height')),
+                "filesize": bytes_size,
+                "sha256": getattr(mem, '_purge_sha256', ''),
+                "phash": getattr(mem, '_purge_phash', ''),
+                "suggested_keep": mem.id == keep.id,
+            })
+
+        groups.append({
+            "group_key": group_key,
+            "phash": getattr(keep, '_purge_phash', '') or group_key,
+            "match_type": "exact_file" if group_key.startswith("sha256:") else "visual",
+            "keep_id": str(keep.id),
+            "items": candidate_rows,
+        })
+        return total_bytes, default_delete_ids
+
+    def _build_duplicate_plan(self, vault_id, request):
         groups = []
+        seen_group_signatures = set()
         default_delete_ids = []
         total_bytes = 0
 
-        for dup in duplicates:
-            mems = list(Memory.objects.filter(vault_id=vault_id, phash=dup['phash']).exclude(capsules__status='LOCKED'))
+        memories = list(
+            Memory.objects.filter(vault_id=vault_id)
+            .exclude(capsules__status='LOCKED')
+            .distinct()
+            .order_by('created_at', 'id')
+        )
+
+        exact_hash_groups = defaultdict(list)
+        for mem in memories:
+            mem._purge_sha256 = self._file_sha256(mem)
+            mem._purge_phash = self._ensure_phash(mem)
+            if mem._purge_sha256:
+                exact_hash_groups[mem._purge_sha256].append(mem)
+
+        memory_by_id = {str(mem.id): mem for mem in memories}
+        duplicate_edges = defaultdict(set)
+
+        for mems in exact_hash_groups.values():
             if len(mems) < 2:
                 continue
+            first_id = str(mems[0].id)
+            for mem in mems[1:]:
+                duplicate_edges[first_id].add(str(mem.id))
+                duplicate_edges[str(mem.id)].add(first_id)
 
-            def score(mem):
-                exif = mem.exif_json or {}
-                width = int(exif.get('width', 0) or 0)
-                height = int(exif.get('height', 0) or 0)
-                filesize = int(exif.get('filesize', 0) or 0)
-                return (width * height, filesize)
+        phash_memories = [mem for mem in memories if getattr(mem, '_purge_phash', '')]
+        for left_index, left in enumerate(phash_memories):
+            for right in phash_memories[left_index + 1:]:
+                distance = self._phash_distance(left._purge_phash, right._purge_phash)
+                if distance is not None and distance <= self.PHASH_DISTANCE_THRESHOLD:
+                    left_id = str(left.id)
+                    right_id = str(right.id)
+                    duplicate_edges[left_id].add(right_id)
+                    duplicate_edges[right_id].add(left_id)
 
-            mems.sort(key=score, reverse=True)
-            keep = mems[0]
-            candidates = mems[1:]
+        components = []
+        visited = set()
+        for memory_id in sorted(duplicate_edges):
+            if memory_id in visited:
+                continue
+            stack = [memory_id]
+            component_ids = set()
+            while stack:
+                current_id = stack.pop()
+                if current_id in visited:
+                    continue
+                visited.add(current_id)
+                component_ids.add(current_id)
+                stack.extend(duplicate_edges[current_id] - visited)
+            if len(component_ids) > 1:
+                components.append([memory_by_id[mid] for mid in component_ids if mid in memory_by_id])
 
-            candidate_rows = []
-            for mem in mems:
-                exif = mem.exif_json or {}
-                bytes_size = int(exif.get('filesize', 0) or 0)
-                if mem.id != keep.id:
-                    total_bytes += bytes_size
-                    default_delete_ids.append(str(mem.id))
-                candidate_rows.append({
-                    "id": str(mem.id),
-                    "title": mem.title or "Untitled",
-                    "url": normalize_media_url(mem.original_file.url) if mem.original_file else "",
-                    "year": mem.year or "",
-                    "location": mem.location or "",
-                    "width": int(exif.get('width', 0) or 0),
-                    "height": int(exif.get('height', 0) or 0),
-                    "filesize": bytes_size,
-                    "suggested_keep": mem.id == keep.id,
-                })
-
-            groups.append({
-                "phash": dup['phash'],
-                "keep_id": str(keep.id),
-                "items": candidate_rows,
-            })
+        for index, mems in enumerate(components, start=1):
+            bytes_added, delete_ids = self._add_group(
+                groups,
+                seen_group_signatures,
+                mems,
+                self._group_key_for_mems(mems, index),
+            )
+            total_bytes += bytes_added
+            default_delete_ids.extend(delete_ids)
 
         return groups, default_delete_ids, total_bytes
 

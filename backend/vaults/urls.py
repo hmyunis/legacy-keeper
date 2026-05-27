@@ -11,6 +11,7 @@ urlpatterns = [
     path('<uuid:vault_id>/memories/<uuid:id>/reprocess/', views.MemoryReprocessView.as_view(), name='memory-reprocess'),
     path('<uuid:vault_id>/memories/<uuid:id>/suggestions/<str:field>/', views.MemorySuggestionDecisionView.as_view(), name='memory-suggestion-decision'),
     path('<uuid:vault_id>/memories/<uuid:id>/identified-kin/', views.MemoryIdentifiedKinView.as_view(), name='memory-identified-kin'),
+    path('<uuid:vault_id>/memories/confirm-all/', views.ConfirmAllPendingMemoriesView.as_view(), name='confirm-all-pending-memories'),
     path('<uuid:vault_id>/memories/<uuid:pk>/', views.MemoryDetailView.as_view(), name='memory-detail'),
     path('<uuid:vault_id>/memories/purge/', views.SmartPurgeView.as_view(), name='smart-purge'),
     path('<uuid:vault_id>/search/vibe/', views.VibeSearchView.as_view(), name='vibe-search'),

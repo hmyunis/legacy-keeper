@@ -9,6 +9,7 @@ import { sileo } from 'sileo';
 import { useLogin, useRegister } from '../features/auth/hooks/useAuth';
 import { getPostAuthRoute } from '../lib/authRouting';
 import { parseRouteTarget } from '../lib/deepLinks';
+import { getPasswordErrorMessage, validatePasswordForAuth } from '../lib/passwordStrength';
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
@@ -30,9 +31,15 @@ export default function Auth() {
   const registerMutation = useRegister();
   
   const isLoading = loginMutation.isPending || registerMutation.isPending;
+  const passwordValidation = validatePasswordForAuth(password, { email, fullName });
+  const canSubmit = isLogin || passwordValidation.isValid;
+  const disabledSubmitClasses = !canSubmit
+    ? 'disabled:!bg-[rgba(148,139,120,0.45)] disabled:!text-[rgba(247,244,239,0.58)] disabled:!shadow-none'
+    : '';
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
+    if (!canSubmit) return;
 
     if (isLogin) {
       sileo.promise(loginMutation.mutateAsync({ email, password }), {
@@ -70,7 +77,10 @@ export default function Auth() {
           });
           return { title: "Welcome, Curator", description: "Your account is created. Please verify your email." };
         },
-        error: { title: "Registration Failed", description: "Email may already be in use." }
+        error: (error: unknown) => ({
+          title: "Registration Failed",
+          description: getPasswordErrorMessage(error) || "Email may already be in use.",
+        })
       });
     }
   };
@@ -112,6 +122,8 @@ export default function Auth() {
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
+              aria-invalid={!isLogin && password.length > 0 && !passwordValidation.isValid}
+              aria-describedby={!isLogin ? 'signup-password-rules' : undefined}
               className="w-full px-6 py-4 rounded-full bg-[rgba(0,0,0,0.3)] text-[var(--clr-linen)] font-ui text-[16px] placeholder-[var(--clr-fog)] outline-none border border-[rgba(184,143,91,0.3)] focus:border-[var(--clr-gold)] transition-all"
             />
             <button
@@ -122,6 +134,22 @@ export default function Auth() {
               {showPassword ? <EyeClosed size={20} /> : <Eye size={20} />}
             </button>
           </div>
+
+          {!isLogin && password.length > 0 && (
+            <div id="signup-password-rules" className="rounded-[var(--radius-md)] border border-[rgba(184,143,91,0.24)] bg-[rgba(0,0,0,0.24)] px-4 py-3">
+              <p className="mb-2 font-ui text-[9px] font-black uppercase tracking-[0.18em] text-[var(--clr-gold)]">
+                Password Requirements
+              </p>
+              <div className="space-y-1.5">
+                {passwordValidation.checks.map((check) => (
+                  <p key={check.id} className={`font-ui text-[11px] leading-relaxed ${check.passed ? 'text-[rgb(149,198,143)]' : 'text-[var(--clr-fog)]'}`}>
+                    <span className="mr-2 font-black">{check.passed ? 'OK' : '--'}</span>
+                    {check.label}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
 
           {isLogin && (
             <div className="text-right">
@@ -135,7 +163,7 @@ export default function Auth() {
             </div>
           )}
 
-          <Button variant="primary" className="w-full mt-4" disabled={isLoading}>
+          <Button variant="primary" className={`w-full mt-4 ${disabledSubmitClasses}`} disabled={isLoading || !canSubmit}>
             {isLoading ? <Spinner className="animate-spin" size={20} /> : (isLogin ? 'OPEN THE VAULT' : 'CREATE MY VAULT')}
           </Button>
         </form>

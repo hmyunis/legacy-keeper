@@ -608,7 +608,7 @@ export default function MemoryDetailModal({ isOpen, onClose, memory, onUpdate }:
               </div>
             </div>
 
-            <div className={`w-full ${isEditing ? 'md:w-[54%]' : 'md:w-[40%]'} h-1/2 md:h-full bg-[var(--clr-linen)] flex flex-col p-[var(--space-8)] border-l border-[var(--clr-aged)] relative`}>
+            <div className={`w-full ${isEditing ? 'md:w-[54%]' : 'md:w-[40%]'} h-1/2 md:h-full bg-[var(--clr-linen)] text-[var(--clr-ink)] flex flex-col p-[var(--space-8)] border-l border-[var(--clr-aged)] relative`}>
               <div className="absolute top-6 right-6 z-20">
                 <IconTooltip label="Close">
                   <button

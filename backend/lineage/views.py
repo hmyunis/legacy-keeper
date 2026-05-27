@@ -1,4 +1,4 @@
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from collections import deque
 from vaults.serializers import MemorySerializer
 from vaults.models import Memory
@@ -252,14 +252,20 @@ class PersonProfileView(views.APIView):
             base_vault_id = pact.target_vault_id if str(pact.requester_vault_id) == str(vault_id) else pact.requester_vault_id
 
         vault_ids = get_accessible_vault_ids(base_vault_id)
-        person = get_object_or_404(Person, id=id, vault_id__in=vault_ids)
+        person = get_object_or_404(Person.objects.select_related("vault"), id=id, vault_id__in=vault_ids)
 
         memories = Memory.objects.filter(
             Q(detected_faces__person=person) | Q(identified_people=person)
-        ).distinct()
+        ).distinct().select_related("vault").prefetch_related(
+            Prefetch(
+                "detected_faces",
+                queryset=PersonFaceEmbedding.objects.select_related("person"),
+            ),
+            "identified_people",
+        )
         memories_data = MemorySerializer(memories, many=True, context={'request': request}).data
 
-        edges = KinshipEdge.objects.filter(Q(from_person=person) | Q(to_person=person))
+        edges = KinshipEdge.objects.filter(Q(from_person=person) | Q(to_person=person)).select_related("from_person", "to_person")
         relatives = []
         seen_relative_ids = set()
         for edge in edges:
@@ -271,13 +277,12 @@ class PersonProfileView(views.APIView):
             if rel_id in seen_relative_ids:
                 continue
             seen_relative_ids.add(rel_id)
-            rel_photo = PersonSerializer(rel, context={"request": request}).data.get("photo")
             relatives.append({
                 "id": rel_id,
                 "name": rel.name,
                 "role": rel.role,
                 "relationship": rel_type,
-                "avatar": rel_photo,
+                "avatar": PersonSerializer(rel, context={"request": request}).data.get("photo"),
             })
 
         return Response({

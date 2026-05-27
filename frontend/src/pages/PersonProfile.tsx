@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   MagicWand, ShareNetwork, Sparkle, TreeStructure, Quotes, BookOpen, MapPin, Plus, Trash, X, Printer, Heart, SpeakerHigh, SpeakerX
@@ -19,20 +19,20 @@ import { pollTask } from '../lib/tasks';
 import axiosClient from '../services/axiosClient';
 import type { PersonProfile as PersonProfileType } from '../features/chronicles/types';
 
-export default function PersonProfile() {
-  const CHRONICLE_LOADING_LINES = [
-    'Dusting the archives',
-    'Unsealing forgotten letters',
-    'Tracing ancestral footsteps',
-    'Threading names through time',
-    'Binding memory fragments',
-    'Restoring faded chapters',
-    'Illuminating hidden lineage',
-    'Cataloging family echoes',
-    'Etching the chronicle',
-    'Weaving a legacy tapestry',
-  ];
+const CHRONICLE_LOADING_LINES = [
+  'Dusting the archives',
+  'Unsealing forgotten letters',
+  'Tracing ancestral footsteps',
+  'Threading names through time',
+  'Binding memory fragments',
+  'Restoring faded chapters',
+  'Illuminating hidden lineage',
+  'Cataloging family echoes',
+  'Etching the chronicle',
+  'Weaving a legacy tapestry',
+];
 
+export default function PersonProfile() {
   const [activeTab, setActiveTab] = useState<'CHRONICLE' | 'CONNECTIONS' | 'MEMORIES'>('CHRONICLE');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
@@ -49,6 +49,7 @@ export default function PersonProfile() {
   const [searchQuery, setSearchQuery] = useState('');
   const speechChunksRef = useRef<string[]>([]);
   const speechIndexRef = useRef(0);
+  const observedStoryTaskRef = useRef<string | null>(null);
 
   const { personId } = useParams({ strict: false });
   const vaultId = useAuthStore(s => s.activeVaultId);
@@ -59,7 +60,7 @@ export default function PersonProfile() {
   const navigate = useNavigate();
 
   const { data: profile } = useQuery<PersonProfileType>({
-    queryKey: ['personProfile', personId],
+    queryKey: ['personProfile', vaultId, personId],
     queryFn: () => chroniclesService.getPersonProfile(vaultId!, personId as string),
     enabled: !!vaultId && !!personId,
   });
@@ -75,10 +76,22 @@ export default function PersonProfile() {
     enabled: isLinkModalOpen && !!vaultId,
   });
 
+  const handlePoll = useCallback(async (taskId: string) => {
+    await pollTask(taskId);
+    queryClient.invalidateQueries({ queryKey: ['personProfile', vaultId, personId] });
+    setIsComplete(true);
+  }, [personId, queryClient, vaultId]);
+
   useEffect(() => {
-    if (profile?.active_story_task_id && !isGenerating) {
+    const activeStoryTaskId = profile?.active_story_task_id || null;
+    if (!activeStoryTaskId) {
+      observedStoryTaskRef.current = null;
+    }
+
+    if (activeStoryTaskId && observedStoryTaskRef.current !== activeStoryTaskId && !isGenerating) {
+      observedStoryTaskRef.current = activeStoryTaskId;
       setIsGenerating(true);
-      void handlePoll(profile.active_story_task_id)
+      void handlePoll(activeStoryTaskId)
         .then(() => {
           sileo.success({ title: 'Story Woven', description: 'The chronicle is ready for presentation.' });
         })
@@ -93,7 +106,7 @@ export default function PersonProfile() {
       setEditedBio(profile.biography || '');
       setIsComplete(Boolean(profile.biography));
     }
-  }, [profile?.active_story_task_id, profile]);
+  }, [handlePoll, isGenerating, profile]);
 
   useEffect(() => {
     return () => {
@@ -123,12 +136,6 @@ export default function PersonProfile() {
       window.clearInterval(dotsTimer);
     };
   }, [isGenerating]);
-
-  const handlePoll = async (taskId: string) => {
-    await pollTask(taskId);
-    queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
-    setIsComplete(true);
-  };
 
   const generateChronicle = async () => {
     if (isGenerating || generateStoryMutation.isPending) return;
@@ -161,7 +168,7 @@ export default function PersonProfile() {
         loading: { title: 'Preserving Chronicle...' },
         success: () => {
           setIsEditingBio(false);
-          queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
+          queryClient.invalidateQueries({ queryKey: ['personProfile', vaultId, personId] });
           return { title: 'Chronicle Saved' };
         },
         error: { title: 'Failed to save chronicle' }
@@ -175,7 +182,7 @@ export default function PersonProfile() {
       await axiosClient.post(`/vaults/${vaultId}/lineage/person/${personId}/link-memory/`, { memory_id: memoryId });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
+      queryClient.invalidateQueries({ queryKey: ['personProfile', vaultId, personId] });
       sileo.success({ title: 'Memory Tagged', description: 'Memory linked to this profile.' });
       setIsLinkModalOpen(false);
     }
@@ -187,7 +194,7 @@ export default function PersonProfile() {
       await axiosClient.delete(`/vaults/${vaultId}/lineage/person/${personId}/link-memory/`, { data: { memory_id: memoryId } });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['personProfile', personId] });
+      queryClient.invalidateQueries({ queryKey: ['personProfile', vaultId, personId] });
       sileo.success({ title: 'Tag Removed', description: 'Memory unlinked from this profile.' });
     }
   });
@@ -294,7 +301,7 @@ export default function PersonProfile() {
 
   const handleMemoryUpdate = (updatedMemory: any) => {
     setSelectedMemory(updatedMemory);
-    queryClient.setQueryData<PersonProfileType>(['personProfile', personId], (current) => {
+    queryClient.setQueryData<PersonProfileType>(['personProfile', vaultId, personId], (current) => {
       if (!current) return current;
       return {
         ...current,
@@ -305,26 +312,35 @@ export default function PersonProfile() {
     });
   };
 
-  if (!profile) return null;
-
-  const story = profile.biography || '';
-  const allMemories = profile.memories || [];
-  const kinship = [...new Map((profile.kinship || []).map((kin: any) => [kin.id, kin])).values()];
-  const profileAvatar = profile.photo || `https://ui-avatars.com/api/?name=${profile.name.replace(' ', '+')}&background=B88F5B&color=fff&size=256`;
-  const isChronicleBusy = isGenerating || generateStoryMutation.isPending || Boolean(profile.active_story_task_id);
+  const story = profile?.biography || '';
+  const allMemories = useMemo(() => profile?.memories || [], [profile?.memories]);
+  const kinship = useMemo(
+    () => [...new Map((profile?.kinship || []).map((kin: any) => [kin.id, kin])).values()],
+    [profile?.kinship],
+  );
+  const profileAvatar = useMemo(() => {
+    if (!profile) return '';
+    return profile.photo || `https://ui-avatars.com/api/?name=${profile.name.replace(' ', '+')}&background=B88F5B&color=fff&size=256`;
+  }, [profile]);
+  const isChronicleBusy = isGenerating || generateStoryMutation.isPending || Boolean(profile?.active_story_task_id);
   const loadingChronicleLabel = `${CHRONICLE_LOADING_LINES[chronicleLineIndex]}${'.'.repeat(chronicleDots)}`;
 
-  const existingLinkedIds = new Set(allMemories.map(m => m.id));
-  const linkCandidates = allVaultMemories.filter((m: any) => {
-    const query = searchQuery.toLowerCase();
-    const titleMatch = (m.title || '').toLowerCase().includes(query);
-    const captionMatch = (m.ai_caption || '').toLowerCase().includes(query);
+  const existingLinkedIds = useMemo(() => new Set(allMemories.map(m => m.id)), [allMemories]);
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const linkCandidates = useMemo(() => allVaultMemories.filter((m: any) => {
+    const titleMatch = (m.title || '').toLowerCase().includes(normalizedSearchQuery);
+    const captionMatch = (m.ai_caption || '').toLowerCase().includes(normalizedSearchQuery);
     return !existingLinkedIds.has(m.id) && (titleMatch || captionMatch);
-  });
+  }), [allVaultMemories, existingLinkedIds, normalizedSearchQuery]);
 
-  const chronologicalMilestones = [...allMemories]
-    .filter(m => m.year)
-    .sort((a, b) => parseInt(a.year || '0', 10) - parseInt(b.year || '0', 10));
+  const chronologicalMilestones = useMemo(
+    () => [...allMemories]
+      .filter(m => m.year)
+      .sort((a, b) => parseInt(a.year || '0', 10) - parseInt(b.year || '0', 10)),
+    [allMemories],
+  );
+
+  if (!profile) return null;
 
   return (
     <div className="min-h-screen bg-[var(--clr-parchment)] flex flex-col zone-light overflow-x-hidden -mt-[var(--shell-offset-top)]">

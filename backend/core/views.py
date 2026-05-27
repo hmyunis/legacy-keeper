@@ -1,4 +1,3 @@
-from django.contrib.auth.hashers import make_password
 import random
 import redis
 import csv
@@ -13,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from django.shortcuts import get_object_or_404
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
@@ -27,6 +27,16 @@ from tasks.governance import send_invite_email_task, export_vault_logs_task
 User = get_user_model()
 
 redis_client = redis.from_url(settings.CELERY_BROKER_URL)
+
+
+def password_validation_error_response(error):
+    return Response(
+        {
+            "error": "Password does not meet strength requirements.",
+            "password_errors": list(error.messages),
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 def normalize_activation_code(value):
@@ -50,6 +60,11 @@ class RegisterView(views.APIView):
             return Response({"error": "Email already in use"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = User(email=email, full_name=full_name)
+        try:
+            validate_password(password, user=user)
+        except ValidationError as exc:
+            return password_validation_error_response(exc)
+
         user.set_password(password)
         user.save()
 
@@ -1043,10 +1058,18 @@ class PasswordResetConfirmView(views.APIView):
         code = request.data.get('code')
         new_password = request.data.get('password')
 
+        if not email or not code or not new_password:
+            return Response({"error": "email, code, and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+
         stored_code = redis_client.get(f"reset:{email}")
         if stored_code and stored_code.decode('utf-8') == code:
             user = User.objects.get(email=email)
-            user.password = make_password(new_password)
+            try:
+                validate_password(new_password, user=user)
+            except ValidationError as exc:
+                return password_validation_error_response(exc)
+
+            user.set_password(new_password)
             user.save()
             redis_client.delete(f"reset:{email}")
             return Response({"success": True})

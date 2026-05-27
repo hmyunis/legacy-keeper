@@ -345,6 +345,8 @@ export default function Vault() {
   const [isConfirmingReview, setIsConfirmingReview] = useState(false);
   const [isDiscardingReview, setIsDiscardingReview] = useState(false);
   const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = useState(false);
+  const [isConfirmAllDialogOpen, setIsConfirmAllDialogOpen] = useState(false);
+  const [isConfirmingAllPending, setIsConfirmingAllPending] = useState(false);
   const [pendingCuration, setPendingCuration] = useState<any>(null);
   const [reviewQueue, setReviewQueue] = useState<any[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
@@ -412,6 +414,14 @@ export default function Vault() {
   const filterDecades = Array.isArray(filters.decades) ? filters.decades : [];
   const allCategories = ['All', ...filterClusters];
   const orbitClusters = distributeVaultClusters(dynamicClusters);
+
+  const refreshVaultReviewState = () => {
+    queryClient.invalidateQueries({ queryKey: ['dashboardSummary'] });
+    queryClient.invalidateQueries({ queryKey: ['filteredMemories'] });
+    queryClient.invalidateQueries({ queryKey: ['vaultClusters'] });
+    queryClient.invalidateQueries({ queryKey: ['memoryFilters'] });
+    queryClient.invalidateQueries({ queryKey: ['memoryCollections'] });
+  };
 
   useEffect(() => {
     const canvas = document.createElement('canvas');
@@ -637,6 +647,35 @@ export default function Vault() {
         error: { title: "Failed to verify memory" }
       }
     ).finally(() => setIsConfirmingReview(false));
+  };
+
+  const handleConfirmAllPending = async () => {
+    if (!activeVaultId || isConfirmingAllPending) return;
+
+    setIsConfirmingAllPending(true);
+    await sileo.promise(
+      axiosClient.post(`/vaults/${activeVaultId}/memories/confirm-all/`),
+      {
+        loading: { title: "Preserving Pending Artifacts..." },
+        success: (res) => {
+          const confirmed = Number(res.data?.confirmed || 0);
+          setIsConfirmAllDialogOpen(false);
+          setIsReviewPanelOpen(false);
+          setReviewQueue([]);
+          setReviewIndex(0);
+          setPendingCuration(null);
+          setReviewNote('');
+          refreshVaultReviewState();
+          return {
+            title: confirmed > 0 ? "Pending Artifacts Preserved" : "Review Queue Empty",
+            description: confirmed > 0
+              ? `${confirmed} artifact${confirmed === 1 ? '' : 's'} confirmed without opening each review dialog.`
+              : "There were no pending artifacts left to confirm.",
+          };
+        },
+        error: { title: "Confirm All Failed", description: "Could not preserve all pending artifacts." }
+      }
+    ).finally(() => setIsConfirmingAllPending(false));
   };
 
   const openReviewQueue = async () => {
@@ -1203,16 +1242,50 @@ export default function Vault() {
                 {summary.unreviewedCount} Artifacts Need Your Review
               </span>
             </div>
-            <Button
-                variant="primary"
-                className="py-2 px-6 text-[11px] shrink-0"
-                onClick={openReviewQueue}
-            >
-                START REVIEW
-            </Button>
+            <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+              <Button
+                  variant="primary"
+                  className="py-2 px-6 text-[11px]"
+                  onClick={openReviewQueue}
+                  disabled={isConfirmingAllPending}
+              >
+                  START REVIEW
+              </Button>
+              {canContribute && (
+                <Button
+                    variant="ghost"
+                    className="py-2 px-5 text-[11px] border-[rgba(149,198,143,0.75)] bg-[rgba(149,198,143,0.18)] text-[rgb(226,246,222)] hover:border-[rgb(149,198,143)] hover:bg-[rgba(149,198,143,0.28)] hover:text-white"
+                    onClick={() => setIsConfirmAllDialogOpen(true)}
+                    disabled={isConfirmingAllPending}
+                >
+                    <CheckCircle size={16} weight="fill" /> CONFIRM ALL
+                </Button>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ConfirmationDialog
+        open={isConfirmAllDialogOpen}
+        onOpenChange={setIsConfirmAllDialogOpen}
+        eyebrow="Bulk Review"
+        title="Confirm All Pending?"
+        description={
+          <div className="space-y-3">
+            <p>
+              This will preserve all <strong className="text-[var(--clr-ink)]">{summary?.unreviewedCount || 0}</strong> pending artifact{summary?.unreviewedCount === 1 ? '' : 's'} using their current titles, captions, dates, locations, and tags.
+            </p>
+            <p>
+              It has the same effect as opening each pending review dialog and clicking <strong className="text-[var(--clr-ink)]">Confirm & Preserve</strong> without making edits.
+            </p>
+          </div>
+        }
+        confirmLabel="Confirm All"
+        cancelLabel="Review Manually"
+        isLoading={isConfirmingAllPending}
+        onConfirm={handleConfirmAllPending}
+      />
 
       {/* Memory Details Modal */}
       <MemoryDetailModal
