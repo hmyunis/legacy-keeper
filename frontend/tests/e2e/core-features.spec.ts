@@ -80,8 +80,9 @@ test.describe('Core media and curation features', () => {
     await page.getByRole('button', { name: 'Unsorted' }).click();
 
     // Add a new collection
-    await page.getByPlaceholder('Create new collection...').fill('Preserved Letters');
-    await page.locator('button:has-text("+")').click();
+    const collectionInput = page.getByPlaceholder('Create new collection.');
+    await collectionInput.fill('Preserved Letters');
+    await collectionInput.press('Enter');
 
     await page.getByRole('button', { name: 'Preserved Letters' }).first().click();
     await page.getByRole('button', { name: 'Save Changes' }).click();
