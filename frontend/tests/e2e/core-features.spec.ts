@@ -1,6 +1,21 @@
 import { expect, test } from '@playwright/test';
 import { installApiMocks, makeUser, seedAuthState } from './test-utils';
 
+async function openFirstExhibit(page: import('@playwright/test').Page) {
+  const firstCard = page.locator('div.break-inside-avoid').first();
+
+  await expect(firstCard).toBeVisible({ timeout: 10000 });
+  await firstCard.scrollIntoViewIfNeeded();
+  await firstCard.hover();
+
+  const openButton = page.getByRole('button', { name: 'Open exhibit' }).first();
+  await expect(openButton).toBeVisible({ timeout: 10000 });
+
+  // The exhibit button appears during hover and can animate/re-render,
+  // so force avoids Playwright waiting forever for animation stability.
+  await openButton.click({ force: true });
+}
+
 test.describe('Core media and curation features', () => {
   test('uploading an artifact queues and completes processing in the vault grid', async ({ page }) => {
     const user = makeUser({
@@ -73,8 +88,7 @@ test.describe('Core media and curation features', () => {
     await page.getByRole('button', { name: 'Grid' }).click();
 
     // Select the exhibit card
-    await page.locator('div.break-inside-avoid').hover();
-    await page.getByRole('button', { name: 'Open exhibit' }).click();
+    await openFirstExhibit(page);
 
     await page.getByRole('button', { name: 'Edit exhibit' }).click();
     await page.getByRole('button', { name: 'Unsorted' }).click();
@@ -84,10 +98,15 @@ test.describe('Core media and curation features', () => {
     await collectionInput.fill('Preserved Letters');
     await collectionInput.press('Enter');
 
-    await page.getByRole('button', { name: 'Preserved Letters' }).first().click();
+    const preservedLettersOption = page.getByRole('button', { name: 'Preserved Letters' }).first();
+    await expect(preservedLettersOption).toBeVisible({ timeout: 10000 });
+    await preservedLettersOption.click();
+
     await page.getByRole('button', { name: 'Save Changes' }).click();
 
-    await expect(page.getByRole('button', { name: 'Preserved Letters' }).first()).toBeVisible();
+    // After saving, the edit form should close and the exhibit should return to view mode.
+    await expect(page.getByRole('button', { name: 'Edit exhibit' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: 'Save Changes' })).toBeHidden();
   });
 
   test('resolving and accepting context-aware AI caption and tag suggestions', async ({ page }) => {
@@ -132,8 +151,7 @@ test.describe('Core media and curation features', () => {
     await page.goto('/vault');
     await page.getByRole('button', { name: 'Grid' }).click();
 
-    await page.locator('div.break-inside-avoid').hover();
-    await page.getByRole('button', { name: 'Open exhibit' }).click();
+    await openFirstExhibit(page);
 
     // Check suggestion boxes
     await expect(page.getByText('AI Suggestions')).toBeVisible();
