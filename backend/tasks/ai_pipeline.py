@@ -28,6 +28,7 @@ except ImportError:
 
 from celery import shared_task
 from django.conf import settings
+from django.db import IntegrityError
 from django.utils import timezone
 from tasks.ollama_client import generate_with_ollama
 from vaults.models import Memory
@@ -671,7 +672,11 @@ def extract_media_context(memory):
 @shared_task(bind=True, queue='high_priority', name='tasks.ai_pipeline.process_memory_task')
 def process_memory_task(self, memory_id):
     try:
-        memory = Memory.objects.get(id=memory_id)
+        try:
+            memory = Memory.objects.get(id=memory_id)
+        except Memory.DoesNotExist:
+            logger.info(f"Skipping AI processing for deleted memory {memory_id}")
+            return {"status": "SKIPPED", "memory_id": str(memory_id), "reason": "memory_not_found"}
         previous_exif = memory.exif_json or {}
 
         media_context = extract_media_context(memory)
@@ -776,6 +781,10 @@ def process_memory_task(self, memory_id):
                     face_encodings = []
 
                 for location, encoding in zip(face_locations, face_encodings):
+                    if not Memory.objects.filter(id=memory.id).exists():
+                        logger.info(f"Stopping face embedding persistence for deleted memory {memory_id}")
+                        return {"status": "SKIPPED", "memory_id": str(memory_id), "reason": "memory_deleted_during_processing"}
+
                     existing_embeddings = PersonFaceEmbedding.objects.filter(person__vault=memory.vault)
                     match_found = False
 
@@ -784,12 +793,16 @@ def process_memory_task(self, memory_id):
                         matches = face_recognition.compare_faces([db_encoding], encoding, tolerance=0.6)
 
                         if matches[0]:
-                            PersonFaceEmbedding.objects.create(
-                                person=emb_record.person,
-                                memory=memory,
-                                bounding_box=location,
-                                embedding_vector=encoding.tolist()
-                            )
+                            try:
+                                PersonFaceEmbedding.objects.create(
+                                    person=emb_record.person,
+                                    memory=memory,
+                                    bounding_box=location,
+                                    embedding_vector=encoding.tolist()
+                                )
+                            except IntegrityError:
+                                logger.info(f"Skipping face embedding for deleted memory {memory_id}")
+                                return {"status": "SKIPPED", "memory_id": str(memory_id), "reason": "memory_deleted_during_processing"}
                             detected_people_names.append(emb_record.person.name)
                             match_found = True
                             break
@@ -801,12 +814,17 @@ def process_memory_task(self, memory_id):
                             role="Unknown"
                         )
                         save_person_avatar_from_face_image(new_person, img_rgb, location, source_id=memory.id)
-                        PersonFaceEmbedding.objects.create(
-                            person=new_person,
-                            memory=memory,
-                            bounding_box=location,
-                            embedding_vector=encoding.tolist()
-                        )
+                        try:
+                            PersonFaceEmbedding.objects.create(
+                                person=new_person,
+                                memory=memory,
+                                bounding_box=location,
+                                embedding_vector=encoding.tolist()
+                            )
+                        except IntegrityError:
+                            new_person.delete()
+                            logger.info(f"Skipping face embedding for deleted memory {memory_id}")
+                            return {"status": "SKIPPED", "memory_id": str(memory_id), "reason": "memory_deleted_during_processing"}
                         detected_people_names.append(new_person.name)
 
         if is_grayscale:
@@ -965,7 +983,14 @@ def process_memory_task(self, memory_id):
         )
 
         memory.exif_json = json_safe(memory.exif_json)
-        memory.save()
+        if not Memory.objects.filter(id=memory.id).exists():
+            logger.info(f"Skipping AI metadata persistence for deleted memory {memory_id}")
+            return {"status": "SKIPPED", "memory_id": str(memory_id), "reason": "memory_deleted_during_processing"}
+        try:
+            memory.save()
+        except IntegrityError:
+            logger.info(f"Skipping AI metadata persistence for deleted memory {memory_id}")
+            return {"status": "SKIPPED", "memory_id": str(memory_id), "reason": "memory_deleted_during_processing"}
 
         for member in memory.vault.members.all():
             send_web_push(
@@ -988,6 +1013,8 @@ def process_memory_task(self, memory_id):
             }
             memory.exif_json = json_safe(memory.exif_json)
             memory.save(update_fields=["exif_json"])
+        except Memory.DoesNotExist:
+            logger.info(f"Could not persist AI failure state because memory {memory_id} no longer exists")
         except Exception:
             logger.exception(f"Could not persist AI failure state for memory {memory_id}")
         return {"status": "FAILED", "memory_id": str(memory_id), "error": str(e)}

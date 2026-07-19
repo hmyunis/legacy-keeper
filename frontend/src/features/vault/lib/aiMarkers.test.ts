@@ -22,13 +22,13 @@ describe('aiMarkers utilities', () => {
     expect(isAiGeneratedTag(source, 'DOG')).toBe(false);
   });
 
-  it('getPendingSuggestion returns only pending/high confidence', () => {
-    const good = { ai_suggestions: { title: { value: 'X', status: 'pending', confidence: 'high' } } } as any;
+  it('getPendingSuggestion returns pending suggestions at any confidence', () => {
+    const highConfidence = { ai_suggestions: { title: { value: 'X', status: 'pending', confidence: 'high' } } } as any;
+    const mediumConfidence = { ai_suggestions: { tags: { value: ['portrait'], status: 'pending', confidence: 'medium' } } } as any;
     const badStatus = { ai_suggestions: { title: { value: 'X', status: 'accepted', confidence: 'high' } } } as any;
-    const badConfidence = { ai_suggestions: { title: { value: 'X', status: 'pending', confidence: 'low' } } } as any;
 
-    expect(getPendingSuggestion(good, 'title')).toBe('X');
+    expect(getPendingSuggestion(highConfidence, 'title')).toBe('X');
+    expect(getPendingSuggestion(mediumConfidence, 'tags')).toEqual(['portrait']);
     expect(getPendingSuggestion(badStatus, 'title')).toBeNull();
-    expect(getPendingSuggestion(badConfidence, 'title')).toBeNull();
   });
 });
